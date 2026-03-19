@@ -4,11 +4,13 @@ import io
 import json
 import os
 import smtplib
+import struct
 import tempfile
 import threading
 import time
 import zipfile
 import xml.etree.ElementTree as ET
+import zlib
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from xml.sax.saxutils import escape as xml_escape
@@ -58,20 +60,179 @@ DEFAULT_EMAIL_CONFIG = {
     "subject_prefix": "A. Farrell Contracting",
 }
 
+APP_SHORT_NAME = "Muck Jobs"
+APP_THEME_COLOR = "#334d38"
+
+
+def discover_custom_app_icon_path():
+    try:
+        names = sorted(os.listdir(APP_ROOT))
+    except OSError:
+        return ""
+    for name in names:
+        if name.lower().endswith(".png"):
+            return os.path.join(APP_ROOT, name)
+    return ""
+
+
+CUSTOM_APP_ICON_PATH = discover_custom_app_icon_path()
+
 ICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <rect width="64" height="64" rx="12" fill="#334d38"/>
 <rect x="5" y="5" width="54" height="54" rx="10" fill="none" stroke="#d7bf7a" stroke-width="2.5"/>
 <path d="M14 42c4-9 9-14 15-17 5-2 10-3 14-2 2 0 5 1 7 2-2 3-4 6-6 9-3 3-7 5-12 6-5 2-11 2-18 2z" fill="#d7bf7a"/>
 </svg>"""
 
+
+def _png_chunk(tag, data):
+    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+
+def _rounded_rect_contains(x, y, left, top, width, height, radius):
+    right = left + width
+    bottom = top + height
+    if left + radius <= x <= right - radius or top + radius <= y <= bottom - radius:
+        return True
+    corner_centers = [
+        (left + radius, top + radius),
+        (right - radius, top + radius),
+        (left + radius, bottom - radius),
+        (right - radius, bottom - radius),
+    ]
+    radius_sq = radius * radius
+    for cx, cy in corner_centers:
+        dx = x - cx
+        dy = y - cy
+        if dx * dx + dy * dy <= radius_sq:
+            return True
+    return False
+
+
+def _point_in_polygon(x, y, points):
+    inside = False
+    j = len(points) - 1
+    i = 0
+    while i < len(points):
+        xi, yi = points[i]
+        xj, yj = points[j]
+        if ((yi > y) != (yj > y)) and (x < ((xj - xi) * (y - yi) / ((yj - yi) or 1e-9) + xi)):
+            inside = not inside
+        j = i
+        i += 1
+    return inside
+
+
+def build_app_icon_png(size):
+    size = max(120, min(int(size), 1024))
+    bg = (0x33, 0x4D, 0x38, 255)
+    gold = (0xD7, 0xBF, 0x7A, 255)
+    transparent = (0, 0, 0, 0)
+
+    outer_radius = size * 0.2
+    border_inset = max(6.0, size * 0.08)
+    inner_radius = max(outer_radius - (size * 0.04), 4.0)
+    border_width = max(3.0, size * 0.025)
+
+    leaf_points = [
+        (size * 0.2, size * 0.66),
+        (size * 0.28, size * 0.5),
+        (size * 0.38, size * 0.39),
+        (size * 0.5, size * 0.31),
+        (size * 0.63, size * 0.28),
+        (size * 0.78, size * 0.34),
+        (size * 0.69, size * 0.51),
+        (size * 0.58, size * 0.61),
+        (size * 0.44, size * 0.67),
+        (size * 0.3, size * 0.68),
+    ]
+
+    rows = []
+    y = 0
+    while y < size:
+        row = bytearray([0])
+        x = 0
+        while x < size:
+            px = x + 0.5
+            py = y + 0.5
+            color = transparent
+            in_outer = _rounded_rect_contains(px, py, 0.0, 0.0, float(size), float(size), outer_radius)
+            if in_outer:
+                color = bg
+                in_border_box = _rounded_rect_contains(
+                    px,
+                    py,
+                    border_inset,
+                    border_inset,
+                    float(size) - (border_inset * 2),
+                    float(size) - (border_inset * 2),
+                    inner_radius,
+                )
+                in_inner_fill = _rounded_rect_contains(
+                    px,
+                    py,
+                    border_inset + border_width,
+                    border_inset + border_width,
+                    float(size) - ((border_inset + border_width) * 2),
+                    float(size) - ((border_inset + border_width) * 2),
+                    max(inner_radius - border_width, 2.0),
+                )
+                if in_border_box and not in_inner_fill:
+                    color = gold
+                if _point_in_polygon(px, py, leaf_points):
+                    color = gold
+            row.extend(color)
+            x += 1
+        rows.append(bytes(row))
+        y += 1
+
+    raw = b"".join(rows)
+    compressed = zlib.compress(raw, 9)
+    return b"".join([
+        b"\x89PNG\r\n\x1a\n",
+        _png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)),
+        _png_chunk(b"IDAT", compressed),
+        _png_chunk(b"IEND", b""),
+    ])
+
+
+def app_icon_bytes(size):
+    if CUSTOM_APP_ICON_PATH and os.path.exists(CUSTOM_APP_ICON_PATH):
+        try:
+            with open(CUSTOM_APP_ICON_PATH, "rb") as handle:
+                return handle.read()
+        except OSError:
+            pass
+    return build_app_icon_png(size)
+
+
+def app_icon_dimensions():
+    if CUSTOM_APP_ICON_PATH and os.path.exists(CUSTOM_APP_ICON_PATH):
+        try:
+            with open(CUSTOM_APP_ICON_PATH, "rb") as handle:
+                header = handle.read(24)
+            if header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR":
+                width, height = struct.unpack(">II", header[16:24])
+                if width > 0 and width == height:
+                    return width
+        except OSError:
+            pass
+    return 180
+
 HTML = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#334d38">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Muck Jobs">
   <title>A. Farrell Contracting Muck Spreading Jobs</title>
+  <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('favicon') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="manifest" href="{{ url_for('web_manifest') }}">
   <style>
     :root {
       --bg: #e7decd;
@@ -1067,8 +1228,16 @@ ADMIN_HTML = """
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#334d38">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Muck Jobs">
   <title>A. Farrell Contracting Data Admin</title>
+  <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('favicon') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="manifest" href="{{ url_for('web_manifest') }}">
   <style>
     :root {
       --bg: #e7decd;
@@ -1598,38 +1767,6 @@ def load_customer_master_rows():
     return rows
 
 
-def customer_master_file_parts():
-    prefix_rows = []
-    header_row = list(CUSTOMER_MASTER_HEADERS)
-    data_rows = []
-
-    if not os.path.exists(CUSTOMER_MASTER_CSV_PATH):
-        return prefix_rows, header_row, data_rows
-
-    try:
-        with open(CUSTOMER_MASTER_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
-            raw_rows = list(csv.reader(handle))
-    except Exception:
-        return prefix_rows, header_row, data_rows
-
-    header_index = None
-    i = 0
-    while i < len(raw_rows):
-        candidate = [clean_name(cell).lower() for cell in raw_rows[i]]
-        if "customer_name" in candidate:
-            header_index = i
-            break
-        i += 1
-
-    if header_index is None:
-        return prefix_rows, header_row, data_rows
-
-    prefix_rows = raw_rows[:header_index]
-    header_row = raw_rows[header_index] if raw_rows[header_index] else list(CUSTOMER_MASTER_HEADERS)
-    data_rows = raw_rows[header_index + 1:]
-    return prefix_rows, header_row, data_rows
-
-
 def customer_master_row_to_dict(header_row, raw_row):
     row_dict = {}
     i = 0
@@ -1639,100 +1776,6 @@ def customer_master_row_to_dict(header_row, raw_row):
             row_dict[header] = raw_row[i] if i < len(raw_row) else ""
         i += 1
     return row_dict
-
-
-def customer_master_dict_to_row(header_row, row_dict):
-    out = []
-    i = 0
-    while i < len(header_row):
-        header = clean_name(header_row[i]).lower()
-        if header:
-            out.append(str(row_dict.get(header, "") or ""))
-        else:
-            out.append("")
-        i += 1
-    return out
-
-
-def write_customer_master_file(prefix_rows, header_row, data_rows):
-    parent = os.path.dirname(CUSTOMER_MASTER_CSV_PATH) or "."
-    os.makedirs(parent, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix="customer_master.", suffix=".tmp", dir=parent)
-    with os.fdopen(fd, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        for row in prefix_rows:
-            writer.writerow(row)
-        writer.writerow(header_row if header_row else CUSTOMER_MASTER_HEADERS)
-        for row in data_rows:
-            writer.writerow(row)
-    os.replace(temp_path, CUSTOMER_MASTER_CSV_PATH)
-
-
-def sync_customer_master_from_job(job_record):
-    prefix_rows, header_row, data_rows = customer_master_file_parts()
-    if not header_row:
-        header_row = list(CUSTOMER_MASTER_HEADERS)
-
-    customer_name = clean_name(job_record.get("customer"))
-    farm_name = clean_name(job_record.get("farm_name"))
-    muck_type = clean_name(job_record.get("muck_type"))
-    if not customer_name:
-        return False
-
-    exact_index = None
-    empty_muck_index = None
-    template_row = None
-    i = 0
-    while i < len(data_rows):
-        row_dict = customer_master_row_to_dict(header_row, data_rows[i])
-        row_customer = clean_name(row_dict.get("customer_name"))
-        row_farm = clean_name(row_dict.get("farm_name"))
-        row_muck = clean_name(row_dict.get("muck_type"))
-        if row_customer.lower() == customer_name.lower():
-            if template_row is None:
-                template_row = row_dict
-            if row_farm.lower() == farm_name.lower():
-                template_row = row_dict
-                if row_muck.lower() == muck_type.lower():
-                    exact_index = i
-                    break
-                if not row_muck and muck_type:
-                    empty_muck_index = i
-        i += 1
-
-    if exact_index is not None:
-        return False
-
-    if empty_muck_index is not None:
-        row_dict = customer_master_row_to_dict(header_row, data_rows[empty_muck_index])
-        row_dict["muck_type"] = muck_type
-        if not clean_name(row_dict.get("active")):
-            row_dict["active"] = "1"
-        data_rows[empty_muck_index] = customer_master_dict_to_row(header_row, row_dict)
-        write_customer_master_file(prefix_rows, header_row, data_rows)
-        return True
-
-    new_row = {
-        "customer_name": customer_name,
-        "farm_name": farm_name,
-        "email": "",
-        "address_line_1": "",
-        "address_line_2": "",
-        "town": "",
-        "postcode": "",
-        "rate_per_ton": "",
-        "vat_rate": "",
-        "active": "1",
-        "muck_type": muck_type,
-    }
-    if isinstance(template_row, dict):
-        for key in ["email", "address_line_1", "address_line_2", "town", "postcode", "rate_per_ton", "vat_rate", "active"]:
-            value = str(template_row.get(key, "") or "")
-            if value:
-                new_row[key] = value
-    data_rows.append(customer_master_dict_to_row(header_row, new_row))
-    write_customer_master_file(prefix_rows, header_row, data_rows)
-    return True
 
 
 def build_customer_farm_map(master_rows):
@@ -3462,6 +3505,31 @@ def favicon():
     return Response(ICON, mimetype="image/svg+xml")
 
 
+@app.route("/app-icon-<int:size>.png")
+def app_icon_png(size):
+    return Response(app_icon_bytes(size), mimetype="image/png")
+
+
+@app.route("/site.webmanifest")
+def web_manifest():
+    icon_size = app_icon_dimensions()
+    return jsonify({
+        "name": "A. Farrell Contracting Muck Spreading Jobs",
+        "short_name": APP_SHORT_NAME,
+        "display": "standalone",
+        "background_color": APP_THEME_COLOR,
+        "theme_color": APP_THEME_COLOR,
+        "start_url": url_for("home"),
+        "icons": [
+            {
+                "src": url_for("app_icon_png", size=180),
+                "sizes": "%sx%s" % (icon_size, icon_size),
+                "type": "image/png",
+            },
+        ],
+    })
+
+
 @app.route("/")
 def home():
     ensure_data_dir()
@@ -3591,14 +3659,8 @@ def save_job():
         field_map[customer] = customer_bucket
         save_field_map(field_map)
 
-    sync_error = ""
-    try:
-        sync_customer_master_from_job(record)
-    except Exception:
-        sync_error = " Customer master update failed."
-
     action_label = "Updated" if existing_job else "Saved"
-    return redirect(url_for("home", ok=1, msg="%s job for %s - %s.%s" % (action_label, customer, field_name, sync_error)))
+    return redirect(url_for("home", ok=1, msg="%s job for %s - %s." % (action_label, customer, field_name)))
 
 
 @app.route("/jobs/delete/<int:job_id>", methods=["POST"])
