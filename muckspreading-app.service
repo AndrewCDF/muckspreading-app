@@ -1,0 +1,16 @@
+[Unit]
+Description=A. Farrell Contracting Muck Spreading Jobs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/muckspreading-app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/pi/muckspreading-app/app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+data/*
+!data/.gitkeep
+
+customer_master.csv
+email_config.json
+data/email_config.json
