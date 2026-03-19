@@ -43,7 +43,7 @@ The GitHub repo includes a blank starter file:
 
 ## Customer Master Spreadsheet
 
-Copy `customer_master.template.csv` to `customer_master.csv`, then edit `customer_master.csv` directly in Excel or Numbers and keep these columns:
+On a new install, copy `customer_master.template.csv` to `customer_master.csv`, then edit `customer_master.csv` directly in Excel or Numbers and keep these columns:
 
 - `customer_name`
 - `farm_name`
@@ -94,16 +94,50 @@ The app can send an automatic weekly jobs summary email.
 How it works:
 
 - It sends a summary of the previous full week
-- Default schedule is Monday at `07:00`
-- It includes total jobs, total spreader tons, total Ops Center tons, and the job list
+- Default schedule is Monday at `05:00`
+- It includes total jobs, total spreader tons, total Ops Center tons, and an attached `.xlsx` summary file
 - It will only send once for each weekly period
+- If `weekly_summary_layout_template.xlsx` exists in the app folder, the generated attachment will follow that workbook's layout and styling
 
 Setup:
 
-1. Copy `email_config.example.json` to `data/email_config.json`
-2. Fill in your SMTP server details and recipient email addresses
-3. Set `"enabled": true`
-4. Keep the app running on the Pi service so the weekly worker can send it
+1. Edit `email_settings.csv`
+2. Put one `settings` row in it for the SMTP and schedule details
+3. Add as many `recipient` rows as you need underneath
+5. Set `enabled` to `1`
+6. Keep the app running on the Pi service so the weekly worker can send it
+
+Email settings CSV columns:
+
+- `record_type`
+- `email`
+- `name`
+- `enabled`
+- `smtp_host`
+- `smtp_port`
+- `use_tls`
+- `smtp_username`
+- `smtp_password`
+- `from_email`
+- `to_emails`
+- `send_weekday`
+- `send_hour`
+- `send_minute`
+- `subject_prefix`
+- `active`
+
+Use:
+
+- `record_type`: `settings` for the main config row, `recipient` for recipient rows
+- `email`: use this on recipient rows
+- `name`: optional label for recipient rows
+- `enabled`: `1` or `0`
+- `use_tls`: `1` or `0`
+- `send_weekday`: `0` for Monday through `6` for Sunday
+- `to_emails`: optional comma-separated emails on the `settings` row if you want to keep some addresses there too
+- `active`: `1` or `0`
+
+If you already have `data/email_config.json`, the app will still accept it, but `email_settings.csv` is now the easiest way to manage the full email setup.
 
 Useful endpoints:
 

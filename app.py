@@ -7,8 +7,11 @@ import smtplib
 import tempfile
 import threading
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+from xml.sax.saxutils import escape as xml_escape
 
 
 app = Flask(__name__)
@@ -22,7 +25,10 @@ FIELD_MAP_PATH = os.path.join(DATA_DIR, "customer_fields.json")
 EMAIL_CONFIG_PATH = os.path.join(DATA_DIR, "email_config.json")
 EMAIL_STATE_PATH = os.path.join(DATA_DIR, "weekly_email_state.json")
 CUSTOMER_MASTER_CSV_PATH = os.path.join(APP_ROOT, "customer_master.csv")
+EMAIL_SETTINGS_CSV_PATH = os.path.join(APP_ROOT, "email_settings.csv")
+WEEKLY_SUMMARY_TEMPLATE_PATH = os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")
 EMAIL_CHECK_INTERVAL_SECONDS = 300
+XLSX_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 CUSTOMER_MASTER_HEADERS = [
     "customer_name",
     "farm_name",
@@ -47,7 +53,7 @@ DEFAULT_EMAIL_CONFIG = {
     "from_email": "",
     "to_emails": [],
     "send_weekday": 0,
-    "send_hour": 7,
+    "send_hour": 5,
     "send_minute": 0,
     "subject_prefix": "A. Farrell Contracting",
 }
@@ -1184,11 +1190,91 @@ def find_customer_master_record(master_rows, customer_name, farm_name=""):
     return None
 
 
+def parse_csv_bool(value, default=False):
+    text = str(value or "").strip().lower()
+    if not text:
+        return bool(default)
+    if text in ["1", "true", "yes", "y", "on"]:
+        return True
+    if text in ["0", "false", "no", "n", "off"]:
+        return False
+    return bool(default)
+
+
+def parse_csv_int(value, default):
+    text = str(value or "").strip()
+    if not text:
+        return int(default)
+    try:
+        return int(text)
+    except Exception:
+        return int(default)
+
+
+def load_email_settings_csv():
+    if not os.path.exists(EMAIL_SETTINGS_CSV_PATH):
+        return {}
+
+    try:
+        with open(EMAIL_SETTINGS_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
+            rows = [row for row in csv.DictReader(handle) if isinstance(row, dict)]
+    except Exception:
+        return {}
+
+    selected_row = None
+    recipient_emails = []
+    has_record_type_column = bool(rows and "record_type" in rows[0])
+    for row in rows:
+        active_text = str(row.get("active", "1") or "1").strip().lower()
+        if active_text in ["0", "false", "no", "n", "off"]:
+            continue
+        if has_record_type_column:
+            record_type = str(row.get("record_type", "") or "").strip().lower()
+            if record_type == "recipient":
+                email = str(row.get("email", "") or "").strip()
+                if email and email not in recipient_emails:
+                    recipient_emails.append(email)
+                continue
+            if record_type and record_type != "settings":
+                continue
+        if selected_row is None:
+            selected_row = row
+
+    if not isinstance(selected_row, dict):
+        return {}
+
+    parsed = {
+        "enabled": parse_csv_bool(selected_row.get("enabled"), False),
+        "smtp_host": str(selected_row.get("smtp_host", "") or "").strip(),
+        "smtp_port": parse_csv_int(selected_row.get("smtp_port"), 587),
+        "use_tls": parse_csv_bool(selected_row.get("use_tls"), True),
+        "smtp_username": str(selected_row.get("smtp_username", "") or "").strip(),
+        "smtp_password": str(selected_row.get("smtp_password", "") or ""),
+        "from_email": str(selected_row.get("from_email", "") or "").strip(),
+        "send_weekday": parse_csv_int(selected_row.get("send_weekday"), 0),
+        "send_hour": parse_csv_int(selected_row.get("send_hour"), 7),
+        "send_minute": parse_csv_int(selected_row.get("send_minute"), 0),
+        "subject_prefix": str(selected_row.get("subject_prefix", "") or "").strip(),
+    }
+
+    raw_to_emails = str(selected_row.get("to_emails", "") or "").strip()
+    if raw_to_emails:
+        parsed["to_emails"] = [email.strip() for email in raw_to_emails.split(",") if email.strip()]
+    for email in recipient_emails:
+        if email not in parsed.get("to_emails", []):
+            parsed.setdefault("to_emails", []).append(email)
+
+    return parsed
+
+
 def load_email_config():
     data = read_json_file(EMAIL_CONFIG_PATH, {})
     merged = dict(DEFAULT_EMAIL_CONFIG)
     if isinstance(data, dict):
         merged.update(data)
+    csv_data = load_email_settings_csv()
+    if isinstance(csv_data, dict) and csv_data:
+        merged.update(csv_data)
     merged["enabled"] = bool(merged.get("enabled", False))
     merged["smtp_host"] = str(merged.get("smtp_host", "") or "").strip()
     merged["smtp_port"] = int(merged.get("smtp_port", 587) or 587)
@@ -1454,7 +1540,7 @@ def weekly_email_subject(summary, config):
 
 
 def weekly_email_body(summary):
-    lines = [
+    return "\n".join([
         "Weekly Jobs Summary",
         "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date"))),
         "",
@@ -1462,26 +1548,890 @@ def weekly_email_body(summary):
         "Spreader Tons: %s" % format_tons(summary.get("total_spreader_tons", 0)),
         "Ops Center Tons: %s" % format_tons(summary.get("total_john_deere_tons", 0)),
         "",
-        "Jobs Detail",
+        "The full weekly summary is attached as XLSX and PDF files.",
+    ])
+
+
+def weekly_summary_attachment_filename(summary):
+    return "weekly_jobs_summary_%s_to_%s.xlsx" % (
+        str(summary.get("start_date", "")).replace("-", ""),
+        str(summary.get("end_date", "")).replace("-", ""),
+    )
+
+
+def weekly_summary_pdf_attachment_filename(summary):
+    return "weekly_jobs_summary_%s_to_%s.pdf" % (
+        str(summary.get("start_date", "")).replace("-", ""),
+        str(summary.get("end_date", "")).replace("-", ""),
+    )
+
+
+def xlsx_col_name(index):
+    name = ""
+    value = int(index)
+    while value > 0:
+        value, remainder = divmod(value - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+
+def xlsx_col_index(ref):
+    letters = "".join(char for char in str(ref or "") if char.isalpha()).upper()
+    value = 0
+    for char in letters:
+        value = (value * 26) + (ord(char) - 64)
+    return value
+
+
+def xlsx_cell_xml(row_number, col_number, value, style_id=None):
+    ref = "%s%s" % (xlsx_col_name(col_number), row_number)
+    style_attr = ' s="%s"' % style_id if style_id not in [None, ""] else ""
+    if value is None or value == "":
+        return '<c r="%s"%s/>' % (ref, style_attr)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return '<c r="%s"%s><v>%s</v></c>' % (ref, style_attr, value)
+    return '<c r="%s"%s t="inlineStr"><is><t>%s</t></is></c>' % (ref, style_attr, xml_escape(str(value)))
+
+
+def template_string_cell_value(cell, shared_strings):
+    if cell is None:
+        return ""
+    cell_type = cell.attrib.get("t", "")
+    if cell_type == "s":
+        try:
+            index = int((cell.find("{%s}v" % XLSX_NS).text or "0").strip())
+            return shared_strings[index] if 0 <= index < len(shared_strings) else ""
+        except Exception:
+            return ""
+    if cell_type == "inlineStr":
+        return "".join(node.text or "" for node in cell.findall(".//{%s}t" % XLSX_NS))
+    value_node = cell.find("{%s}v" % XLSX_NS)
+    return value_node.text if value_node is not None and value_node.text else ""
+
+
+def load_weekly_summary_template():
+    if not os.path.exists(WEEKLY_SUMMARY_TEMPLATE_PATH):
+        return None
+
+    try:
+        with zipfile.ZipFile(WEEKLY_SUMMARY_TEMPLATE_PATH, "r") as archive:
+            entries = {name: archive.read(name) for name in archive.namelist()}
+    except Exception:
+        return None
+
+    sheet_bytes = entries.get("xl/worksheets/sheet1.xml")
+    if not sheet_bytes:
+        return None
+
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except Exception:
+        return None
+
+    shared_strings = []
+    shared_bytes = entries.get("xl/sharedStrings.xml")
+    if shared_bytes:
+        try:
+            shared_root = ET.fromstring(shared_bytes)
+            for item in shared_root.findall("{%s}si" % XLSX_NS):
+                shared_strings.append("".join(node.text or "" for node in item.findall(".//{%s}t" % XLSX_NS)))
+        except Exception:
+            shared_strings = []
+
+    rows_by_number = {}
+    cells_by_ref = {}
+    sheet_data = root.find("{%s}sheetData" % XLSX_NS)
+    if sheet_data is not None:
+        for row in sheet_data.findall("{%s}row" % XLSX_NS):
+            try:
+                row_number = int(row.attrib.get("r", "0") or "0")
+            except Exception:
+                continue
+            rows_by_number[row_number] = row
+            for cell in row.findall("{%s}c" % XLSX_NS):
+                ref = cell.attrib.get("r", "")
+                if ref:
+                    cells_by_ref[ref] = cell
+
+    def cell_text(ref):
+        return template_string_cell_value(cells_by_ref.get(ref), shared_strings)
+
+    def cell_style(ref):
+        cell = cells_by_ref.get(ref)
+        return cell.attrib.get("s") if cell is not None else None
+
+    def row_attrs(row_number):
+        row = rows_by_number.get(row_number)
+        if row is None:
+            return {}
+        cleaned = {}
+        for key, value in row.attrib.items():
+            if key in ["r", "spans"] or key.startswith("{"):
+                continue
+            cleaned[key] = value
+        return cleaned
+
+    def row_style_map(row_number):
+        out = {}
+        col_index = 1
+        while col_index <= 6:
+            style_id = cell_style("%s%s" % (xlsx_col_name(col_index), row_number))
+            if style_id not in [None, ""]:
+                out[col_index] = style_id
+            col_index += 1
+        return out
+
+    def row_layout(row_number):
+        row = rows_by_number.get(row_number)
+        if row is None:
+            return {"columns": [], "styles": {}, "attrs": {}}
+
+        columns = []
+        styles = {}
+        for cell in row.findall("{%s}c" % XLSX_NS):
+            ref = cell.attrib.get("r", "")
+            col_index = xlsx_col_index(ref)
+            if not col_index:
+                continue
+            columns.append(col_index)
+            style_id = cell.attrib.get("s")
+            if style_id not in [None, ""]:
+                styles[col_index] = style_id
+
+        return {
+            "columns": columns,
+            "styles": styles,
+            "attrs": row_attrs(row_number),
+        }
+
+    customer_style_map = row_style_map(10)
+    farm_style_map = {}
+    detail_style_map = {}
+    farm_total_style_map = {}
+    customer_row_number = 10
+    farm_row_number = None
+    detail_row_number = None
+    farm_total_row_number = None
+
+    for row_number in sorted(rows_by_number.keys()):
+        if row_number <= 9:
+            continue
+        a_text = cell_text("A%s" % row_number).strip()
+        b_text = cell_text("B%s" % row_number).strip()
+        c_text = cell_text("C%s" % row_number).strip()
+        d_text = cell_text("D%s" % row_number).strip()
+        e_text = cell_text("E%s" % row_number).strip()
+        f_text = cell_text("F%s" % row_number).strip()
+
+        if a_text == "Farm Totals" and not farm_total_style_map:
+            farm_total_style_map = row_style_map(row_number)
+            farm_total_row_number = row_number
+            continue
+
+        if not a_text and any([b_text, c_text, d_text, e_text, f_text]) and not detail_style_map:
+            detail_style_map = row_style_map(row_number)
+            detail_row_number = row_number
+            continue
+
+        if a_text and not any([b_text, c_text, d_text, e_text, f_text]) and not farm_style_map and row_number > 10:
+            farm_style_map = row_style_map(row_number)
+            farm_row_number = row_number
+
+    cols = []
+    cols_node = root.find("{%s}cols" % XLSX_NS)
+    if cols_node is not None:
+        for col in cols_node.findall("{%s}col" % XLSX_NS):
+            cols.append(dict(col.attrib))
+
+    page_margins = {}
+    page_margins_node = root.find("{%s}pageMargins" % XLSX_NS)
+    if page_margins_node is not None:
+        page_margins = dict(page_margins_node.attrib)
+
+    return {
+        "entries": entries,
+        "cols": cols,
+        "page_margins": page_margins,
+        "sheet_format_attrs": dict((k, v) for k, v in (root.find("{%s}sheetFormatPr" % XLSX_NS) or ET.Element("x")).attrib.items() if not k.startswith("{")),
+        "row_attrs": {
+            "ops_total": row_attrs(6),
+            "blank_after_summary": row_attrs(7),
+            "headers": row_attrs(8),
+            "blank_after_headers": row_attrs(9),
+        },
+        "row_styles": {
+            "title": row_style_map(1),
+            "period": row_style_map(2),
+            "jobs": row_style_map(4),
+            "spreader_total": row_style_map(5),
+            "ops_total": row_style_map(6),
+            "headers": row_style_map(8),
+            "customer": customer_style_map,
+            "farm": farm_style_map or customer_style_map,
+            "detail": detail_style_map,
+            "farm_total": farm_total_style_map,
+        },
+        "row_templates": {
+            "title": row_layout(1),
+            "period": row_layout(2),
+            "blank": {"columns": [], "styles": {}, "attrs": {}},
+            "jobs": row_layout(4),
+            "spreader_total": row_layout(5),
+            "ops_total": row_layout(6),
+            "blank_after_summary": {"columns": [], "styles": {}, "attrs": row_attrs(7)},
+            "headers": row_layout(8),
+            "blank_after_headers": {"columns": [], "styles": {}, "attrs": row_attrs(9)},
+            "customer": row_layout(customer_row_number),
+            "farm": row_layout(farm_row_number or customer_row_number),
+            "detail": row_layout(detail_row_number or 11),
+            "farm_total": row_layout(farm_total_row_number or 12),
+        },
+        "labels": {
+            "title": cell_text("A1") or "Weekly Jobs Summary",
+            "period": cell_text("A2") or "Period",
+            "jobs": cell_text("A4") or "Jobs",
+            "spreader_total": cell_text("A5") or "Spreader Tons",
+            "ops_total": cell_text("A6") or "Ops Center Tons",
+            "headers": [
+                cell_text("A8") or "Customer / Farm",
+                cell_text("B8") or "Date",
+                cell_text("C8") or "Field",
+                cell_text("D8") or "Product",
+                cell_text("E8") or "Spreader Weight",
+                cell_text("F8") or "Ops Center Weight",
+            ],
+            "farm_totals": "Farm Totals",
+        },
+    }
+
+
+def weekly_summary_template_rows(summary, labels):
+    rows = [
+        ("title", [labels["title"]]),
+        ("period", [labels["period"], "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date")))]),
+        ("blank", []),
+        ("jobs", [labels["jobs"], int(summary.get("job_count", 0) or 0)]),
+        ("spreader_total", [labels["spreader_total"], float(summary.get("total_spreader_tons", 0) or 0)]),
+        ("ops_total", [labels["ops_total"], float(summary.get("total_john_deere_tons", 0) or 0)]),
+        ("blank_after_summary", []),
+        ("headers", labels["headers"]),
+        ("blank_after_headers", []),
     ]
 
-    rows = summary.get("rows", [])
-    if not rows:
-        lines.append("No jobs were recorded in this period.")
-        return "\n".join(lines)
+    detail_rows = summary.get("rows", [])
+    if not detail_rows:
+        rows.append(("customer", ["No jobs were recorded in this period."]))
+        return rows
 
-    for row in rows:
-        lines.extend([
-            "",
-            "%s | %s" % (format_job_date(row.get("job_date")), row.get("customer", "")),
-            "Farm: %s" % row.get("farm_name", ""),
-            "Field: %s" % row.get("field_name", ""),
-            "Muck Type: %s" % row.get("muck_type", ""),
-            "Spreader Tons: %s" % format_tons(row.get("total_spreader_tons", 0)),
-            "Ops Center Tons: %s" % format_tons(row.get("total_john_deere_tons", 0)),
-        ])
+    grouped_rows = {}
+    for row in detail_rows:
+        customer_name = clean_name(row.get("customer")) or "Unknown Customer"
+        grouped_rows.setdefault(customer_name, []).append(row)
 
-    return "\n".join(lines)
+    for customer_name in sorted(grouped_rows.keys(), key=lambda item: item.lower()):
+        rows.append(("customer", [customer_name]))
+
+        farm_groups = {}
+        for row in grouped_rows[customer_name]:
+            farm_name = clean_name(row.get("farm_name")) or "Unassigned Farm"
+            farm_groups.setdefault(farm_name, []).append(row)
+
+        show_all_farm_labels = len(farm_groups) > 1
+
+        for farm_name in sorted(farm_groups.keys(), key=lambda item: item.lower()):
+            if show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower():
+                rows.append(("farm", [farm_name]))
+
+            farm_rows = sorted(
+                farm_groups[farm_name],
+                key=lambda row: (
+                    str(row.get("job_date", "")),
+                    clean_name(row.get("muck_type")).lower(),
+                    clean_name(row.get("field_name")).lower(),
+                ),
+            )
+            farm_spread_total = 0.0
+            farm_ops_total = 0.0
+            for row in farm_rows:
+                try:
+                    spread_value = float(row.get("total_spreader_tons", 0) or 0)
+                except Exception:
+                    spread_value = 0.0
+                try:
+                    ops_value = float(row.get("total_john_deere_tons", 0) or 0)
+                except Exception:
+                    ops_value = 0.0
+
+                farm_spread_total += spread_value
+                farm_ops_total += ops_value
+                rows.append((
+                    "detail",
+                    [format_job_date(row.get("job_date")), row.get("field_name", ""), row.get("muck_type", ""), spread_value, ops_value],
+                ))
+
+            rows.append(("farm_total", [labels["farm_totals"], "", "", "", farm_spread_total, farm_ops_total]))
+            rows.append(("blank", []))
+
+    return rows
+
+
+def worksheet_row_xml(row_number, values, columns=None, style_map=None, row_attrs=None):
+    columns = list(columns or [])
+    style_map = style_map or {}
+    row_attrs = row_attrs or {}
+    attrs = ['r="%s"' % row_number]
+    for key, value in row_attrs.items():
+        attrs.append('%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})))
+    cells = []
+    for value_index, value in enumerate(values):
+        if value_index < len(columns):
+            col_index = columns[value_index]
+        else:
+            col_index = value_index + 1
+        cells.append(xlsx_cell_xml(row_number, col_index, value, style_map.get(col_index)))
+    return "<row %s>%s</row>" % (" ".join(attrs), "".join(cells))
+
+
+def build_template_based_xlsx(summary, template):
+    labels = template.get("labels", {})
+    row_templates = template.get("row_templates", {})
+    row_specs = weekly_summary_template_rows(summary, labels)
+
+    xml_rows = []
+    row_number = 1
+    for kind, values in row_specs:
+        template_row = row_templates.get(kind, {})
+        xml_rows.append(
+            worksheet_row_xml(
+                row_number,
+                values,
+                template_row.get("columns"),
+                template_row.get("styles"),
+                template_row.get("attrs"),
+            )
+        )
+        row_number += 1
+
+    cols_xml = ""
+    if template.get("cols"):
+        col_parts = []
+        for col in template["cols"]:
+            attrs = []
+            for key, value in col.items():
+                attrs.append('%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})))
+            col_parts.append("<col %s/>" % " ".join(attrs))
+        cols_xml = "<cols>%s</cols>" % "".join(col_parts)
+
+    sheet_format_attrs = template.get("sheet_format_attrs", {}) or {"defaultRowHeight": "15"}
+    sheet_format_xml = "<sheetFormatPr %s/>" % " ".join(
+        '%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})) for key, value in sheet_format_attrs.items()
+    )
+
+    page_margins = template.get("page_margins", {})
+    page_margins_xml = ""
+    if page_margins:
+        page_margins_xml = "<pageMargins %s/>" % " ".join(
+            '%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})) for key, value in page_margins.items()
+        )
+
+    worksheet_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="%s">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  %s
+  %s
+  <sheetData>%s</sheetData>
+  %s
+</worksheet>
+""" % (
+        XLSX_NS,
+        sheet_format_xml,
+        cols_xml,
+        "".join(xml_rows),
+        page_margins_xml,
+    )
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in template.get("entries", {}).items():
+            if name == "xl/worksheets/sheet1.xml":
+                archive.writestr(name, worksheet_xml)
+            else:
+                archive.writestr(name, data)
+    return output.getvalue()
+
+
+def build_weekly_summary_sheet_rows(summary):
+    rows = [
+        ["Weekly Jobs Summary"],
+        ["Period", "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date")))],
+        [],
+        ["Jobs", int(summary.get("job_count", 0) or 0)],
+        ["Spreader Tons", float(summary.get("total_spreader_tons", 0) or 0)],
+        ["Ops Center Tons", float(summary.get("total_john_deere_tons", 0) or 0)],
+        [],
+        ["Customer / Farm", "Date", "Field", "Product", "Spreader Weight", "Ops Center Weight"],
+        [],
+        [],
+    ]
+
+    detail_rows = summary.get("rows", [])
+    if not detail_rows:
+        rows.append(["No jobs were recorded in this period."])
+        return rows
+
+    grouped_rows = {}
+    for row in detail_rows:
+        customer_name = clean_name(row.get("customer")) or "Unknown Customer"
+        grouped_rows.setdefault(customer_name, []).append(row)
+
+    for customer_name in sorted(grouped_rows.keys(), key=lambda item: item.lower()):
+        rows.append([customer_name])
+
+        farm_groups = {}
+        for row in grouped_rows[customer_name]:
+            farm_name = clean_name(row.get("farm_name")) or "Unassigned Farm"
+            farm_groups.setdefault(farm_name, []).append(row)
+
+        show_all_farm_labels = len(farm_groups) > 1
+
+        for farm_name in sorted(farm_groups.keys(), key=lambda item: item.lower()):
+            if show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower():
+                rows.append(["  %s" % farm_name])
+
+            farm_rows = sorted(
+                farm_groups[farm_name],
+                key=lambda row: (
+                    str(row.get("job_date", "")),
+                    clean_name(row.get("muck_type")).lower(),
+                    clean_name(row.get("field_name")).lower(),
+                ),
+            )
+            farm_spread_total = 0.0
+            farm_ops_total = 0.0
+            for row in farm_rows:
+                try:
+                    spread_value = float(row.get("total_spreader_tons", 0) or 0)
+                except Exception:
+                    spread_value = 0.0
+                try:
+                    ops_value = float(row.get("total_john_deere_tons", 0) or 0)
+                except Exception:
+                    ops_value = 0.0
+
+                farm_spread_total += spread_value
+                farm_ops_total += ops_value
+                rows.append([
+                    "",
+                    format_job_date(row.get("job_date")),
+                    row.get("field_name", ""),
+                    row.get("muck_type", ""),
+                    spread_value,
+                    ops_value,
+                ])
+
+            rows.append(["  Farm Totals", "", "", "", farm_spread_total, farm_ops_total])
+            rows.append([])
+
+    return rows
+
+
+def pdf_escape(text):
+    return str(text or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def build_weekly_summary_pdf_rows(summary):
+    rows = []
+    detail_rows = summary.get("rows", [])
+    if not detail_rows:
+        rows.append(("detail", ["No jobs were recorded in this period.", "", "", "", "", ""]))
+        return rows
+
+    grouped_rows = {}
+    for row in detail_rows:
+        customer_name = clean_name(row.get("customer")) or "Unknown Customer"
+        grouped_rows.setdefault(customer_name, []).append(row)
+
+    for customer_name in sorted(grouped_rows.keys(), key=lambda item: item.lower()):
+        rows.append(("customer", [customer_name, "", "", "", "", ""]))
+
+        farm_groups = {}
+        for row in grouped_rows[customer_name]:
+            farm_name = clean_name(row.get("farm_name")) or "Unassigned Farm"
+            farm_groups.setdefault(farm_name, []).append(row)
+
+        show_all_farm_labels = len(farm_groups) > 1
+
+        for farm_name in sorted(farm_groups.keys(), key=lambda item: item.lower()):
+            if show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower():
+                rows.append(("farm", [farm_name, "", "", "", "", ""]))
+
+            farm_rows = sorted(
+                farm_groups[farm_name],
+                key=lambda row: (
+                    str(row.get("job_date", "")),
+                    clean_name(row.get("muck_type")).lower(),
+                    clean_name(row.get("field_name")).lower(),
+                ),
+            )
+            farm_spread_total = 0.0
+            farm_ops_total = 0.0
+            for row in farm_rows:
+                try:
+                    spread_value = float(row.get("total_spreader_tons", 0) or 0)
+                except Exception:
+                    spread_value = 0.0
+                try:
+                    ops_value = float(row.get("total_john_deere_tons", 0) or 0)
+                except Exception:
+                    ops_value = 0.0
+
+                farm_spread_total += spread_value
+                farm_ops_total += ops_value
+                rows.append((
+                    "detail",
+                    [
+                        "",
+                        format_job_date(row.get("job_date")),
+                        clean_name(row.get("field_name")),
+                        clean_name(row.get("muck_type")),
+                        format_tons(spread_value),
+                        format_tons(ops_value),
+                    ],
+                ))
+
+            rows.append((
+                "farm_total",
+                ["Farm Totals", "", "", "", format_tons(farm_spread_total), format_tons(farm_ops_total)],
+            ))
+            rows.append(("blank", ["", "", "", "", "", ""]))
+
+    return rows
+
+
+def truncate_pdf_text(text, max_chars):
+    value = str(text or "")
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 1:
+        return value[:max_chars]
+    return value[:max_chars - 1] + "…"
+
+
+def pdf_text_command(x, y, text, font_name, font_size):
+    return "0 g BT /%s %s Tf 1 0 0 1 %.2f %.2f Tm (%s) Tj ET" % (
+        font_name,
+        font_size,
+        x,
+        y,
+        pdf_escape(text),
+    )
+
+
+def build_pdf_attachment_bytes(summary):
+    page_width = 842
+    page_height = 595
+    left_margin = 24
+    right_margin = 24
+    top_margin = 22
+    bottom_margin = 24
+    table_top = 500
+    header_height = 22
+    row_heights = {
+        "customer": 22,
+        "farm": 20,
+        "detail": 18,
+        "farm_total": 20,
+        "blank": 10,
+    }
+    column_widths = [182, 72, 170, 130, 115, 125]
+    column_headers = ["Customer / Farm", "Date", "Field", "Product", "Spreader Weight", "Ops Center Weight"]
+    column_x = [left_margin]
+    for width in column_widths[:-1]:
+        column_x.append(column_x[-1] + width)
+    table_width = sum(column_widths)
+
+    rows = build_weekly_summary_pdf_rows(summary)
+
+    available_height = table_top - bottom_margin - header_height
+    pages = []
+    current_rows = []
+    used_height = 0
+    for row_kind, row_values in rows:
+        row_height = row_heights.get(row_kind, 18)
+        if current_rows and used_height + row_height > available_height:
+            pages.append(current_rows)
+            current_rows = []
+            used_height = 0
+        current_rows.append((row_kind, row_values))
+        used_height += row_height
+    if current_rows:
+        pages.append(current_rows)
+
+    if not pages:
+        pages = [[("detail", ["No jobs were recorded in this period.", "", "", "", "", ""])]]
+
+    def row_fill(row_kind):
+        if row_kind == "header":
+            return "0.88 0.88 0.88"
+        if row_kind == "customer":
+            return "0.93 0.93 0.93"
+        if row_kind == "farm":
+            return "0.97 0.97 0.97"
+        if row_kind == "farm_total":
+            return "0.95 0.95 0.95"
+        return None
+
+    def row_font(row_kind):
+        if row_kind in ["header", "customer", "farm", "farm_total"]:
+            if row_kind == "header":
+                return ("F2", 8.6)
+            return ("F2", 9.5)
+        return ("F1", 9.2)
+
+    def row_text_values(row_kind, values):
+        if row_kind == "blank":
+            return ["", "", "", "", "", ""]
+        return list(values) + ([""] * (6 - len(values)))
+
+    def draw_row(commands, y_top, row_kind, values):
+        row_height = row_heights.get(row_kind, 18)
+        y_bottom = y_top - row_height
+        fill = row_fill(row_kind)
+        if fill:
+            commands.append("%s rg" % fill)
+            commands.append("%.2f %.2f %.2f %.2f re f" % (left_margin, y_bottom, table_width, row_height))
+        commands.append("0.65 G")
+        commands.append("0.5 w")
+        commands.append("%.2f %.2f %.2f %.2f re S" % (left_margin, y_bottom, table_width, row_height))
+        for x_value in column_x[1:]:
+            commands.append("%.2f %.2f m %.2f %.2f l S" % (x_value, y_bottom, x_value, y_top))
+
+        font_name, font_size = row_font(row_kind)
+        text_values = row_text_values(row_kind, values)
+        max_chars = [32, 12, 30, 24, 12, 12]
+        for index, text_value in enumerate(text_values):
+            if not text_value:
+                continue
+            x_value = column_x[index] + 4
+            y_value = y_bottom + ((row_height - font_size) / 2.0) + 2
+            if index >= 4:
+                text_value = str(text_value)
+                approx_width = len(text_value) * (font_size * 0.5)
+                x_value = column_x[index] + column_widths[index] - approx_width - 4
+            commands.append(
+                pdf_text_command(
+                    x_value,
+                    y_value,
+                    truncate_pdf_text(text_value, max_chars[index]),
+                    font_name,
+                    font_size,
+                )
+            )
+
+    page_streams = []
+    for page_index, page_rows in enumerate(pages):
+        commands = []
+        if page_index == 0:
+            commands.append(pdf_text_command(left_margin, page_height - top_margin - 10, "Weekly Jobs Summary", "F2", 18))
+            commands.append(
+                pdf_text_command(
+                    left_margin,
+                    page_height - top_margin - 30,
+                    "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date"))),
+                    "F1",
+                    10,
+                )
+            )
+            commands.append(
+                pdf_text_command(
+                    left_margin,
+                    page_height - top_margin - 47,
+                    "Jobs: %s" % summary.get("job_count", 0),
+                    "F2",
+                    9.5,
+                )
+            )
+            commands.append(
+                pdf_text_command(
+                    left_margin + 110,
+                    page_height - top_margin - 47,
+                    "Spreader Tons: %s" % format_tons(summary.get("total_spreader_tons", 0)),
+                    "F2",
+                    9.5,
+                )
+            )
+            commands.append(
+                pdf_text_command(
+                    left_margin + 290,
+                    page_height - top_margin - 47,
+                    "Ops Center Tons: %s" % format_tons(summary.get("total_john_deere_tons", 0)),
+                    "F2",
+                    9.5,
+                )
+            )
+
+        y_cursor = table_top
+        draw_row(commands, y_cursor, "header", column_headers)
+        y_cursor -= header_height
+        for row_kind, row_values in page_rows:
+            draw_row(commands, y_cursor, row_kind, row_values)
+            y_cursor -= row_heights.get(row_kind, 18)
+        page_streams.append("\n".join(commands).encode("latin-1", "replace"))
+
+    objects = []
+
+    def add_object(payload):
+        if isinstance(payload, str):
+            payload = payload.encode("latin-1")
+        objects.append(payload)
+        return len(objects)
+
+    font_regular_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    font_bold_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    page_ids = []
+    pages_id_placeholder = add_object(b"<<>>")
+
+    for page_stream in page_streams:
+        content_id = add_object(
+            b"<< /Length %d >>\nstream\n%s\nendstream" % (len(page_stream), page_stream)
+        )
+        page_id = add_object(
+            (
+                "<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
+                "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>"
+            ) % (pages_id_placeholder, page_width, page_height, font_regular_id, font_bold_id, content_id)
+        )
+        page_ids.append(page_id)
+
+    pages_payload = "<< /Type /Pages /Count %d /Kids [%s] >>" % (
+        len(page_ids),
+        " ".join("%d 0 R" % page_id for page_id in page_ids),
+    )
+    objects[pages_id_placeholder - 1] = pages_payload.encode("latin-1")
+
+    catalog_id = add_object(("<< /Type /Catalog /Pages %d 0 R >>" % pages_id_placeholder).encode("latin-1"))
+
+    pdf = io.BytesIO()
+    pdf.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, payload in enumerate(objects, start=1):
+        offsets.append(pdf.tell())
+        pdf.write(("%d 0 obj\n" % index).encode("latin-1"))
+        pdf.write(payload)
+        pdf.write(b"\nendobj\n")
+
+    xref_start = pdf.tell()
+    pdf.write(("xref\n0 %d\n" % (len(objects) + 1)).encode("latin-1"))
+    pdf.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.write(("%010d 00000 n \n" % offset).encode("latin-1"))
+    pdf.write(
+        (
+            "trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF" % (
+                len(objects) + 1,
+                catalog_id,
+                xref_start,
+            )
+        ).encode("latin-1")
+    )
+    return pdf.getvalue()
+
+
+def build_xlsx_attachment_bytes(summary):
+    template = load_weekly_summary_template()
+    if template:
+        try:
+            return build_template_based_xlsx(summary, template)
+        except Exception:
+            pass
+
+    sheet_rows = build_weekly_summary_sheet_rows(summary)
+    sheet_xml_rows = []
+    row_index = 1
+    for row in sheet_rows:
+        cell_xml = []
+        col_index = 1
+        for value in row:
+            cell_xml.append(xlsx_cell_xml(row_index, col_index, value))
+            col_index += 1
+        sheet_xml_rows.append('<row r="%s">%s</row>' % (row_index, "".join(cell_xml)))
+        row_index += 1
+
+    worksheet_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="1" width="24" customWidth="1"/>
+    <col min="2" max="2" width="18" customWidth="1"/>
+    <col min="3" max="3" width="24" customWidth="1"/>
+    <col min="4" max="4" width="22" customWidth="1"/>
+    <col min="5" max="6" width="14" customWidth="1"/>
+  </cols>
+  <sheetData>%s</sheetData>
+</worksheet>
+""" % "".join(sheet_xml_rows)
+
+    workbook_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Weekly Summary" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>
+"""
+
+    workbook_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>
+"""
+
+    root_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>
+"""
+
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>
+"""
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    core_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Weekly Jobs Summary</dc:title>
+  <dc:creator>A. Farrell Contracting</dc:creator>
+  <cp:lastModifiedBy>A. Farrell Contracting</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">%s</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">%s</dcterms:modified>
+</cp:coreProperties>
+""" % (timestamp, timestamp)
+
+    app_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Python</Application>
+</Properties>
+"""
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types_xml)
+        archive.writestr("_rels/.rels", root_rels_xml)
+        archive.writestr("docProps/core.xml", core_xml)
+        archive.writestr("docProps/app.xml", app_xml)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+    return output.getvalue()
 
 
 def send_weekly_summary_email(summary, config):
@@ -1493,6 +2443,18 @@ def send_weekly_summary_email(summary, config):
     msg["From"] = config["from_email"]
     msg["To"] = ", ".join(config["to_emails"])
     msg.set_content(weekly_email_body(summary))
+    msg.add_attachment(
+        build_xlsx_attachment_bytes(summary),
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=weekly_summary_attachment_filename(summary),
+    )
+    msg.add_attachment(
+        build_pdf_attachment_bytes(summary),
+        maintype="application",
+        subtype="pdf",
+        filename=weekly_summary_pdf_attachment_filename(summary),
+    )
 
     with smtplib.SMTP(config["smtp_host"], int(config["smtp_port"]), timeout=30) as server:
         server.ehlo()

@@ -6,5 +6,6 @@ data/*
 !data/.gitkeep
 
 customer_master.csv
+email_settings.csv
 email_config.json
 data/email_config.json

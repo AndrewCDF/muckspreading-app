@@ -10,7 +10,7 @@
     "you@example.com"
   ],
   "send_weekday": 0,
-  "send_hour": 7,
+  "send_hour": 5,
   "send_minute": 0,
   "subject_prefix": "A. Farrell Contracting"
 }
