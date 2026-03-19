@@ -603,7 +603,7 @@ HTML = """
             </div>
             <div class="field">
               <label for="farm_name">Farm Name</label>
-              <input id="farm_name" name="farm_name" type="text" placeholder="Start typing a farm name" autocomplete="off" required>
+              <input id="farm_name" name="farm_name" type="text" placeholder="Start typing a farm name (optional)" autocomplete="off">
               <div id="farm_suggestions" class="suggestions"></div>
             </div>
             <div class="field">
@@ -2698,8 +2698,6 @@ def save_job():
         return redirect(url_for("home", ok=0, msg="Date must be in YYYY-MM-DD format"))
     if not customer:
         return redirect(url_for("home", ok=0, msg="Customer is required"))
-    if not farm_name:
-        return redirect(url_for("home", ok=0, msg="Farm name is required"))
     if not field_name:
         return redirect(url_for("home", ok=0, msg="Field name is required"))
     if not muck_type:
@@ -2755,7 +2753,7 @@ def save_job():
         save_customers(customers)
 
     farms = load_farms()
-    if farm_name not in farms:
+    if farm_name and farm_name not in farms:
         farms.append(farm_name)
         save_farms(farms)
 
