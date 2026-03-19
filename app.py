@@ -252,6 +252,9 @@ HTML = """
     .field.full {
       grid-column: 1 / -1;
     }
+    .field.notes-field {
+      grid-column: 1 / 2;
+    }
     label {
       font-size: 13px;
       text-transform: uppercase;
@@ -259,10 +262,10 @@ HTML = """
       font-weight: bold;
       color: #5d5b48;
     }
-    input, select, button {
+    input, select, button, textarea {
       font: inherit;
     }
-    input, select {
+    input, select, textarea {
       width: 100%;
       min-height: 56px;
       border-radius: 14px;
@@ -273,7 +276,12 @@ HTML = """
       outline: none;
       font-size: 16px;
     }
-    input:focus, select:focus {
+    textarea {
+      min-height: 110px;
+      resize: vertical;
+      padding-top: 14px;
+    }
+    input:focus, select:focus, textarea:focus {
       border-color: var(--gold);
       box-shadow: 0 0 0 4px rgba(186,148,80,0.14);
     }
@@ -292,6 +300,7 @@ HTML = """
       box-shadow: 0 16px 30px rgba(60, 49, 25, 0.16);
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
+      touch-action: pan-y;
     }
     .suggestions.is-open {
       display: block;
@@ -306,6 +315,7 @@ HTML = """
       text-align: left;
       cursor: pointer;
       font: inherit;
+      touch-action: manipulation;
     }
     .suggestion-item:last-child {
       border-bottom: none;
@@ -330,6 +340,27 @@ HTML = """
       flex-wrap: wrap;
       gap: 10px;
     }
+    .actions-inline {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .actions-inline form {
+      margin: 0;
+      flex: 0 0 auto;
+    }
+    .actions-inline .button {
+      width: auto;
+      white-space: nowrap;
+    }
+    .section-grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      align-items: start;
+    }
     .button {
       min-height: 56px;
       padding: 0 20px;
@@ -342,6 +373,11 @@ HTML = """
       justify-content: center;
       font-weight: bold;
     }
+    .button-small {
+      min-height: 40px;
+      padding: 0 14px;
+      font-size: 14px;
+    }
     .button-primary {
       background: linear-gradient(135deg, var(--gold), #cda961);
       color: #2b2212;
@@ -352,11 +388,43 @@ HTML = """
       color: var(--green);
       border: 1px solid rgba(60,95,70,0.12);
     }
+    .button-danger {
+      background: rgba(139,71,56,0.1);
+      color: var(--red);
+      border: 1px solid rgba(139,71,56,0.16);
+    }
     .button-full {
       width: 100%;
     }
     .bottom-export {
       margin-top: 18px;
+    }
+    .mini-form {
+      display: grid;
+      gap: 12px;
+    }
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric-block {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(60,95,70,0.08);
+      border: 1px solid rgba(60,95,70,0.1);
+      display: grid;
+      gap: 8px;
+    }
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 15px;
+    }
+    .table-actions {
+      min-width: 170px;
     }
     .table-wrap {
       overflow-x: auto;
@@ -367,50 +435,65 @@ HTML = """
       display: none;
       gap: 12px;
     }
-    .job-card {
-      padding: 16px;
-      border-radius: 18px;
+    .job-row {
+      padding: 12px 14px;
+      border-radius: 16px;
       border: 1px solid rgba(82, 69, 42, 0.1);
       background: rgba(255,255,255,0.68);
     }
-    .job-card-head {
+    .job-row-top {
       display: flex;
       justify-content: space-between;
-      gap: 12px;
+      gap: 14px;
       align-items: flex-start;
-      margin-bottom: 10px;
     }
-    .job-card-title {
-      font-size: 19px;
-      font-weight: bold;
-      line-height: 1.15;
-    }
-    .job-card-date {
-      color: var(--muted);
-      font-size: 14px;
-      white-space: nowrap;
-    }
-    .job-card-grid {
+    .job-row-main {
+      font-size: 16px;
+      line-height: 1.2;
+      min-width: 0;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
     }
-    .job-card-item {
-      padding: 11px 12px;
-      border-radius: 14px;
-      background: rgba(240,232,216,0.7);
-    }
-    .job-card-label {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #6a6657;
-      margin-bottom: 4px;
-    }
-    .job-card-value {
+    .job-row-customer {
       font-size: 16px;
+      font-weight: bold;
+      line-height: 1.2;
+    }
+    .job-row-farm {
+      font-size: 13px;
       line-height: 1.25;
+      color: #6a6657;
+      font-weight: normal;
+    }
+    .job-row-date {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .job-row-meta {
+      display: grid;
+      gap: 10px;
+      justify-items: end;
+      flex: 0 0 auto;
+    }
+    .job-row-summary {
+      font-size: 14px;
+      line-height: 1.3;
+      color: #6a6657;
+      min-width: 0;
       word-break: break-word;
+      display: grid;
+      gap: 10px;
+    }
+    .job-row-tons {
+      font-size: 13px;
+      line-height: 1.25;
+      color: #6a6657;
+      white-space: nowrap;
+    }
+    .job-row .actions-inline {
+      flex-direction: column;
+      align-items: stretch;
     }
     table {
       width: 100%;
@@ -446,6 +529,9 @@ HTML = """
     }
     @media (max-width: 980px) {
       .hero, .layout {
+        grid-template-columns: 1fr;
+      }
+      .section-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -500,6 +586,9 @@ HTML = """
       .form-grid {
         grid-template-columns: 1fr;
       }
+      .mini-grid {
+        grid-template-columns: 1fr;
+      }
       .field-date {
         max-width: min(100%, 220px);
       }
@@ -509,24 +598,28 @@ HTML = """
       .button {
         width: 100%;
       }
+      .actions-inline .button {
+        width: auto;
+      }
       .table-wrap {
         display: none;
       }
       .mobile-jobs {
         display: grid;
       }
-      .job-card-grid {
-        grid-template-columns: 1fr;
-      }
     }
     @media (max-width: 420px) {
-      .job-card-head {
+      .job-row-top,
+      .job-row-bottom {
         display: block;
       }
-      .job-card-date {
+      .job-row-date {
         display: block;
         margin-top: 4px;
         white-space: normal;
+      }
+      .job-row .actions-inline {
+        margin-top: 8px;
       }
     }
   </style>
@@ -584,49 +677,58 @@ HTML = """
 
     <section class="layout">
       <div class="card">
-        <h2 class="panel-title">New Job</h2>
+        <h2 class="panel-title">{{ form_title }}</h2>
 
         {% if status_msg %}
         <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
         {% endif %}
 
         <form method="post" action="{{ url_for('save_job') }}">
+          <input type="hidden" name="edit_job_id" value="{{ form_job.id }}">
+          <input type="hidden" name="job_date" value="{{ form_job.job_date or today_iso }}">
           <div class="form-grid">
             <div class="field field-date">
               <label for="job_date">Date</label>
-              <input id="job_date" name="job_date" type="date" value="{{ today_iso }}" required>
+              <input id="job_date" type="text" value="{{ form_job.job_date_label }}" readonly>
             </div>
             <div class="field">
               <label for="customer">Customer</label>
-              <input id="customer" name="customer" type="text" placeholder="Start typing a customer name" autocomplete="off" required>
+              <input id="customer" name="customer" type="text" placeholder="Start typing a customer name" autocomplete="off" value="{{ form_job.customer }}" required>
               <div id="customer_suggestions" class="suggestions"></div>
             </div>
             <div class="field">
               <label for="farm_name">Farm Name</label>
-              <input id="farm_name" name="farm_name" type="text" placeholder="Start typing a farm name (optional)" autocomplete="off">
+              <input id="farm_name" name="farm_name" type="text" placeholder="Start typing a farm name (optional)" autocomplete="off" value="{{ form_job.farm_name }}">
               <div id="farm_suggestions" class="suggestions"></div>
             </div>
             <div class="field">
               <label for="field_name">Field Name</label>
-              <input id="field_name" name="field_name" type="text" placeholder="Start typing a field name" autocomplete="off" required>
+              <input id="field_name" name="field_name" type="text" placeholder="Start typing a field name" autocomplete="off" value="{{ form_job.field_name }}" required>
               <div id="field_suggestions" class="suggestions"></div>
             </div>
             <div class="field">
               <label for="muck_type">Muck Type</label>
-              <input id="muck_type" name="muck_type" type="text" placeholder="Start typing a muck type" autocomplete="off" required>
+              <input id="muck_type" name="muck_type" type="text" placeholder="Start typing a muck type" autocomplete="off" value="{{ form_job.muck_type }}" required>
               <div id="muck_type_suggestions" class="suggestions"></div>
             </div>
             <div class="field">
               <label for="spreader_tons">Total Spreader Tons</label>
-              <input id="spreader_tons" name="spreader_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" required>
+              <input id="spreader_tons" name="spreader_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="{{ form_job.total_spreader_tons }}" required>
             </div>
             <div class="field">
               <label for="john_deere_tons">Total Ops Center Tons</label>
-              <input id="john_deere_tons" name="john_deere_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" required>
+              <input id="john_deere_tons" name="john_deere_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="{{ form_job.total_john_deere_tons }}" required>
+            </div>
+            <div class="field notes-field">
+              <label for="job_notes">Job Notes</label>
+              <textarea id="job_notes" name="job_notes" placeholder="Optional notes for this job">{{ form_job.job_notes }}</textarea>
             </div>
           </div>
           <div class="actions">
-            <button class="button button-primary" type="submit">Save Job</button>
+            <button class="button button-primary" type="submit">{{ form_submit_label }}</button>
+            {% if is_editing %}
+            <a class="button button-secondary" href="{{ url_for('home') }}">Cancel Edit</a>
+            {% endif %}
           </div>
         </form>
       </div>
@@ -644,9 +746,11 @@ HTML = """
                   <th>Farm</th>
                   <th>Field</th>
                   <th>Muck Type</th>
+                  <th>Notes</th>
                   <th>Spreader Tons</th>
                   <th>Ops Center Tons</th>
                   <th>Saved</th>
+                  <th class="table-actions">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -657,9 +761,18 @@ HTML = """
                   <td>{{ job.farm_name }}</td>
                   <td>{{ job.field_name }}</td>
                   <td>{{ job.muck_type }}</td>
+                  <td>{{ job.job_notes or '--' }}</td>
                   <td>{{ job.spreader_tons_label }}</td>
                   <td>{{ job.john_deere_tons_label }}</td>
                   <td>{{ job.saved_label }}</td>
+                  <td>
+                    <div class="actions-inline">
+                      <a class="button button-secondary button-small" href="{{ url_for('home', edit_id=job.id) }}">Edit</a>
+                      <form method="post" action="{{ url_for('delete_job', job_id=job.id) }}" class="delete-job-form">
+                        <button class="button button-danger button-small" type="submit">Delete</button>
+                      </form>
+                    </div>
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -667,35 +780,26 @@ HTML = """
         </div>
         <div class="mobile-jobs">
           {% for job in recent_jobs %}
-          <div class="job-card">
-            <div class="job-card-head">
-              <div class="job-card-title">{{ job.customer }}</div>
-              <div class="job-card-date">{{ job.job_date_label }}</div>
-            </div>
-              <div class="job-card-grid">
-                <div class="job-card-item">
-                  <div class="job-card-label">Farm</div>
-                  <div class="job-card-value">{{ job.farm_name }}</div>
+          <div class="job-row">
+            <div class="job-row-top">
+              <div class="job-row-main">
+                <div class="job-row-customer">{{ job.customer }}</div>
+                {% if job.farm_name %}
+                <div class="job-row-farm">{{ job.farm_name }}</div>
+                {% endif %}
+                <div class="job-row-summary">
+                  <div>{{ job.field_name }} | {{ job.muck_type }}</div>
+                  <div class="job-row-tons">Spreader {{ job.spreader_tons_label }} | Ops Center {{ job.john_deere_tons_label }}</div>
                 </div>
-                <div class="job-card-item">
-                  <div class="job-card-label">Field</div>
-                  <div class="job-card-value">{{ job.field_name }}</div>
-                </div>
-                <div class="job-card-item">
-                  <div class="job-card-label">Muck Type</div>
-                  <div class="job-card-value">{{ job.muck_type }}</div>
-                </div>
-                <div class="job-card-item">
-                  <div class="job-card-label">Spreader Tons</div>
-                  <div class="job-card-value">{{ job.spreader_tons_label }}</div>
-                </div>
-              <div class="job-card-item">
-                <div class="job-card-label">Ops Center Tons</div>
-                <div class="job-card-value">{{ job.john_deere_tons_label }}</div>
               </div>
-              <div class="job-card-item">
-                <div class="job-card-label">Saved</div>
-                <div class="job-card-value">{{ job.saved_label }}</div>
+              <div class="job-row-meta">
+                <div class="job-row-date">{{ job.job_date_label }}</div>
+                <div class="actions-inline">
+                  <a class="button button-secondary button-small" href="{{ url_for('home', edit_id=job.id) }}">Edit</a>
+                  <form method="post" action="{{ url_for('delete_job', job_id=job.id) }}" class="delete-job-form">
+                    <button class="button button-danger button-small" type="submit">Delete</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -707,11 +811,22 @@ HTML = """
       </div>
     </section>
 
+    <section class="section-grid">
+      <div class="card">
+        <h2 class="panel-title">Tools</h2>
+        <p class="copy">Use these for admin and backups.</p>
+        <div class="actions">
+          <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
+          <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
+        </div>
+      </div>
+    </section>
+
     <section class="bottom-export">
       <div class="card">
         <h2 class="panel-title">Export Jobs</h2>
-        <p class="copy">Download the full saved job list as a CSV file.</p>
-        <a class="button button-secondary button-full" href="{{ url_for('export_csv') }}">Download Full Job List CSV</a>
+        <p class="copy">Download the full saved job list as an Excel file.</p>
+        <a class="button button-secondary button-full" href="{{ url_for('export_jobs_xlsx') }}">Download Full Job List .xlsx</a>
       </div>
     </section>
   </div>
@@ -732,7 +847,6 @@ HTML = """
     const allFarms = {{ all_farms_json|safe }};
     const allMuckTypes = {{ muck_types_json|safe }};
     const suggestionBoxes = [customerSuggestions, farmSuggestions, fieldSuggestions, muckTypeSuggestions];
-
     function closeSuggestions(exceptBox) {
       for (const box of suggestionBoxes) {
         if (box !== exceptBox) {
@@ -789,8 +903,7 @@ HTML = """
           button.classList.add("is-match");
         }
         button.textContent = item.value;
-        button.addEventListener("pointerdown", function (event) {
-          event.preventDefault();
+        button.addEventListener("click", function () {
           onSelect(item.value);
           closeSuggestions();
         });
@@ -804,9 +917,20 @@ HTML = """
       return customerKey ? (customerFarmMap[customerKey] || []) : allFarms;
     }
 
+    function valueInOptions(rawValue, options) {
+      const typed = String(rawValue || "").trim().toLowerCase();
+      if (!typed) return false;
+      for (const option of options) {
+        if (String(option || "").trim().toLowerCase() === typed) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     function currentFieldOptions() {
       const customerKey = findCustomerKey(customerInput.value);
-      if (!customerKey) return allFields;
+      if (!customerKey) return [];
 
       const customerFields = fieldMap[customerKey] || {};
       const farmKey = String(farmInput.value || "").trim().toLowerCase();
@@ -836,24 +960,40 @@ HTML = """
         }
       }
 
-      return combined.length ? combined : allFields;
+      return combined;
+    }
+
+    function syncDependentInputs() {
+      const farmOptions = currentFarmOptions();
+      if (String(farmInput.value || "").trim() && !valueInOptions(farmInput.value, farmOptions)) {
+        farmInput.value = "";
+      }
+
+      const fieldOptions = currentFieldOptions();
+      if (String(fieldInput.value || "").trim() && !valueInOptions(fieldInput.value, fieldOptions)) {
+        fieldInput.value = "";
+      }
     }
 
     function showCustomerSuggestions() {
       openSuggestionBox(customerSuggestions, filterOptions(allCustomers, customerInput.value), function (value) {
         customerInput.value = value;
+        syncDependentInputs();
         if (!String(farmInput.value || "").trim()) {
           const farms = currentFarmOptions();
           if (farms.length === 1) {
             farmInput.value = farms[0];
           }
         }
+        showFarmSuggestions();
+        showFieldSuggestions();
       });
     }
 
     function showFarmSuggestions() {
       openSuggestionBox(farmSuggestions, filterOptions(currentFarmOptions(), farmInput.value), function (value) {
         farmInput.value = value;
+        showFieldSuggestions();
       });
     }
 
@@ -870,6 +1010,7 @@ HTML = """
     }
 
     customerInput.addEventListener("input", function () {
+      syncDependentInputs();
       showCustomerSuggestions();
       if (!String(farmInput.value || "").trim()) {
         showFarmSuggestions();
@@ -880,8 +1021,14 @@ HTML = """
     customerInput.addEventListener("focus", function () {
       showCustomerSuggestions();
     });
-    farmInput.addEventListener("input", showFarmSuggestions);
-    farmInput.addEventListener("keyup", showFarmSuggestions);
+    farmInput.addEventListener("input", function () {
+      showFarmSuggestions();
+      showFieldSuggestions();
+    });
+    farmInput.addEventListener("keyup", function () {
+      showFarmSuggestions();
+      showFieldSuggestions();
+    });
     farmInput.addEventListener("focus", function () {
       showFarmSuggestions();
     });
@@ -899,6 +1046,432 @@ HTML = """
     document.addEventListener("click", function (event) {
       if (!event.target.closest(".field")) {
         closeSuggestions();
+      }
+    });
+
+    for (const form of document.querySelectorAll(".delete-job-form")) {
+      form.addEventListener("submit", function (event) {
+        if (!window.confirm("Delete this saved job?")) {
+          event.preventDefault();
+          return;
+        }
+      });
+    }
+  </script>
+</body>
+</html>
+"""
+
+ADMIN_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A. Farrell Contracting Data Admin</title>
+  <style>
+    :root {
+      --bg: #e7decd;
+      --panel: rgba(250, 247, 240, 0.96);
+      --ink: #272d21;
+      --muted: #666653;
+      --line: #cabd9f;
+      --green: #3c5f46;
+      --gold: #ba9450;
+      --red: #8b4738;
+      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
+      --font-main: Georgia, "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-main);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
+        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+    }
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 18px 14px 28px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(82, 69, 42, 0.12);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+    h1, h2, h3 { margin-top: 0; }
+    .copy { color: var(--muted); line-height: 1.45; }
+    .status {
+      margin-bottom: 16px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      font-size: 15px;
+      border: 1px solid transparent;
+    }
+    .status.ok {
+      background: rgba(60,95,70,0.1);
+      border-color: rgba(60,95,70,0.16);
+      color: #284332;
+    }
+    .status.error {
+      background: rgba(139,71,56,0.1);
+      border-color: rgba(139,71,56,0.16);
+      color: #6d3124;
+    }
+    .mini-form, .stack { display: grid; gap: 12px; }
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: bold;
+      color: #5d5b48;
+    }
+    input, select, button {
+      font: inherit;
+    }
+    input, select {
+      width: 100%;
+      min-height: 48px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fffdfa;
+      color: var(--ink);
+      padding: 12px 14px;
+      outline: none;
+      font-size: 16px;
+    }
+    .suggestion-field {
+      position: relative;
+    }
+    .suggestions {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 30;
+      max-height: 220px;
+      overflow-y: auto;
+      border-radius: 16px;
+      border: 1px solid rgba(82, 69, 42, 0.16);
+      background: rgba(250, 247, 240, 0.98);
+      box-shadow: 0 16px 30px rgba(60, 49, 25, 0.16);
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    .suggestions.is-open {
+      display: block;
+    }
+    .suggestion-item {
+      width: 100%;
+      padding: 12px 14px;
+      border: none;
+      border-bottom: 1px solid rgba(82, 69, 42, 0.08);
+      background: transparent;
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+      touch-action: manipulation;
+    }
+    .suggestion-item:last-child {
+      border-bottom: none;
+    }
+    .suggestion-item:active,
+    .suggestion-item:focus,
+    .suggestion-item:hover {
+      background: rgba(186,148,80,0.14);
+      outline: none;
+    }
+    .suggestion-item.is-match {
+      background: rgba(186,148,80,0.08);
+      font-weight: bold;
+    }
+    .button {
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+    .button-secondary {
+      background: rgba(60,95,70,0.1);
+      color: var(--green);
+      border: 1px solid rgba(60,95,70,0.12);
+    }
+    .button-danger {
+      background: rgba(139,71,56,0.1);
+      color: var(--red);
+      border: 1px solid rgba(139,71,56,0.16);
+    }
+    .button-full { width: 100%; }
+    .button-small {
+      min-height: 38px;
+      padding: 0 12px;
+      font-size: 14px;
+    }
+    .actions-inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .map-list { display: grid; gap: 12px; }
+    .map-customer, .map-farm {
+      border: 1px solid rgba(82, 69, 42, 0.12);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255,255,255,0.55);
+    }
+    .farm-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .map-farm {
+      padding: 0;
+      overflow: hidden;
+    }
+    .map-farm summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px;
+    }
+    .map-farm summary::-webkit-details-marker {
+      display: none;
+    }
+    .map-farm summary::marker {
+      content: "";
+    }
+    .map-farm-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .map-farm-name {
+      font-weight: bold;
+    }
+    .map-farm-meta {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .map-farm-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid rgba(82, 69, 42, 0.08);
+      background: rgba(255,255,255,0.42);
+    }
+    .field-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .field-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(60,95,70,0.08);
+      border: 1px solid rgba(60,95,70,0.1);
+    }
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 860px) {
+      .grid, .mini-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top-links">
+      <a class="button button-secondary" href="{{ url_for('home') }}">Back To Jobs</a>
+      <a class="button button-secondary" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
+    </div>
+
+    {% if status_msg %}
+    <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
+    {% endif %}
+
+    <div class="grid">
+      <div class="card stack">
+        <div>
+          <h1>Data Admin</h1>
+          <p class="copy">Manage customer, farm, and field links used by saved jobs.</p>
+        </div>
+
+        <div>
+          <h2>Add Field Link</h2>
+          <form class="mini-form" method="post" action="{{ url_for('admin_add_field') }}">
+            <div class="mini-grid">
+              <div class="suggestion-field">
+                <label for="admin_customer_select">Existing Customer</label>
+                <input id="admin_customer_select" name="customer" type="text" placeholder="Select customer" autocomplete="off">
+                <div id="admin_customer_suggestions" class="suggestions"></div>
+              </div>
+              <div>
+                <label for="admin_customer_new">New Customer Name</label>
+                <input id="admin_customer_new" name="new_customer" type="text" placeholder="Optional new customer name">
+              </div>
+            </div>
+            <div>
+              <label for="admin_farm_name">Farm Name</label>
+              <input id="admin_farm_name" name="farm_name" type="text" placeholder="Optional farm name">
+            </div>
+            <div>
+              <label for="admin_field_name">Field Name</label>
+              <input id="admin_field_name" name="field_name" type="text" required>
+            </div>
+            <button class="button button-secondary button-full" type="submit">Add Field</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Customer / Farm Links</h2>
+        <div class="map-list">
+          {% for customer in admin_tree %}
+          <div class="map-customer">
+            <h3>{{ customer.customer_name }}</h3>
+            <div class="farm-list">
+              {% for farm in customer.farms %}
+              <details class="map-farm">
+                <summary>
+                  <div class="map-farm-title">
+                    <div class="map-farm-name">{{ farm.farm_label }}</div>
+                    <div class="map-farm-meta">{{ farm.fields|length }} fields</div>
+                  </div>
+                </summary>
+                <div class="map-farm-body">
+                  <div class="actions-inline">
+                    {% if farm.fields %}
+                    <form method="post" action="{{ url_for('admin_clear_farm_fields') }}">
+                      <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                      <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
+                      <button class="button button-danger button-small" type="submit">Clear Farm Fields</button>
+                    </form>
+                    {% endif %}
+                  </div>
+                  {% if farm.fields %}
+                  <div class="field-tags">
+                    {% for field_name in farm.fields %}
+                    <div class="field-tag">
+                      <span>{{ field_name }}</span>
+                      <form method="post" action="{{ url_for('admin_delete_field') }}">
+                        <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                        <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
+                        <input type="hidden" name="field_name" value="{{ field_name }}">
+                        <button class="button button-danger button-small" type="submit">Remove</button>
+                      </form>
+                    </div>
+                    {% endfor %}
+                  </div>
+                  {% else %}
+                  <p class="copy">No saved fields yet.</p>
+                  {% endif %}
+                </div>
+              </details>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const adminCustomers = {{ customers_json|safe }};
+    const adminCustomerInput = document.getElementById("admin_customer_select");
+    const adminCustomerSuggestions = document.getElementById("admin_customer_suggestions");
+
+    function closeAdminSuggestions() {
+      adminCustomerSuggestions.classList.remove("is-open");
+      adminCustomerSuggestions.innerHTML = "";
+    }
+
+    function filterAdminOptions(options, typedValue) {
+      const typed = String(typedValue || "").trim().toLowerCase();
+      if (!typed) {
+        return options.slice();
+      }
+      const starts = [];
+      const contains = [];
+      for (const option of options) {
+        const lower = option.toLowerCase();
+        if (lower.startsWith(typed)) {
+          starts.push(option);
+        } else if (lower.includes(typed)) {
+          contains.push(option);
+        }
+      }
+      return starts.concat(contains);
+    }
+
+    function openAdminSuggestions(options) {
+      adminCustomerSuggestions.innerHTML = "";
+      if (!options.length) {
+        closeAdminSuggestions();
+        return;
+      }
+      for (const option of options) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "suggestion-item";
+        if (String(adminCustomerInput.value || "").trim() && option.toLowerCase().startsWith(String(adminCustomerInput.value || "").trim().toLowerCase())) {
+          button.classList.add("is-match");
+        }
+        button.textContent = option;
+        button.addEventListener("click", function () {
+          adminCustomerInput.value = option;
+          closeAdminSuggestions();
+        });
+        adminCustomerSuggestions.appendChild(button);
+      }
+      adminCustomerSuggestions.classList.add("is-open");
+    }
+
+    function showAdminCustomerSuggestions() {
+      openAdminSuggestions(filterAdminOptions(adminCustomers, adminCustomerInput.value));
+    }
+
+    adminCustomerInput.addEventListener("input", showAdminCustomerSuggestions);
+    adminCustomerInput.addEventListener("keyup", showAdminCustomerSuggestions);
+    adminCustomerInput.addEventListener("focus", showAdminCustomerSuggestions);
+
+    document.addEventListener("click", function (event) {
+      if (!event.target.closest(".suggestion-field")) {
+        closeAdminSuggestions();
       }
     });
   </script>
@@ -934,6 +1507,18 @@ def append_json_line(path, payload):
     with open(path, "a") as handle:
         handle.write(json.dumps(payload))
         handle.write("\n")
+
+
+def write_json_lines_atomic(path, rows):
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=parent)
+    with os.fdopen(fd, "w") as handle:
+        for row in rows:
+            if isinstance(row, dict):
+                handle.write(json.dumps(row))
+                handle.write("\n")
+    os.replace(temp_path, path)
 
 
 def parse_csv_decimal(value):
@@ -1163,6 +1748,54 @@ def build_customer_farm_map(master_rows):
     for customer_name in out:
         out[customer_name].sort(key=lambda item: item.lower())
     return out
+
+
+def build_customer_field_admin_map(master_rows, jobs, field_map):
+    tree = {}
+
+    def ensure_bucket(customer_name, farm_name):
+        customer_name = clean_name(customer_name)
+        farm_name = clean_name(farm_name)
+        if not customer_name:
+            return None
+        customer_bucket = tree.setdefault(customer_name, {})
+        farm_bucket = customer_bucket.setdefault(farm_name, [])
+        return farm_bucket
+
+    for row in master_rows:
+        ensure_bucket(row.get("customer_name"), row.get("farm_name"))
+
+    for job in jobs:
+        ensure_bucket(job.get("customer"), job.get("farm_name"))
+
+    if isinstance(field_map, dict):
+        for customer_name, fields_by_farm in field_map.items():
+            if not isinstance(fields_by_farm, dict):
+                continue
+            for farm_name, field_names in fields_by_farm.items():
+                bucket = ensure_bucket(customer_name, farm_name)
+                if bucket is None or not isinstance(field_names, list):
+                    continue
+                for field_name in field_names:
+                    cleaned = clean_name(field_name)
+                    if cleaned and cleaned not in bucket:
+                        bucket.append(cleaned)
+
+    output = []
+    for customer_name in sorted(tree.keys(), key=lambda item: item.lower()):
+        farms = []
+        for farm_name in sorted(tree[customer_name].keys(), key=lambda item: item.lower()):
+            fields = sorted(tree[customer_name][farm_name], key=lambda item: item.lower())
+            farms.append({
+                "farm_name": farm_name or "",
+                "farm_label": farm_name or "No Farm Name",
+                "fields": fields,
+            })
+        output.append({
+            "customer_name": customer_name,
+            "farms": farms,
+        })
+    return output
 
 
 def find_customer_master_record(master_rows, customer_name, farm_name=""):
@@ -1485,6 +2118,116 @@ def load_jobs():
         return []
     rows.sort(key=lambda row: int(row.get("created_ts", 0)), reverse=True)
     return rows
+
+
+def save_jobs(rows):
+    ordered = []
+    if isinstance(rows, list):
+        ordered = [row for row in rows if isinstance(row, dict)]
+    ordered.sort(key=lambda row: (int(row.get("created_ts", 0) or 0), int(row.get("id", 0) or 0)))
+    write_json_lines_atomic(JOBS_PATH, ordered)
+
+
+def find_job_by_id(job_id):
+    try:
+        wanted = int(job_id)
+    except Exception:
+        return None
+    for row in load_jobs():
+        try:
+            if int(row.get("id", 0) or 0) == wanted:
+                return row
+        except Exception:
+            continue
+    return None
+
+
+def upsert_job(job_record):
+    rows = load_jobs()
+    updated = False
+    new_rows = []
+    for row in rows:
+        try:
+            matches = int(row.get("id", 0) or 0) == int(job_record.get("id", 0) or 0)
+        except Exception:
+            matches = False
+        if matches:
+            new_rows.append(job_record)
+            updated = True
+        else:
+            new_rows.append(row)
+    if not updated:
+        new_rows.append(job_record)
+    save_jobs(new_rows)
+
+
+def delete_job_by_id(job_id):
+    try:
+        wanted = int(job_id)
+    except Exception:
+        return False
+    rows = load_jobs()
+    kept = []
+    removed = False
+    for row in rows:
+        try:
+            matches = int(row.get("id", 0) or 0) == wanted
+        except Exception:
+            matches = False
+        if matches:
+            removed = True
+            continue
+        kept.append(row)
+    if removed:
+        save_jobs(kept)
+    return removed
+
+
+def parse_job_date(value):
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def parse_optional_iso_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return parse_job_date(text)
+
+
+def filter_jobs_by_date_range(rows, date_from=None, date_to=None):
+    filtered = []
+    for row in rows:
+        job_date = parse_job_date(row.get("job_date"))
+        if job_date is None:
+            continue
+        if date_from and job_date < date_from:
+            continue
+        if date_to and job_date > date_to:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def summarize_jobs(rows):
+    total_spreader = 0.0
+    total_john_deere = 0.0
+    for row in rows:
+        try:
+            total_spreader += float(row.get("total_spreader_tons", 0) or 0)
+        except Exception:
+            pass
+        try:
+            total_john_deere += float(row.get("total_john_deere_tons", 0) or 0)
+        except Exception:
+            pass
+    return {
+        "job_count": len(rows),
+        "total_spreader_tons": round(total_spreader, 2),
+        "total_john_deere_tons": round(total_john_deere, 2),
+    }
 
 
 def previous_full_week_range(now=None):
@@ -2573,7 +3316,6 @@ def build_context():
     year_job_count = 0
     year_spreader = 0.0
     year_john_deere = 0.0
-
     for customer_fields in field_map.values():
         if not isinstance(customer_fields, dict):
             continue
@@ -2610,6 +3352,7 @@ def build_context():
         row["spreader_tons_label"] = format_tons(row.get("total_spreader_tons"))
         row["john_deere_tons_label"] = format_tons(row.get("total_john_deere_tons"))
         row["saved_label"] = format_saved_time(row.get("created_ts"))
+        row["job_notes"] = clean_name(row.get("job_notes"))
         recent_jobs.append(row)
 
     for job in jobs:
@@ -2641,6 +3384,47 @@ def build_context():
             except Exception:
                 pass
 
+    form_job = {
+        "id": "",
+        "job_date": "",
+        "job_date_label": today_human,
+        "customer": "",
+        "farm_name": "",
+        "field_name": "",
+        "muck_type": "",
+        "total_spreader_tons": "",
+        "total_john_deere_tons": "",
+        "job_notes": "",
+    }
+    is_editing = False
+    form_title = "New Job"
+    form_submit_label = "Save Job"
+
+    edit_id = str(request.args.get("edit_id", "") or "").strip()
+    seed_job = None
+    if edit_id:
+        seed_job = find_job_by_id(edit_id)
+        if seed_job:
+            is_editing = True
+            form_title = "Edit Job"
+            form_submit_label = "Update Job"
+
+    if isinstance(seed_job, dict):
+        form_job = {
+            "id": seed_job.get("id") if is_editing else "",
+            "job_date": seed_job.get("job_date", "") if is_editing else today_iso,
+            "job_date_label": format_job_date(seed_job.get("job_date", "")) if is_editing else today_human,
+            "customer": seed_job.get("customer", ""),
+            "farm_name": seed_job.get("farm_name", ""),
+            "field_name": seed_job.get("field_name", ""),
+            "muck_type": seed_job.get("muck_type", ""),
+            "total_spreader_tons": format_tons(seed_job.get("total_spreader_tons")) if str(seed_job.get("total_spreader_tons", "")).strip() else "",
+            "total_john_deere_tons": format_tons(seed_job.get("total_john_deere_tons")) if str(seed_job.get("total_john_deere_tons", "")).strip() else "",
+            "job_notes": seed_job.get("job_notes", ""),
+        }
+
+    default_week_start, default_week_end = previous_full_week_range(now)
+
     return {
         "today_iso": today_iso,
         "today_human": today_human,
@@ -2661,6 +3445,10 @@ def build_context():
         "year_job_count": year_job_count,
         "year_spreader_tons": format_tons(year_spreader),
         "year_john_deere_tons": format_tons(year_john_deere),
+        "form_job": form_job,
+        "form_title": form_title,
+        "form_submit_label": form_submit_label,
+        "is_editing": is_editing,
         "status_msg": str(request.args.get("msg", "") or "").strip(),
         "status_ok": str(request.args.get("ok", "1")) == "1",
         "data_dir": DATA_DIR,
@@ -2680,22 +3468,40 @@ def home():
     return render_template_string(HTML, **build_context())
 
 
+@app.route("/admin")
+def admin_home():
+    ensure_data_dir()
+    master_rows = load_customer_master_rows()
+    jobs = load_jobs()
+    field_map = load_field_map()
+    customers = load_customers()
+    for row in master_rows:
+        customer_name = clean_name(row.get("customer_name"))
+        if customer_name and customer_name not in customers:
+            customers.append(customer_name)
+    customers.sort(key=lambda item: item.lower())
+    return render_template_string(
+        ADMIN_HTML,
+        admin_tree=build_customer_field_admin_map(master_rows, jobs, field_map),
+        customers=customers,
+        customers_json=json.dumps(customers),
+        status_msg=str(request.args.get("msg", "") or "").strip(),
+        status_ok=str(request.args.get("ok", "1")) == "1",
+    )
+
+
 @app.route("/jobs/save", methods=["POST"])
 def save_job():
     ensure_data_dir()
     master_rows = load_customer_master_rows()
-    job_date = str(request.form.get("job_date", "") or "").strip()
+    edit_job_id = str(request.form.get("edit_job_id", "") or "").strip()
     customer = clean_name(request.form.get("customer"))
     farm_name = clean_name(request.form.get("farm_name"))
     field_name = clean_name(request.form.get("field_name"))
     muck_type = clean_name(request.form.get("muck_type"))
+    job_notes = clean_name(request.form.get("job_notes"))
+    today_iso = datetime.now().strftime("%Y-%m-%d")
 
-    if not job_date:
-        return redirect(url_for("home", ok=0, msg="Date is required"))
-    try:
-        datetime.strptime(job_date, "%Y-%m-%d")
-    except Exception:
-        return redirect(url_for("home", ok=0, msg="Date must be in YYYY-MM-DD format"))
     if not customer:
         return redirect(url_for("home", ok=0, msg="Customer is required"))
     if not field_name:
@@ -2709,16 +3515,29 @@ def save_job():
     except ValueError as exc:
         return redirect(url_for("home", ok=0, msg=str(exc)))
 
+    existing_job = None
+    if edit_job_id:
+        existing_job = find_job_by_id(edit_job_id)
+        if not existing_job:
+            return redirect(url_for("home", ok=0, msg="Saved job could not be found for editing"))
+
+    if isinstance(existing_job, dict):
+        job_date = str(existing_job.get("job_date", "") or "").strip() or today_iso
+    else:
+        job_date = today_iso
+
     record = {
-        "id": int(time.time() * 1000),
+        "id": int(existing_job.get("id")) if isinstance(existing_job, dict) else int(time.time() * 1000),
         "job_date": job_date,
         "customer": customer,
         "farm_name": farm_name,
         "field_name": field_name,
         "muck_type": muck_type,
+        "job_notes": job_notes,
         "total_spreader_tons": spreader_tons,
         "total_john_deere_tons": john_deere_tons,
-        "created_ts": int(time.time()),
+        "created_ts": int(existing_job.get("created_ts")) if isinstance(existing_job, dict) and str(existing_job.get("created_ts", "")).strip() else int(time.time()),
+        "updated_ts": int(time.time()),
     }
 
     master_record = find_customer_master_record(master_rows, customer, farm_name)
@@ -2745,7 +3564,7 @@ def save_job():
             "customer_master_match": False,
         })
 
-    append_json_line(JOBS_PATH, record)
+    upsert_job(record)
 
     customers = load_customers()
     if customer not in customers:
@@ -2778,7 +3597,86 @@ def save_job():
     except Exception:
         sync_error = " Customer master update failed."
 
-    return redirect(url_for("home", ok=1, msg="Saved job for %s - %s.%s" % (customer, field_name, sync_error)))
+    action_label = "Updated" if existing_job else "Saved"
+    return redirect(url_for("home", ok=1, msg="%s job for %s - %s.%s" % (action_label, customer, field_name, sync_error)))
+
+
+@app.route("/jobs/delete/<int:job_id>", methods=["POST"])
+def delete_job(job_id):
+    ensure_data_dir()
+    if not delete_job_by_id(job_id):
+        return redirect(url_for("home", ok=0, msg="Saved job could not be found"))
+    return redirect(url_for("home", ok=1, msg="Deleted saved job"))
+
+
+@app.route("/admin/fields/add", methods=["POST"])
+def admin_add_field():
+    ensure_data_dir()
+    customer = clean_name(request.form.get("new_customer")) or clean_name(request.form.get("customer"))
+    farm_name = clean_name(request.form.get("farm_name"))
+    field_name = clean_name(request.form.get("field_name"))
+    if not customer or not field_name:
+        return redirect(url_for("admin_home", ok=0, msg="Customer and field name are required"))
+
+    customers = load_customers()
+    if customer not in customers:
+        customers.append(customer)
+        save_customers(customers)
+
+    farms = load_farms()
+    if farm_name and farm_name not in farms:
+        farms.append(farm_name)
+        save_farms(farms)
+
+    field_map = load_field_map()
+    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    farm_bucket = customer_bucket.get(farm_name, [])
+    if field_name not in farm_bucket:
+        farm_bucket.append(field_name)
+        farm_bucket.sort(key=lambda item: item.lower())
+        customer_bucket[farm_name] = farm_bucket
+        field_map[customer] = customer_bucket
+        save_field_map(field_map)
+    return redirect(url_for("admin_home", ok=1, msg="Field link saved"))
+
+
+@app.route("/admin/fields/delete", methods=["POST"])
+def admin_delete_field():
+    ensure_data_dir()
+    customer = clean_name(request.form.get("customer"))
+    farm_name = clean_name(request.form.get("farm_name"))
+    field_name = clean_name(request.form.get("field_name"))
+    field_map = load_field_map()
+    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    farm_bucket = customer_bucket.get(farm_name, [])
+    updated_bucket = [name for name in farm_bucket if clean_name(name).lower() != field_name.lower()]
+    if updated_bucket:
+        customer_bucket[farm_name] = updated_bucket
+    elif farm_name in customer_bucket:
+        del customer_bucket[farm_name]
+    if customer_bucket:
+        field_map[customer] = customer_bucket
+    elif customer in field_map:
+        del field_map[customer]
+    save_field_map(field_map)
+    return redirect(url_for("admin_home", ok=1, msg="Field removed"))
+
+
+@app.route("/admin/fields/clear-farm", methods=["POST"])
+def admin_clear_farm_fields():
+    ensure_data_dir()
+    customer = clean_name(request.form.get("customer"))
+    farm_name = clean_name(request.form.get("farm_name"))
+    field_map = load_field_map()
+    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    if farm_name in customer_bucket:
+        del customer_bucket[farm_name]
+    if customer_bucket:
+        field_map[customer] = customer_bucket
+    elif customer in field_map:
+        del field_map[customer]
+    save_field_map(field_map)
+    return redirect(url_for("admin_home", ok=1, msg="Farm fields cleared"))
 
 
 @app.route("/api/jobs")
@@ -2816,17 +3714,47 @@ def weekly_email_send_now_api():
     return jsonify({"ok": True, "summary": summary})
 
 
-@app.route("/jobs/export.csv")
-def export_csv():
+@app.route("/backup/export.zip")
+def backup_export_zip():
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        candidate_paths = [
+            ("app.py", os.path.join(APP_ROOT, "app.py")),
+            ("README.md", os.path.join(APP_ROOT, "README.md")),
+            ("customer_master.csv", os.path.join(APP_ROOT, "customer_master.csv")),
+            ("customer_master.template.csv", os.path.join(APP_ROOT, "customer_master.template.csv")),
+            ("email_settings.csv", os.path.join(APP_ROOT, "email_settings.csv")),
+            ("email_config.example.json", os.path.join(APP_ROOT, "email_config.example.json")),
+            ("muckspreading-app.service", os.path.join(APP_ROOT, "muckspreading-app.service")),
+            ("weekly_summary_layout_template.xlsx", os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")),
+        ]
+        for archive_name, file_path in candidate_paths:
+            if os.path.exists(file_path):
+                archive.write(file_path, archive_name)
+        if os.path.isdir(DATA_DIR):
+            for name in sorted(os.listdir(DATA_DIR)):
+                file_path = os.path.join(DATA_DIR, name)
+                if os.path.isfile(file_path):
+                    archive.write(file_path, os.path.join("data", name))
+    output.seek(0)
+    filename = "muckspreading_backup_%s.zip" % datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        output.getvalue(),
+        mimetype="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
+    )
+
+
+@app.route("/jobs/export.xlsx")
+def export_jobs_xlsx():
     rows = load_jobs()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
+    sheet_rows = [[
         "job_date",
         "customer",
         "farm_name",
         "field_name",
         "muck_type",
+        "job_notes",
         "total_spreader_tons",
         "total_john_deere_tons",
         "customer_email",
@@ -2838,14 +3766,16 @@ def export_csv():
         "vat_rate",
         "customer_master_match",
         "created_ts",
-    ])
+        "updated_ts",
+    ]]
     for row in reversed(rows):
-        writer.writerow([
+        sheet_rows.append([
             row.get("job_date", ""),
             row.get("customer", ""),
             row.get("farm_name", ""),
             row.get("field_name", ""),
             row.get("muck_type", ""),
+            row.get("job_notes", ""),
             row.get("total_spreader_tons", ""),
             row.get("total_john_deere_tons", ""),
             row.get("customer_email", ""),
@@ -2857,11 +3787,98 @@ def export_csv():
             row.get("vat_rate", ""),
             row.get("customer_master_match", ""),
             row.get("created_ts", ""),
+            row.get("updated_ts", ""),
         ])
-    filename = "muckspreading_jobs_%s.csv" % datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    sheet_xml_rows = []
+    row_index = 1
+    for row in sheet_rows:
+        cell_xml = []
+        col_index = 1
+        for value in row:
+            cell_xml.append(xlsx_cell_xml(row_index, col_index, value))
+            col_index += 1
+        sheet_xml_rows.append('<row r="%s">%s</row>' % (row_index, "".join(cell_xml)))
+        row_index += 1
+
+    worksheet_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="6" width="20" customWidth="1"/>
+    <col min="7" max="8" width="16" customWidth="1"/>
+    <col min="9" max="14" width="24" customWidth="1"/>
+    <col min="15" max="18" width="18" customWidth="1"/>
+  </cols>
+  <sheetData>%s</sheetData>
+</worksheet>
+""" % "".join(sheet_xml_rows)
+
+    workbook_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Jobs Export" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>
+"""
+
+    workbook_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>
+"""
+
+    root_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>
+"""
+
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>
+"""
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    core_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Jobs Export</dc:title>
+  <dc:creator>A. Farrell Contracting</dc:creator>
+  <cp:lastModifiedBy>A. Farrell Contracting</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">%s</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">%s</dcterms:modified>
+</cp:coreProperties>
+""" % (timestamp, timestamp)
+
+    app_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Python</Application>
+</Properties>
+"""
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types_xml)
+        archive.writestr("_rels/.rels", root_rels_xml)
+        archive.writestr("docProps/core.xml", core_xml)
+        archive.writestr("docProps/app.xml", app_xml)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+
+    filename = "muckspreading_jobs_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M%S")
     return Response(
         output.getvalue(),
-        mimetype="text/csv",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
     )
 
