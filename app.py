@@ -1022,21 +1022,20 @@ HTML = """
           <h2 class="panel-title">Summary Exports</h2>
           <p class="copy">Download a period summary in the same Excel layout used for the weekly summary email.</p>
           <div class="actions">
-            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}" target="download_frame">Download Current Week Summary .xlsx</a>
-            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}" target="download_frame">Download Current Month Summary .xlsx</a>
-            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}" target="download_frame">Download Last Month Summary .xlsx</a>
+            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}">Download Current Week Summary .xlsx</a>
+            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}">Download Current Month Summary .xlsx</a>
+            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}">Download Last Month Summary .xlsx</a>
           </div>
         </div>
         <div class="card">
           <h2 class="panel-title">Export Jobs</h2>
           <p class="copy">Download the full saved job list as an Excel file.</p>
-          <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_jobs_xlsx') }}" target="download_frame">Download Full Job List .xlsx</a>
+          <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_jobs_xlsx') }}">Download Full Job List .xlsx</a>
         </div>
       </div>
     </section>
   </div>
   <div id="download_notice" class="download-notice" hidden>Preparing download...</div>
-  <iframe id="download_frame" name="download_frame" class="download-frame" tabindex="-1" aria-hidden="true"></iframe>
 
   <script>
     const fieldMap = {{ field_map_json|safe }};
@@ -1051,7 +1050,6 @@ HTML = """
     const muckTypeInput = document.getElementById("muck_type");
     const muckTypeSuggestions = document.getElementById("muck_type_suggestions");
     const downloadNotice = document.getElementById("download_notice");
-    const downloadFrame = document.getElementById("download_frame");
     const allFields = {{ all_fields_json|safe }};
     const allFarms = {{ all_farms_json|safe }};
     const allMuckTypes = {{ muck_types_json|safe }};
@@ -1110,6 +1108,71 @@ HTML = """
       downloadNoticeTimer = window.setTimeout(function () {
         downloadNotice.hidden = true;
       }, 3200);
+    }
+
+    function parseDownloadFilename(response, fallbackName) {
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const utf8Match = disposition.match(/filename\\*=UTF-8''([^;]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try {
+          return decodeURIComponent(utf8Match[1]).replace(/^["']|["']$/g, "");
+        } catch (error) {
+        }
+      }
+      const plainMatch = disposition.match(/filename=([^;]+)/i);
+      if (plainMatch && plainMatch[1]) {
+        return plainMatch[1].trim().replace(/^["']|["']$/g, "");
+      }
+      return fallbackName;
+    }
+
+    async function triggerExportDownload(link) {
+      const targetUrl = new URL(link.getAttribute("href"), window.location.href);
+      targetUrl.searchParams.set("_dl", Date.now().toString());
+      showDownloadNotice("Preparing download...");
+
+      const response = await fetch(targetUrl.toString(), {
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        throw new Error("Download failed");
+      }
+
+      const blob = await response.blob();
+      const fallbackName = link.textContent.trim().replace(/^Download\\s+/i, "") || "download.xlsx";
+      const filename = parseDownloadFilename(response, fallbackName);
+
+      if (navigator.share && window.File) {
+        try {
+          const sharedFile = new File([blob], filename, {type: blob.type || "application/octet-stream"});
+          if (!navigator.canShare || navigator.canShare({files: [sharedFile]})) {
+            showDownloadNotice("Opening share options...");
+            await navigator.share({
+              files: [sharedFile],
+              title: filename,
+            });
+            return;
+          }
+        } catch (error) {
+          if (error && error.name === "AbortError") {
+            showDownloadNotice("Download cancelled");
+            return;
+          }
+        }
+      }
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      anchor.rel = "noopener";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(function () {
+        URL.revokeObjectURL(objectUrl);
+      }, 1000);
+      showDownloadNotice("Download started");
     }
 
     function openSuggestionBox(box, values, onSelect) {
@@ -1283,15 +1346,13 @@ HTML = """
     }
 
     for (const link of document.querySelectorAll("[data-download-link]")) {
-      link.addEventListener("click", function (event) {
-        if (!downloadFrame) {
-          return;
-        }
+      link.addEventListener("click", async function (event) {
         event.preventDefault();
-        const targetUrl = new URL(link.getAttribute("href"), window.location.href);
-        targetUrl.searchParams.set("_dl", Date.now().toString());
-        downloadFrame.src = targetUrl.toString();
-        showDownloadNotice("Preparing download...");
+        try {
+          await triggerExportDownload(link);
+        } catch (error) {
+          showDownloadNotice("Download failed");
+        }
       });
     }
   </script>
