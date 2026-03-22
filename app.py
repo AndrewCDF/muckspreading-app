@@ -567,6 +567,29 @@ HTML = """
     .bottom-export {
       margin-top: 18px;
     }
+    .download-notice {
+      position: fixed;
+      left: 50%;
+      bottom: calc(18px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: min(92vw, 420px);
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(39, 45, 33, 0.94);
+      color: #f5efe2;
+      text-align: center;
+      box-shadow: 0 18px 44px rgba(60, 49, 25, 0.28);
+    }
+    .download-notice[hidden] {
+      display: none;
+    }
+    .download-frame {
+      display: none;
+      width: 0;
+      height: 0;
+      border: 0;
+    }
     .mini-form {
       display: grid;
       gap: 12px;
@@ -999,19 +1022,21 @@ HTML = """
           <h2 class="panel-title">Summary Exports</h2>
           <p class="copy">Download a period summary in the same Excel layout used for the weekly summary email.</p>
           <div class="actions">
-            <a class="button button-secondary button-full" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}">Download Current Week Summary .xlsx</a>
-            <a class="button button-secondary button-full" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}">Download Current Month Summary .xlsx</a>
-            <a class="button button-secondary button-full" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}">Download Last Month Summary .xlsx</a>
+            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}" target="download_frame">Download Current Week Summary .xlsx</a>
+            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}" target="download_frame">Download Current Month Summary .xlsx</a>
+            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}" target="download_frame">Download Last Month Summary .xlsx</a>
           </div>
         </div>
         <div class="card">
           <h2 class="panel-title">Export Jobs</h2>
           <p class="copy">Download the full saved job list as an Excel file.</p>
-          <a class="button button-secondary button-full" href="{{ url_for('export_jobs_xlsx') }}">Download Full Job List .xlsx</a>
+          <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_jobs_xlsx') }}" target="download_frame">Download Full Job List .xlsx</a>
         </div>
       </div>
     </section>
   </div>
+  <div id="download_notice" class="download-notice" hidden>Preparing download...</div>
+  <iframe id="download_frame" name="download_frame" class="download-frame" tabindex="-1" aria-hidden="true"></iframe>
 
   <script>
     const fieldMap = {{ field_map_json|safe }};
@@ -1025,6 +1050,8 @@ HTML = """
     const fieldSuggestions = document.getElementById("field_suggestions");
     const muckTypeInput = document.getElementById("muck_type");
     const muckTypeSuggestions = document.getElementById("muck_type_suggestions");
+    const downloadNotice = document.getElementById("download_notice");
+    const downloadFrame = document.getElementById("download_frame");
     const allFields = {{ all_fields_json|safe }};
     const allFarms = {{ all_farms_json|safe }};
     const allMuckTypes = {{ muck_types_json|safe }};
@@ -1068,6 +1095,21 @@ HTML = """
         return a.value.localeCompare(b.value);
       });
       return filtered;
+    }
+
+    let downloadNoticeTimer = null;
+    function showDownloadNotice(message) {
+      if (!downloadNotice) {
+        return;
+      }
+      downloadNotice.textContent = message;
+      downloadNotice.hidden = false;
+      if (downloadNoticeTimer) {
+        window.clearTimeout(downloadNoticeTimer);
+      }
+      downloadNoticeTimer = window.setTimeout(function () {
+        downloadNotice.hidden = true;
+      }, 3200);
     }
 
     function openSuggestionBox(box, values, onSelect) {
@@ -1237,6 +1279,19 @@ HTML = """
           event.preventDefault();
           return;
         }
+      });
+    }
+
+    for (const link of document.querySelectorAll("[data-download-link]")) {
+      link.addEventListener("click", function (event) {
+        if (!downloadFrame) {
+          return;
+        }
+        event.preventDefault();
+        const targetUrl = new URL(link.getAttribute("href"), window.location.href);
+        targetUrl.searchParams.set("_dl", Date.now().toString());
+        downloadFrame.src = targetUrl.toString();
+        showDownloadNotice("Preparing download...");
       });
     }
   </script>
