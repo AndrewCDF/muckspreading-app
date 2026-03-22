@@ -28,6 +28,7 @@ MUCK_TYPES_PATH = os.path.join(DATA_DIR, "muck_types.json")
 FIELD_MAP_PATH = os.path.join(DATA_DIR, "customer_fields.json")
 EMAIL_CONFIG_PATH = os.path.join(DATA_DIR, "email_config.json")
 EMAIL_STATE_PATH = os.path.join(DATA_DIR, "weekly_email_state.json")
+CUSTOMER_MASTER_XLSX_PATH = os.path.join(APP_ROOT, "customer_master.xlsx")
 CUSTOMER_MASTER_CSV_PATH = os.path.join(APP_ROOT, "customer_master.csv")
 EMAIL_SETTINGS_CSV_PATH = os.path.join(APP_ROOT, "email_settings.csv")
 WEEKLY_SUMMARY_TEMPLATE_PATH = os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")
@@ -1720,17 +1721,114 @@ def parse_csv_decimal(value):
         return text
 
 
-def load_customer_master_rows():
-    if not os.path.exists(CUSTOMER_MASTER_CSV_PATH):
-        return []
+def worksheet_ref_col_index(ref):
+    letters = []
+    for char in str(ref or ""):
+        if char.isalpha():
+            letters.append(char.upper())
+        else:
+            break
+    value = 0
+    for char in letters:
+        value = (value * 26) + (ord(char) - 64)
+    return value
 
-    rows = []
+
+def xlsx_shared_strings(archive):
     try:
-        with open(CUSTOMER_MASTER_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
-            raw_rows = list(csv.reader(handle))
+        root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
     except Exception:
         return []
 
+    values = []
+    for item in root.findall("{%s}si" % XLSX_NS):
+        text_parts = []
+        text_node = item.find("{%s}t" % XLSX_NS)
+        if text_node is not None and text_node.text is not None:
+            text_parts.append(text_node.text)
+        for run in item.findall("{%s}r" % XLSX_NS):
+            run_text = run.find("{%s}t" % XLSX_NS)
+            if run_text is not None and run_text.text is not None:
+                text_parts.append(run_text.text)
+        values.append("".join(text_parts))
+    return values
+
+
+def xlsx_first_sheet_rows(path):
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+            rels_root = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            relationships = {}
+            for rel in rels_root.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
+                relationships[rel.attrib.get("Id")] = rel.attrib.get("Target", "")
+
+            first_sheet = workbook_root.find("{%s}sheets/{%s}sheet" % (XLSX_NS, XLSX_NS))
+            if first_sheet is None:
+                return []
+            rel_id = first_sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
+            target = relationships.get(rel_id, "worksheets/sheet1.xml")
+            if not target.startswith("xl/"):
+                target = "xl/%s" % target.lstrip("/")
+
+            sheet_root = ET.fromstring(archive.read(target))
+            shared_strings = xlsx_shared_strings(archive)
+    except Exception:
+        return []
+
+    rows = []
+    sheet_data = sheet_root.find("{%s}sheetData" % XLSX_NS)
+    if sheet_data is None:
+        return rows
+
+    for row_node in sheet_data.findall("{%s}row" % XLSX_NS):
+        row_values = []
+        for cell in row_node.findall("{%s}c" % XLSX_NS):
+            ref = cell.attrib.get("r", "")
+            col_index = worksheet_ref_col_index(ref)
+            while len(row_values) < max(col_index - 1, 0):
+                row_values.append("")
+
+            value = ""
+            cell_type = cell.attrib.get("t", "")
+            if cell_type == "inlineStr":
+                inline_node = cell.find("{%s}is/{%s}t" % (XLSX_NS, XLSX_NS))
+                if inline_node is not None and inline_node.text is not None:
+                    value = inline_node.text
+            else:
+                value_node = cell.find("{%s}v" % XLSX_NS)
+                if value_node is not None and value_node.text is not None:
+                    value = value_node.text
+                    if cell_type == "s":
+                        try:
+                            value = shared_strings[int(value)]
+                        except Exception:
+                            pass
+            row_values.append(value)
+        rows.append(row_values)
+    return rows
+
+
+def load_customer_master_raw_rows():
+    if os.path.exists(CUSTOMER_MASTER_XLSX_PATH):
+        rows = xlsx_first_sheet_rows(CUSTOMER_MASTER_XLSX_PATH)
+        if rows:
+            return rows
+    if not os.path.exists(CUSTOMER_MASTER_CSV_PATH):
+        return []
+    try:
+        with open(CUSTOMER_MASTER_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
+            return list(csv.reader(handle))
+    except Exception:
+        return []
+
+
+def load_customer_master_rows():
+    raw_rows = load_customer_master_raw_rows()
+    if not raw_rows:
+        return []
+
+    rows = []
     header_index = None
     headers = []
     i = 0
@@ -3957,6 +4055,7 @@ def backup_export_zip():
         candidate_paths = [
             ("app.py", os.path.join(APP_ROOT, "app.py")),
             ("README.md", os.path.join(APP_ROOT, "README.md")),
+            ("customer_master.xlsx", os.path.join(APP_ROOT, "customer_master.xlsx")),
             ("customer_master.csv", os.path.join(APP_ROOT, "customer_master.csv")),
             ("customer_master.template.csv", os.path.join(APP_ROOT, "customer_master.template.csv")),
             ("email_settings.csv", os.path.join(APP_ROOT, "email_settings.csv")),

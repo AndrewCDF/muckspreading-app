@@ -12,7 +12,7 @@ Standalone web app for the office Raspberry Pi.
 - New customer names are remembered for future entries
 - New farm names are remembered for future entries
 - New field names are remembered for future entries
-- New muck types can be managed from `customer_master.csv` and are also remembered from saved jobs
+- New muck types can be managed from `customer_master.xlsx` and are also remembered from saved jobs
 - Field names are linked to each customer
 - Total spreader tons
 - Total Ops Center tons
@@ -33,17 +33,21 @@ The app keeps its own data in:
 - `data/email_config.json`
 - `data/weekly_email_state.json`
 
-The app also reads a master spreadsheet file in the app folder:
+The app reads a master spreadsheet file in the app folder:
 
-- `customer_master.csv`
+- `customer_master.xlsx`
 
-The GitHub repo includes a blank starter file:
+The GitHub repo still includes the old starter CSV:
 
 - `customer_master.template.csv`
 
 ## Customer Master Spreadsheet
 
-On a new install, copy `customer_master.template.csv` to `customer_master.csv`, then edit `customer_master.csv` directly in Excel or Numbers and keep these columns:
+Preferred setup:
+
+- create `customer_master.xlsx` in the app folder
+- keep the first sheet as the customer master sheet
+- keep these columns on the header row:
 
 - `customer_name`
 - `farm_name`
@@ -57,12 +61,16 @@ On a new install, copy `customer_master.template.csv` to `customer_master.csv`, 
 - `active`
 - `muck_type`
 
+Fallback:
+
+- if `customer_master.xlsx` is not present, the app will still read `customer_master.csv`
+- that means your existing install will keep working while you move over to `.xlsx`
+
 What it does:
 
 - customer names from the spreadsheet appear in the customer suggestions
 - farm names from the spreadsheet appear in the farm suggestions
 - muck types from the spreadsheet appear in the muck type suggestions
-- when you save a job with a new customer, farm, or muck type combination, the app can add that combination back into `customer_master.csv`
 - when a job matches a customer and farm from the spreadsheet, the app snapshots:
   - email
   - address
