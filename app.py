@@ -5,9 +5,11 @@ import json
 import os
 import smtplib
 import struct
+import subprocess
 import tempfile
 import threading
 import time
+import sys
 import zipfile
 import xml.etree.ElementTree as ET
 import zlib
@@ -501,6 +503,10 @@ HTML = """
       flex-wrap: wrap;
       gap: 10px;
     }
+    .actions form {
+      margin: 0;
+      width: 100%;
+    }
     .actions-inline {
       display: flex;
       flex-wrap: nowrap;
@@ -979,15 +985,29 @@ HTML = """
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
           <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
+          <form method="post" action="{{ url_for('update_app') }}" class="button-full">
+            <button class="button button-secondary button-full" type="submit">Update App</button>
+          </form>
         </div>
       </div>
     </section>
 
     <section class="bottom-export">
-      <div class="card">
-        <h2 class="panel-title">Export Jobs</h2>
-        <p class="copy">Download the full saved job list as an Excel file.</p>
-        <a class="button button-secondary button-full" href="{{ url_for('export_jobs_xlsx') }}">Download Full Job List .xlsx</a>
+      <div class="section-grid">
+        <div class="card">
+          <h2 class="panel-title">Summary Exports</h2>
+          <p class="copy">Download a period summary in the same Excel layout used for the weekly summary email.</p>
+          <div class="actions">
+            <a class="button button-secondary button-full" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}">Download Current Week Summary .xlsx</a>
+            <a class="button button-secondary button-full" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}">Download Current Month Summary .xlsx</a>
+            <a class="button button-secondary button-full" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}">Download Last Month Summary .xlsx</a>
+          </div>
+        </div>
+        <div class="card">
+          <h2 class="panel-title">Export Jobs</h2>
+          <p class="copy">Download the full saved job list as an Excel file.</p>
+          <a class="button button-secondary button-full" href="{{ url_for('export_jobs_xlsx') }}">Download Full Job List .xlsx</a>
+        </div>
       </div>
     </section>
   </div>
@@ -2282,10 +2302,30 @@ def previous_full_week_range(now=None):
     return start_date, end_date
 
 
-def weekly_jobs_summary(start_date=None, end_date=None):
-    if start_date is None or end_date is None:
-        start_date, end_date = previous_full_week_range()
+def current_week_range(now=None):
+    now = now or datetime.now()
+    today = now.date()
+    start_date = today - timedelta(days=today.weekday())
+    return start_date, today
 
+
+def current_month_range(now=None):
+    now = now or datetime.now()
+    today = now.date()
+    start_date = today.replace(day=1)
+    return start_date, today
+
+
+def last_month_range(now=None):
+    now = now or datetime.now()
+    today = now.date()
+    first_of_current_month = today.replace(day=1)
+    end_date = first_of_current_month - timedelta(days=1)
+    start_date = end_date.replace(day=1)
+    return start_date, end_date
+
+
+def jobs_summary_for_range(start_date, end_date, title=None):
     rows = []
     total_spreader = 0.0
     total_john_deere = 0.0
@@ -2309,6 +2349,7 @@ def weekly_jobs_summary(start_date=None, end_date=None):
             pass
 
     return {
+        "title": title or "Jobs Summary",
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "job_count": len(rows),
@@ -2316,6 +2357,12 @@ def weekly_jobs_summary(start_date=None, end_date=None):
         "total_john_deere_tons": round(total_john_deere, 2),
         "rows": rows,
     }
+
+
+def weekly_jobs_summary(start_date=None, end_date=None):
+    if start_date is None or end_date is None:
+        start_date, end_date = previous_full_week_range()
+    return jobs_summary_for_range(start_date, end_date, "Weekly Jobs Summary")
 
 
 def weekly_email_subject(summary, config):
@@ -2350,6 +2397,28 @@ def weekly_summary_pdf_attachment_filename(summary):
         str(summary.get("start_date", "")).replace("-", ""),
         str(summary.get("end_date", "")).replace("-", ""),
     )
+
+
+def summary_export_config(period_key):
+    now = datetime.now()
+    options = {
+        "current-week": {
+            "title": "Current Week Jobs Summary",
+            "filename_prefix": "current_week_jobs_summary",
+            "range": current_week_range(now),
+        },
+        "current-month": {
+            "title": "Current Month Jobs Summary",
+            "filename_prefix": "current_month_jobs_summary",
+            "range": current_month_range(now),
+        },
+        "last-month": {
+            "title": "Last Month Jobs Summary",
+            "filename_prefix": "last_month_jobs_summary",
+            "range": last_month_range(now),
+        },
+    }
+    return options.get(str(period_key or "").strip().lower())
 
 
 def xlsx_col_name(index):
@@ -2592,8 +2661,9 @@ def load_weekly_summary_template():
 
 
 def weekly_summary_template_rows(summary, labels):
+    summary_title = clean_name(summary.get("title")) or labels["title"]
     rows = [
-        ("title", [labels["title"]]),
+        ("title", [summary_title]),
         ("period", [labels["period"], "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date")))]),
         ("blank", []),
         ("jobs", [labels["jobs"], int(summary.get("job_count", 0) or 0)]),
@@ -2748,7 +2818,7 @@ def build_template_based_xlsx(summary, template):
 
 def build_weekly_summary_sheet_rows(summary):
     rows = [
-        ["Weekly Jobs Summary"],
+        [clean_name(summary.get("title")) or "Weekly Jobs Summary"],
         ["Period", "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date")))],
         [],
         ["Jobs", int(summary.get("job_count", 0) or 0)],
@@ -3302,6 +3372,32 @@ def start_background_workers(debug_mode=False):
     worker.start()
 
 
+def run_git_command(args, timeout_seconds=120):
+    return subprocess.run(
+        args,
+        cwd=APP_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+    )
+
+
+def git_update_message(result, fallback):
+    text = clean_name(result.stdout) or clean_name(result.stderr)
+    if not text:
+        return fallback
+    return text.splitlines()[0]
+
+
+def restart_app_process(delay_seconds=1.5):
+    def _restart():
+        time.sleep(delay_seconds)
+        os.chdir(APP_ROOT)
+        os.execv(sys.executable, [sys.executable, os.path.join(APP_ROOT, "app.py")])
+
+    threading.Thread(target=_restart, daemon=True).start()
+
+
 def parse_tons(raw_value, label):
     text = str(raw_value or "").strip()
     if not text:
@@ -3776,6 +3872,84 @@ def weekly_email_send_now_api():
     return jsonify({"ok": True, "summary": summary})
 
 
+@app.route("/app/update", methods=["POST"])
+def update_app():
+    git_dir = os.path.join(APP_ROOT, ".git")
+    if not os.path.isdir(git_dir):
+        return redirect(url_for("home", ok=0, msg="This install is not a git repo"))
+
+    branch_result = run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], timeout_seconds=30)
+    if branch_result.returncode != 0:
+        return redirect(url_for("home", ok=0, msg=git_update_message(branch_result, "Could not read git branch")))
+
+    branch_name = clean_name(branch_result.stdout) or "main"
+    fetch_result = run_git_command(["git", "fetch", "origin", branch_name], timeout_seconds=180)
+    if fetch_result.returncode != 0:
+        return redirect(url_for("home", ok=0, msg=git_update_message(fetch_result, "Git fetch failed")))
+
+    head_result = run_git_command(["git", "rev-parse", "HEAD"], timeout_seconds=30)
+    remote_result = run_git_command(["git", "rev-parse", "FETCH_HEAD"], timeout_seconds=30)
+    if head_result.returncode != 0 or remote_result.returncode != 0:
+        return redirect(url_for("home", ok=0, msg="Could not compare app versions"))
+
+    local_rev = clean_name(head_result.stdout)
+    remote_rev = clean_name(remote_result.stdout)
+    if local_rev and remote_rev and local_rev == remote_rev:
+        return redirect(url_for("home", ok=1, msg="App is already up to date"))
+
+    pull_result = run_git_command(["git", "pull", "--ff-only", "origin", branch_name], timeout_seconds=180)
+    if pull_result.returncode != 0:
+        return redirect(url_for("home", ok=0, msg=git_update_message(pull_result, "Git pull failed")))
+
+    restart_app_process()
+    return render_template_string(
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="8;url={{ url_for('home') }}">
+  <title>Updating App</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+      color: #272d21;
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    .card {
+      max-width: 520px;
+      padding: 28px;
+      border-radius: 24px;
+      background: rgba(250, 247, 240, 0.96);
+      border: 1px solid rgba(82, 69, 42, 0.12);
+      box-shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 32px;
+    }
+    p {
+      margin: 0;
+      line-height: 1.5;
+      color: #666653;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Updating App</h1>
+    <p>The latest update was installed. The app is restarting now and should reload automatically in a few seconds.</p>
+  </div>
+</body>
+</html>"""
+    )
+
+
 @app.route("/backup/export.zip")
 def backup_export_zip():
     output = io.BytesIO()
@@ -3803,6 +3977,26 @@ def backup_export_zip():
     return Response(
         output.getvalue(),
         mimetype="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
+    )
+
+
+@app.route("/summary/export/<period_key>.xlsx")
+def export_period_summary_xlsx(period_key):
+    config = summary_export_config(period_key)
+    if not isinstance(config, dict):
+        return redirect(url_for("home", ok=0, msg="Unknown summary export period"))
+
+    start_date, end_date = config["range"]
+    summary = jobs_summary_for_range(start_date, end_date, config["title"])
+    filename = "%s_%s_to_%s.xlsx" % (
+        config["filename_prefix"],
+        start_date.strftime("%Y%m%d"),
+        end_date.strftime("%Y%m%d"),
+    )
+    return Response(
+        build_xlsx_attachment_bytes(summary),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
     )
 
