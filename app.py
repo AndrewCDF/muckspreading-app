@@ -2850,7 +2850,7 @@ def load_weekly_summary_template():
             "ops_total": row_style_map(6),
             "headers": row_style_map(8),
             "customer": customer_style_map,
-            "farm": farm_style_map or customer_style_map,
+            "farm": {},
             "detail": detail_style_map,
             "farm_total": farm_total_style_map,
         },
@@ -2865,7 +2865,11 @@ def load_weekly_summary_template():
             "headers": row_layout(8),
             "blank_after_headers": {"columns": [], "styles": {}, "attrs": row_attrs(9)},
             "customer": row_layout(customer_row_number),
-            "farm": row_layout(farm_row_number or customer_row_number),
+            "farm": {
+                "columns": (row_layout(farm_row_number or customer_row_number).get("columns") or [1]),
+                "styles": {},
+                "attrs": row_attrs(farm_row_number or customer_row_number),
+            },
             "detail": row_layout(detail_row_number or 11),
             "farm_total": row_layout(farm_total_row_number or 12),
         },
@@ -2918,13 +2922,14 @@ def weekly_summary_template_rows(summary, labels):
 
         farm_groups = {}
         for row in grouped_rows[customer_name]:
-            farm_name = clean_name(row.get("farm_name")) or "Unassigned Farm"
+            farm_name = clean_name(row.get("farm_name"))
             farm_groups.setdefault(farm_name, []).append(row)
 
-        show_all_farm_labels = len(farm_groups) > 1
+        named_farms = [farm_name for farm_name in farm_groups.keys() if clean_name(farm_name)]
+        show_all_farm_labels = len(named_farms) > 1 or (len(named_farms) >= 1 and "" in farm_groups)
 
-        for farm_name in sorted(farm_groups.keys(), key=lambda item: item.lower()):
-            if show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower():
+        for farm_name in sorted(farm_groups.keys(), key=lambda item: (item == "", item.lower())):
+            if farm_name and (show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower()):
                 rows.append(("farm", [farm_name]))
 
             farm_rows = sorted(
@@ -3080,13 +3085,14 @@ def build_weekly_summary_sheet_rows(summary):
 
         farm_groups = {}
         for row in grouped_rows[customer_name]:
-            farm_name = clean_name(row.get("farm_name")) or "Unassigned Farm"
+            farm_name = clean_name(row.get("farm_name"))
             farm_groups.setdefault(farm_name, []).append(row)
 
-        show_all_farm_labels = len(farm_groups) > 1
+        named_farms = [farm_name for farm_name in farm_groups.keys() if clean_name(farm_name)]
+        show_all_farm_labels = len(named_farms) > 1 or (len(named_farms) >= 1 and "" in farm_groups)
 
-        for farm_name in sorted(farm_groups.keys(), key=lambda item: item.lower()):
-            if show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower():
+        for farm_name in sorted(farm_groups.keys(), key=lambda item: (item == "", item.lower())):
+            if farm_name and (show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower()):
                 rows.append(["  %s" % farm_name])
 
             farm_rows = sorted(
@@ -3147,13 +3153,14 @@ def build_weekly_summary_pdf_rows(summary):
 
         farm_groups = {}
         for row in grouped_rows[customer_name]:
-            farm_name = clean_name(row.get("farm_name")) or "Unassigned Farm"
+            farm_name = clean_name(row.get("farm_name"))
             farm_groups.setdefault(farm_name, []).append(row)
 
-        show_all_farm_labels = len(farm_groups) > 1
+        named_farms = [farm_name for farm_name in farm_groups.keys() if clean_name(farm_name)]
+        show_all_farm_labels = len(named_farms) > 1 or (len(named_farms) >= 1 and "" in farm_groups)
 
-        for farm_name in sorted(farm_groups.keys(), key=lambda item: item.lower()):
-            if show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower():
+        for farm_name in sorted(farm_groups.keys(), key=lambda item: (item == "", item.lower())):
+            if farm_name and (show_all_farm_labels or clean_name(farm_name).lower() != clean_name(customer_name).lower()):
                 rows.append(("farm", [farm_name, "", "", "", "", ""]))
 
             farm_rows = sorted(
@@ -3266,14 +3273,12 @@ def build_pdf_attachment_bytes(summary):
             return "0.88 0.88 0.88"
         if row_kind == "customer":
             return "0.93 0.93 0.93"
-        if row_kind == "farm":
-            return "0.97 0.97 0.97"
         if row_kind == "farm_total":
             return "0.95 0.95 0.95"
         return None
 
     def row_font(row_kind):
-        if row_kind in ["header", "customer", "farm", "farm_total"]:
+        if row_kind in ["header", "customer", "farm_total"]:
             if row_kind == "header":
                 return ("F2", 8.6)
             return ("F2", 9.5)
