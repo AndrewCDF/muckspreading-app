@@ -1005,7 +1005,8 @@ HTML = """
     <section class="section-grid">
       <div class="card">
         <h2 class="panel-title">Tools</h2>
-        <p class="copy">Use these for admin and backups.</p>
+        <p class="copy">Use these for admin, backups, and updates.</p>
+        <div class="hint">Current version: {{ app_version }}</div>
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
           <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
@@ -1711,6 +1712,37 @@ ADMIN_HTML = """
               {% endfor %}
             </div>
           </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card stack">
+        <div>
+          <h2>Muck Types</h2>
+          <p class="copy">Manage the saved muck type list used in job entry.</p>
+        </div>
+
+        <div>
+          <form class="mini-form" method="post" action="{{ url_for('admin_add_muck_type') }}">
+            <div>
+              <label for="admin_muck_type_name">New Muck Type</label>
+              <input id="admin_muck_type_name" name="muck_type" type="text" placeholder="Enter muck type name" required>
+            </div>
+            <button class="button button-secondary button-full" type="submit">Add Muck Type</button>
+          </form>
+        </div>
+
+        <div class="field-tags">
+          {% for muck_type in muck_types %}
+          <div class="field-tag">
+            <span>{{ muck_type }}</span>
+            <form method="post" action="{{ url_for('admin_delete_muck_type') }}">
+              <input type="hidden" name="muck_type" value="{{ muck_type }}">
+              <button class="button button-danger button-small" type="submit">Remove</button>
+            </form>
+          </div>
+          {% else %}
+          <p class="copy">No saved muck types yet.</p>
           {% endfor %}
         </div>
       </div>
@@ -3629,6 +3661,16 @@ def git_update_message(result, fallback):
     return text.splitlines()[0]
 
 
+def app_version_label():
+    git_dir = os.path.join(APP_ROOT, ".git")
+    if not os.path.isdir(git_dir):
+        return "no-git"
+    result = run_git_command(["git", "rev-parse", "--short", "HEAD"], timeout_seconds=30)
+    if result.returncode != 0:
+        return "unknown"
+    return clean_name(result.stdout) or "unknown"
+
+
 def restart_app_process(delay_seconds=1.5):
     def _restart():
         time.sleep(delay_seconds)
@@ -3807,6 +3849,7 @@ def build_context():
     return {
         "today_iso": today_iso,
         "today_human": today_human,
+        "app_version": app_version_label(),
         "customers": customers,
         "customers_json": json.dumps(customers),
         "farms": farms,
@@ -3879,6 +3922,7 @@ def admin_home():
     jobs = load_jobs()
     field_map = load_field_map()
     customers = load_customers()
+    muck_types = load_muck_types(master_rows)
     for row in master_rows:
         customer_name = clean_name(row.get("customer_name"))
         if customer_name and customer_name not in customers:
@@ -3889,6 +3933,7 @@ def admin_home():
         admin_tree=build_customer_field_admin_map(master_rows, jobs, field_map),
         customers=customers,
         customers_json=json.dumps(customers),
+        muck_types=muck_types,
         status_msg=str(request.args.get("msg", "") or "").strip(),
         status_ok=str(request.args.get("ok", "1")) == "1",
     )
@@ -4075,6 +4120,30 @@ def admin_clear_farm_fields():
         del field_map[customer]
     save_field_map(field_map)
     return redirect(url_for("admin_home", ok=1, msg="Farm fields cleared"))
+
+
+@app.route("/admin/muck-types/add", methods=["POST"])
+def admin_add_muck_type():
+    ensure_data_dir()
+    muck_type = clean_name(request.form.get("muck_type"))
+    if not muck_type:
+        return redirect(url_for("admin_home", ok=0, msg="Muck type is required"))
+
+    muck_types = load_muck_types()
+    if muck_type not in muck_types:
+        muck_types.append(muck_type)
+        save_muck_types(muck_types)
+        return redirect(url_for("admin_home", ok=1, msg="Muck type saved"))
+    return redirect(url_for("admin_home", ok=1, msg="Muck type already exists"))
+
+
+@app.route("/admin/muck-types/delete", methods=["POST"])
+def admin_delete_muck_type():
+    ensure_data_dir()
+    muck_type = clean_name(request.form.get("muck_type"))
+    muck_types = [name for name in load_muck_types() if clean_name(name).lower() != muck_type.lower()]
+    save_muck_types(muck_types)
+    return redirect(url_for("admin_home", ok=1, msg="Muck type removed"))
 
 
 @app.route("/api/jobs")
