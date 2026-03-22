@@ -2777,10 +2777,12 @@ def load_weekly_summary_template():
     farm_style_map = {}
     detail_style_map = {}
     farm_total_style_map = {}
+    detail_row_layouts = []
     customer_row_number = 10
     farm_row_number = None
     detail_row_number = None
     farm_total_row_number = None
+    in_first_farm_block = False
 
     for row_number in sorted(rows_by_number.keys()):
         if row_number <= 9:
@@ -2797,14 +2799,26 @@ def load_weekly_summary_template():
             farm_total_row_number = row_number
             continue
 
-        if not a_text and any([b_text, c_text, d_text, e_text, f_text]) and not detail_style_map:
-            detail_style_map = row_style_map(row_number)
-            detail_row_number = row_number
+        if not a_text and any([b_text, c_text, d_text, e_text, f_text]):
+            if not detail_style_map:
+                detail_style_map = row_style_map(row_number)
+                detail_row_number = row_number
+            if in_first_farm_block:
+                detail_row_layouts.append(row_layout(row_number))
             continue
 
         if a_text and not any([b_text, c_text, d_text, e_text, f_text]) and not farm_style_map and row_number > 10:
             farm_style_map = row_style_map(row_number)
             farm_row_number = row_number
+            in_first_farm_block = True
+            continue
+
+        if in_first_farm_block and a_text == "Farm Totals":
+            in_first_farm_block = False
+            continue
+
+        if in_first_farm_block and a_text and not any([b_text, c_text, d_text, e_text, f_text]) and row_number > (farm_row_number or 10):
+            in_first_farm_block = False
 
     cols = []
     cols_node = root.find("{%s}cols" % XLSX_NS)
@@ -2855,6 +2869,7 @@ def load_weekly_summary_template():
             "detail": row_layout(detail_row_number or 11),
             "farm_total": row_layout(farm_total_row_number or 12),
         },
+        "detail_row_layouts": detail_row_layouts or [row_layout(detail_row_number or 11)],
         "labels": {
             "title": cell_text("A1") or "Weekly Jobs Summary",
             "period": cell_text("A2") or "Period",
@@ -2966,11 +2981,17 @@ def build_template_based_xlsx(summary, template):
     labels = template.get("labels", {})
     row_templates = template.get("row_templates", {})
     row_specs = weekly_summary_template_rows(summary, labels)
+    detail_row_layouts = template.get("detail_row_layouts") or [row_templates.get("detail", {})]
+    detail_row_cycle_index = 0
 
     xml_rows = []
     row_number = 1
     for kind, values in row_specs:
-        template_row = row_templates.get(kind, {})
+        if kind == "detail" and detail_row_layouts:
+            template_row = detail_row_layouts[detail_row_cycle_index % len(detail_row_layouts)]
+            detail_row_cycle_index += 1
+        else:
+            template_row = row_templates.get(kind, {})
         xml_rows.append(
             worksheet_row_xml(
                 row_number,
