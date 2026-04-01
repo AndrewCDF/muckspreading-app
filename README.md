@@ -189,24 +189,24 @@ Notes:
 Then open:
 
 ```text
-http://127.0.0.1:8094
+http://127.0.0.1:8093
 ```
 
 On the office network Pi at `192.168.1.19`, open:
 
 ```text
-http://192.168.1.19:8094
+http://192.168.1.19:8093
 ```
 
 ## Tailscale access
 
-The app binds to `0.0.0.0`, so once Tailscale is running on the office Pi you can also reach it remotely over the Pi's Tailscale IP or MagicDNS hostname on port `8094`.
+The app binds to `0.0.0.0`, so once Tailscale is running on the office Pi you can also reach it remotely over the Pi's Tailscale IP or MagicDNS hostname on port `8093`.
 
 Examples:
 
 ```text
-http://100.x.x.x:8094
-http://office-pi-name.tailnet-name.ts.net:8094
+http://100.x.x.x:8093
+http://office-pi-name.tailnet-name.ts.net:8093
 ```
 
 ## Install As A Service On The Office Pi

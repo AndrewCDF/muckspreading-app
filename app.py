@@ -1305,7 +1305,7 @@ HTML = """
           <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
           <a class="button button-secondary button-full" href="{{ url_for('settings_home') }}">Open Settings</a>
           <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
-          <form method="post" action="{{ url_for('update_app') }}" class="button-full">
+          <form method="post" action="{{ url_for('update_app') }}" class="button-full" id="update_app_form">
             <button class="button button-secondary button-full" type="submit">Update App</button>
           </form>
         </div>
@@ -1353,6 +1353,8 @@ HTML = """
     const invoiceFeeRows = document.getElementById("invoice_fee_rows");
     const addFeeRowButton = document.getElementById("add_fee_row");
     const downloadNotice = document.getElementById("download_notice");
+    const updateAppForm = document.getElementById("update_app_form");
+    const updateAppButton = updateAppForm ? updateAppForm.querySelector('button[type="submit"]') : null;
     const allFields = {{ all_fields_json|safe }};
     const allFarms = {{ all_farms_json|safe }};
     const allMuckTypes = {{ muck_types_json|safe }};
@@ -1495,6 +1497,40 @@ HTML = """
         URL.revokeObjectURL(objectUrl);
       }, 1000);
       showDownloadNotice("Download started");
+    }
+
+    async function waitForUpdatedApp(targetUrl) {
+      showDownloadNotice("App updated. Restarting now...");
+      const startedAt = Date.now();
+
+      async function checkReady() {
+        try {
+          const probeUrl = new URL(targetUrl, window.location.href);
+          probeUrl.searchParams.set("_ping", Date.now().toString());
+          const response = await fetch(probeUrl.toString(), {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          if (response.ok) {
+            window.location.replace(targetUrl);
+            return;
+          }
+        } catch (error) {
+        }
+
+        if (Date.now() - startedAt >= 60000) {
+          showDownloadNotice("App updated. Refresh this page if it does not reconnect.");
+          if (updateAppButton) {
+            updateAppButton.disabled = false;
+            updateAppButton.textContent = "Update App";
+          }
+          return;
+        }
+
+        window.setTimeout(checkReady, 1500);
+      }
+
+      window.setTimeout(checkReady, 4500);
     }
 
     function openSuggestionBox(box, values, onSelect) {
@@ -1674,6 +1710,43 @@ HTML = """
           await triggerExportDownload(link);
         } catch (error) {
           showDownloadNotice("Download failed");
+        }
+      });
+    }
+
+    if (updateAppForm && updateAppButton) {
+      updateAppForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        updateAppButton.disabled = true;
+        updateAppButton.textContent = "Updating...";
+        showDownloadNotice("Checking for updates...");
+
+        try {
+          const response = await fetch(updateAppForm.action, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "fetch",
+            },
+          });
+          const payload = await response.json();
+          if (!payload || !payload.ok) {
+            throw new Error((payload && payload.msg) || "Update failed");
+          }
+
+          if (payload.status === "up_to_date") {
+            showDownloadNotice(payload.msg || "App is already up to date");
+            updateAppButton.disabled = false;
+            updateAppButton.textContent = "Update App";
+            return;
+          }
+
+          await waitForUpdatedApp(payload.redirect_url || {{ url_for('home', ok=1, msg='App updated')|tojson }});
+        } catch (error) {
+          showDownloadNotice((error && error.message) || "Update failed");
+          updateAppButton.disabled = false;
+          updateAppButton.textContent = "Update App";
         }
       });
     }
@@ -7134,41 +7207,63 @@ def invoice_create_and_send():
 
 @app.route("/app/update", methods=["POST"])
 def update_app():
+    wants_json = (
+        request.headers.get("X-Requested-With") == "fetch"
+        or "application/json" in (request.headers.get("Accept", "") or "")
+    )
+
+    def respond(ok, msg, status_key, restart=False):
+        redirect_url = url_for("home", ok=1 if ok else 0, msg=msg)
+        if wants_json:
+            return jsonify(
+                {
+                    "ok": ok,
+                    "msg": msg,
+                    "status": status_key,
+                    "restart": restart,
+                    "redirect_url": redirect_url,
+                }
+            )
+        return redirect(redirect_url)
+
     git_dir = os.path.join(APP_ROOT, ".git")
     if not os.path.isdir(git_dir):
-        return redirect(url_for("home", ok=0, msg="This install is not a git repo"))
+        return respond(False, "This install is not a git repo", "error")
 
     branch_result = run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], timeout_seconds=30)
     if branch_result.returncode != 0:
-        return redirect(url_for("home", ok=0, msg=git_update_message(branch_result, "Could not read git branch")))
+        return respond(False, git_update_message(branch_result, "Could not read git branch"), "error")
 
     branch_name = clean_name(branch_result.stdout) or "main"
     fetch_result = run_git_command(["git", "fetch", "origin", branch_name], timeout_seconds=180)
     if fetch_result.returncode != 0:
-        return redirect(url_for("home", ok=0, msg=git_update_message(fetch_result, "Git fetch failed")))
+        return respond(False, git_update_message(fetch_result, "Git fetch failed"), "error")
 
     head_result = run_git_command(["git", "rev-parse", "HEAD"], timeout_seconds=30)
     remote_result = run_git_command(["git", "rev-parse", "FETCH_HEAD"], timeout_seconds=30)
     if head_result.returncode != 0 or remote_result.returncode != 0:
-        return redirect(url_for("home", ok=0, msg="Could not compare app versions"))
+        return respond(False, "Could not compare app versions", "error")
 
     local_rev = clean_name(head_result.stdout)
     remote_rev = clean_name(remote_result.stdout)
     if local_rev and remote_rev and local_rev == remote_rev:
-        return redirect(url_for("home", ok=1, msg="App is already up to date"))
+        return respond(True, "App is already up to date", "up_to_date")
 
     pull_result = run_git_command(["git", "pull", "--ff-only", "origin", branch_name], timeout_seconds=180)
     if pull_result.returncode != 0:
-        return redirect(url_for("home", ok=0, msg=git_update_message(pull_result, "Git pull failed")))
+        return respond(False, git_update_message(pull_result, "Git pull failed"), "error")
 
-    restart_app_process()
+    restart_app_process(delay_seconds=6.0)
+    if wants_json:
+        return respond(True, "App updated", "updated", restart=True)
+
     return render_template_string(
         """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="8;url={{ url_for('home') }}">
+  <meta http-equiv="refresh" content="12;url={{ url_for('home', ok=1, msg='App updated') }}">
   <title>Updating App</title>
   <style>
     body {
@@ -7198,13 +7293,39 @@ def update_app():
       line-height: 1.5;
       color: #666653;
     }
+    a {
+      display: inline-flex;
+      margin-top: 18px;
+      min-height: 48px;
+      padding: 0 18px;
+      border-radius: 999px;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      font-weight: bold;
+      background: rgba(60,95,70,0.1);
+      color: #3c5f46;
+      border: 1px solid rgba(60,95,70,0.12);
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Updating App</h1>
     <p>The latest update was installed. The app is restarting now and should reload automatically in a few seconds.</p>
+    <a href="{{ url_for('home', ok=1, msg='App updated') }}">Return To App</a>
   </div>
+  <script>
+    (function () {
+      const targetUrl = {{ url_for('home', ok=1, msg='App updated')|tojson }};
+      function tryReturn() {
+        window.location.replace(targetUrl);
+      }
+      window.setTimeout(tryReturn, 6500);
+      window.setTimeout(tryReturn, 9000);
+      window.setTimeout(tryReturn, 12000);
+    })();
+  </script>
 </body>
 </html>"""
     )
@@ -7424,7 +7545,7 @@ def health():
 
 if __name__ == "__main__":
     ensure_data_dir()
-    port = int(os.environ.get("MUCKSPREADING_APP_PORT", "8094"))
+    port = int(os.environ.get("MUCKSPREADING_APP_PORT", "8093"))
     debug_mode = str(os.environ.get("MUCKSPREADING_APP_DEBUG", "") or "").strip().lower() in ["1", "true", "yes", "on"]
     start_background_workers(debug_mode=debug_mode)
     app.run(host="0.0.0.0", port=port, debug=debug_mode, use_reloader=debug_mode)
