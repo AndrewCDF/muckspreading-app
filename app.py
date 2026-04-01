@@ -3,6 +3,8 @@ import csv
 import io
 import json
 import os
+import re
+import shutil
 import smtplib
 import struct
 import subprocess
@@ -28,12 +30,21 @@ MUCK_TYPES_PATH = os.path.join(DATA_DIR, "muck_types.json")
 FIELD_MAP_PATH = os.path.join(DATA_DIR, "customer_fields.json")
 EMAIL_CONFIG_PATH = os.path.join(DATA_DIR, "email_config.json")
 EMAIL_STATE_PATH = os.path.join(DATA_DIR, "weekly_email_state.json")
+APP_SETTINGS_PATH = os.path.join(DATA_DIR, "app_settings.json")
+INVOICE_LEDGER_PATH = os.path.join(DATA_DIR, "invoice_ledger.json")
+INVOICE_STATE_PATH = os.path.join(DATA_DIR, "invoice_state.json")
+INVOICE_ARCHIVE_DIR = os.path.join(DATA_DIR, "invoices")
 CUSTOMER_MASTER_XLSX_PATH = os.path.join(APP_ROOT, "customer_master.xlsx")
-CUSTOMER_MASTER_CSV_PATH = os.path.join(APP_ROOT, "customer_master.csv")
 EMAIL_SETTINGS_CSV_PATH = os.path.join(APP_ROOT, "email_settings.csv")
 WEEKLY_SUMMARY_TEMPLATE_PATH = os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")
+INVOICE_TEMPLATE_CANDIDATES = [
+    os.path.join(APP_ROOT, "Invoice_template.xlsx"),
+    os.path.join(APP_ROOT, "invoice_layout_template.xlsx"),
+]
 EMAIL_CHECK_INTERVAL_SECONDS = 300
 XLSX_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+STRICT_XLSX_NS = "http://purl.oclc.org/ooxml/spreadsheetml/main"
+STRICT_REL_NS = "http://purl.oclc.org/ooxml/officeDocument/relationships"
 CUSTOMER_MASTER_HEADERS = [
     "customer_name",
     "farm_name",
@@ -60,11 +71,41 @@ DEFAULT_EMAIL_CONFIG = {
     "send_weekday": 0,
     "send_hour": 5,
     "send_minute": 0,
+    "monthly_enabled": True,
+    "monthly_send_hour": 5,
+    "monthly_send_minute": 0,
     "subject_prefix": "A. Farrell Contracting",
 }
+INVOICE_PAYMENT_TERMS_OPTIONS = ["7", "14", "21", "30"]
 
 APP_SHORT_NAME = "Muck Jobs"
 APP_THEME_COLOR = "#334d38"
+DEFAULT_INVOICE_SUBJECT_TEMPLATE = "Invoice {invoice_number} - {customer}"
+DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE = """{greeting},
+
+Please find attached an invoice for recent spreading work.
+
+Many Thanks
+
+Andrew Farrell
+A. Farrell Contracting Ltd.
+07952683364"""
+DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE = """{greeting},
+
+Please find attached the invoice PDF and workbook for recent spreading work.
+
+Many Thanks
+
+Andrew Farrell
+A. Farrell Contracting Ltd.
+07952683364"""
+DEFAULT_APP_SETTINGS = {
+    "invoice_from_email": "andrew@afarrellcontracting.co.uk",
+    "invoice_subject_template": DEFAULT_INVOICE_SUBJECT_TEMPLATE,
+    "invoice_customer_message_template": DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE,
+    "invoice_accounts_message_template": DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE,
+    "invoice_default_payment_terms_days": "14",
+}
 
 
 def discover_custom_app_icon_path():
@@ -220,6 +261,15 @@ def app_icon_dimensions():
         except OSError:
             pass
     return 180
+
+
+def resolve_invoice_template_path():
+    for path in INVOICE_TEMPLATE_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 
 HTML = """
 <!doctype html>
@@ -413,6 +463,9 @@ HTML = """
       cursor: pointer;
       filter: sepia(0.35) saturate(0.9);
     }
+    .invoice-date-field {
+      max-width: 220px;
+    }
     .field.full {
       grid-column: 1 / -1;
     }
@@ -497,6 +550,10 @@ HTML = """
     .hint {
       font-size: 13px;
       color: var(--muted);
+    }
+    .hint-centered {
+      text-align: center;
+      margin-top: 10px;
     }
     .actions {
       margin-top: 18px;
@@ -599,6 +656,64 @@ HTML = """
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
     }
+    .checkbox-list {
+      display: grid;
+      gap: 10px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(82, 69, 42, 0.1);
+      background: rgba(255,255,255,0.68);
+    }
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      color: var(--ink);
+    }
+    .checkbox-item input {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      accent-color: var(--green);
+    }
+    .checkbox-item span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .message-preview {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(82, 69, 42, 0.1);
+      background: rgba(255,255,255,0.68);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      color: #2f3428;
+    }
+    .invoice-preview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .invoice-preview-card {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(82, 69, 42, 0.1);
+      background: rgba(255,255,255,0.68);
+      display: grid;
+      gap: 8px;
+    }
+    .invoice-preview-card h3 {
+      margin: 0;
+      font-size: 17px;
+    }
+    .invoice-preview-card .hint {
+      margin: 0;
+    }
     .metric-block {
       margin-top: 14px;
       padding: 14px 16px;
@@ -681,6 +796,37 @@ HTML = """
       line-height: 1.25;
       color: #6a6657;
       white-space: nowrap;
+    }
+    .job-row-status {
+      font-size: 13px;
+      line-height: 1.25;
+      color: #6a6657;
+    }
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .status-chip.open {
+      background: rgba(186,148,80,0.12);
+      border-color: rgba(186,148,80,0.18);
+      color: #7a5d22;
+    }
+    .status-chip.invoiced {
+      background: rgba(60,95,70,0.1);
+      border-color: rgba(60,95,70,0.16);
+      color: #284332;
+    }
+    .status-chip.manual {
+      background: rgba(82, 69, 42, 0.08);
+      border-color: rgba(82, 69, 42, 0.12);
+      color: #5d5b48;
     }
     .job-row .actions-inline {
       flex-direction: column;
@@ -780,6 +926,9 @@ HTML = """
       .mini-grid {
         grid-template-columns: 1fr;
       }
+      .invoice-preview-grid {
+        grid-template-columns: 1fr;
+      }
       .field-date {
         max-width: min(100%, 220px);
       }
@@ -817,6 +966,137 @@ HTML = """
 </head>
 <body>
   <div class="page">
+    {% if invoice_page %}
+    <section class="layout">
+      <div class="card hero-title-card">
+        <h1>
+          <span class="title-line title-line-primary">Create Invoice</span>
+          <span class="title-line title-line-secondary">Invoice Page</span>
+        </h1>
+        <div class="actions">
+          <a class="button button-secondary" href="{{ url_for('home') }}">Back to Dashboard</a>
+          <a class="button button-secondary" href="{{ url_for('invoice_history') }}">Invoice History</a>
+        </div>
+      </div>
+
+      {% if status_msg %}
+      <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
+      {% endif %}
+
+      <div class="card">
+        <h2 class="panel-title">Invoices</h2>
+        <p class="copy">Create an invoice from uninvoiced jobs in the selected customer or farm scope. The customer receives the PDF only, and your accounts copies receive both the PDF and Excel workbook.</p>
+        <form method="post" action="{{ url_for('invoice_create_and_send') }}">
+          <div class="form-grid">
+            <div class="field">
+              <label for="invoice_customer">Customer</label>
+              <select id="invoice_customer" name="customer" required>
+                <option value="">Select customer</option>
+                {% for customer in customers %}
+                <option value="{{ customer }}" {% if invoice_form.customer == customer %}selected{% endif %}>{{ customer }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label for="invoice_farm_name">Farm</label>
+              <select id="invoice_farm_name" name="farm_name" data-selected="{{ invoice_form.farm_name }}">
+                <option value="">All Farms For Customer</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="invoice_number">Invoice Number</label>
+              <input id="invoice_number" name="invoice_number" type="number" inputmode="numeric" min="1" step="1" value="{{ invoice_form.invoice_number }}" required>
+            </div>
+            <div class="field invoice-date-field">
+              <label for="invoice_date">Invoice Date</label>
+              <input id="invoice_date" name="invoice_date" type="date" value="{{ invoice_form.invoice_date }}" required>
+            </div>
+            <div class="field invoice-date-field">
+              <label for="invoice_job_date_from">Job Date From</label>
+              <input id="invoice_job_date_from" name="job_date_from" type="date" value="{{ invoice_form.job_date_from }}">
+              <div id="invoice_job_date_from_hint" class="hint">{% if invoice_form.job_date_from_hint %}Suggested from last invoice: {{ invoice_form.job_date_from_hint }}{% else %}Leave blank to include all uninvoiced jobs in scope.{% endif %}</div>
+            </div>
+            <div class="field">
+              <label for="invoice_payment_terms">Payment Terms</label>
+              <select id="invoice_payment_terms" name="payment_terms_days">
+                {% for option in invoice_payment_terms_options %}
+                <option value="{{ option }}" {% if invoice_form.payment_terms_days == option %}selected{% endif %}>{{ option }} days</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field notes-field">
+              <label for="invoice_rate_override">Rate Per Ton</label>
+              <input id="invoice_rate_override" name="rate_override" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Uses customer master rate" value="{{ invoice_form.rate_override }}">
+            </div>
+            <div class="field notes-field">
+              <label for="invoice_subject">Subject</label>
+              <input id="invoice_subject" name="subject" type="text" value="{{ invoice_form.subject }}" placeholder="Invoice email subject">
+            </div>
+            <div class="field notes-field">
+              <label for="invoice_customer_message">Customer Message</label>
+              <textarea id="invoice_customer_message" name="customer_message" placeholder="Customer email message">{{ invoice_form.customer_message }}</textarea>
+            </div>
+            <div class="field notes-field">
+              <label>Additional Fees</label>
+              <div id="invoice_fee_rows" class="mini-form">
+                {% for fee_row in invoice_form.additional_fee_rows %}
+                <div class="mini-grid">
+                  <input type="text" name="additional_fee_description" placeholder="Description" value="{{ fee_row.description }}">
+                  <input type="number" name="additional_fee_amount" inputmode="decimal" min="0" step="0.01" placeholder="Amount" value="{{ fee_row.amount }}">
+                </div>
+                {% endfor %}
+              </div>
+              <div class="actions-inline">
+                <button id="add_fee_row" class="button button-secondary button-small" type="button">Add Another Fee</button>
+              </div>
+            </div>
+          </div>
+          <div class="hint">Use Job Date From if you want to stop the invoice pulling in older uninvoiced jobs. The rate field defaults from the customer master but can be changed for this invoice. Additional fees use separate description and amount boxes, with VAT fixed at 20%.</div>
+          <div class="hint">The customer email comes from the saved job snapshot or the current customer master. Office and Andrew receive accounts copies automatically. Owen is excluded from invoice copies.</div>
+          <div class="actions">
+            <button class="button button-secondary" type="submit" formaction="{{ url_for('invoice_preview_pdf') }}" formmethod="post" formtarget="_blank">Preview PDF</button>
+            <button class="button button-secondary" type="submit" formaction="{{ url_for('invoice_preview_xlsx') }}" formmethod="post">Download Preview .xlsx</button>
+            <button class="button button-primary" type="submit">Create and Email Invoice</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2 class="panel-title">Mark Already Invoiced</h2>
+        <p class="copy">Use this for jobs that were invoiced outside the app so they are not picked up again.</p>
+        <form method="post" action="{{ url_for('invoice_mark_existing') }}">
+          <div class="form-grid">
+            <div class="field">
+              <label for="mark_customer">Customer</label>
+              <select id="mark_customer" name="customer" required>
+                <option value="">Select customer</option>
+                {% for customer in customers %}
+                <option value="{{ customer }}">{{ customer }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label for="mark_farm_name">Farm</label>
+              <select id="mark_farm_name" name="farm_name">
+                <option value="">All Farms For Customer</option>
+              </select>
+            </div>
+            <div class="field invoice-date-field">
+              <label for="mark_through_date">Job Date Through</label>
+              <input id="mark_through_date" name="through_date" type="date" value="{{ today_iso }}" required>
+            </div>
+            <div class="field">
+              <label for="mark_note">Note</label>
+              <input id="mark_note" name="note" type="text" placeholder="Optional note for history">
+            </div>
+          </div>
+          <div class="actions">
+            <button class="button button-secondary" type="submit">Mark As Already Invoiced</button>
+          </div>
+        </form>
+      </div>
+    </section>
+    {% else %}
     <section class="hero">
       <div class="card hero-title-card">
         <h1>
@@ -940,6 +1220,7 @@ HTML = """
                   <th>Notes</th>
                   <th>Spreader Tons</th>
                   <th>Ops Center Tons</th>
+                  <th>Invoice Status</th>
                   <th>Saved</th>
                   <th class="table-actions">Actions</th>
                 </tr>
@@ -955,6 +1236,7 @@ HTML = """
                   <td>{{ job.job_notes or '--' }}</td>
                   <td>{{ job.spreader_tons_label }}</td>
                   <td>{{ job.john_deere_tons_label }}</td>
+                  <td><span class="status-chip {{ job.invoice_status_key }}">{{ job.invoice_status_label }}</span></td>
                   <td>{{ job.saved_label }}</td>
                   <td>
                     <div class="actions-inline">
@@ -981,6 +1263,7 @@ HTML = """
                 <div class="job-row-summary">
                   <div>{{ job.field_name }} | {{ job.muck_type }}</div>
                   <div class="job-row-tons">Spreader {{ job.spreader_tons_label }} | Ops Center {{ job.john_deere_tons_label }}</div>
+                  <div class="job-row-status">Invoice: {{ job.invoice_status_label }}</div>
                 </div>
               </div>
               <div class="job-row-meta">
@@ -996,6 +1279,11 @@ HTML = """
           </div>
           {% endfor %}
         </div>
+        {% if has_more_recent_jobs %}
+        <div class="actions">
+          <a class="button button-secondary button-full" href="{{ url_for('home', jobs_page=jobs_page + 1) }}">Load 20 More Jobs</a>
+        </div>
+        {% endif %}
         {% else %}
         <div class="empty">No jobs saved yet.</div>
         {% endif %}
@@ -1004,43 +1292,48 @@ HTML = """
 
     <section class="section-grid">
       <div class="card">
+        <h2 class="panel-title">Invoices</h2>
+        <div class="actions">
+          <a class="button button-secondary button-full" href="{{ url_for('invoice_home') }}">Create Invoice</a>
+        </div>
+      </div>
+
+      <div class="card">
         <h2 class="panel-title">Tools</h2>
         <p class="copy">Use these for admin, backups, and updates.</p>
-        <div class="hint">Current version: {{ app_version }}</div>
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
+          <a class="button button-secondary button-full" href="{{ url_for('settings_home') }}">Open Settings</a>
           <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
           <form method="post" action="{{ url_for('update_app') }}" class="button-full">
             <button class="button button-secondary button-full" type="submit">Update App</button>
           </form>
         </div>
+        <div class="hint hint-centered">Current version: {{ app_version }}</div>
       </div>
     </section>
 
     <section class="bottom-export">
-      <div class="section-grid">
-        <div class="card">
-          <h2 class="panel-title">Summary Exports</h2>
-          <p class="copy">Download a period summary in the same Excel layout used for the weekly summary email.</p>
-          <div class="actions">
-            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}">Download Current Week Summary .xlsx</a>
-            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}">Download Current Month Summary .xlsx</a>
-            <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}">Download Last Month Summary .xlsx</a>
-          </div>
-        </div>
-        <div class="card">
-          <h2 class="panel-title">Export Jobs</h2>
-          <p class="copy">Download the full saved job list as an Excel file.</p>
+      <div class="card">
+        <h2 class="panel-title">Summary Exports</h2>
+        <p class="copy">Download period summaries or the full saved job list as Excel files.</p>
+        <div class="actions">
+          <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-week') }}">Download Current Week Summary .xlsx</a>
+          <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='current-month') }}">Download Current Month Summary .xlsx</a>
+          <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_period_summary_xlsx', period_key='last-month') }}">Download Last Month Summary .xlsx</a>
           <a class="button button-secondary button-full" data-download-link="1" href="{{ url_for('export_jobs_xlsx') }}">Download Full Job List .xlsx</a>
         </div>
       </div>
     </section>
+    {% endif %}
   </div>
   <div id="download_notice" class="download-notice" hidden>Preparing download...</div>
 
   <script>
     const fieldMap = {{ field_map_json|safe }};
     const customerFarmMap = {{ customer_farm_map_json|safe }};
+    const customerRateMap = {{ customer_rate_map_json|safe }};
+    const customerInvoiceFromMap = {{ customer_invoice_from_map_json|safe }};
     const allCustomers = {{ customers_json|safe }};
     const customerInput = document.getElementById("customer");
     const customerSuggestions = document.getElementById("customer_suggestions");
@@ -1050,6 +1343,15 @@ HTML = """
     const fieldSuggestions = document.getElementById("field_suggestions");
     const muckTypeInput = document.getElementById("muck_type");
     const muckTypeSuggestions = document.getElementById("muck_type_suggestions");
+    const invoiceCustomerSelect = document.getElementById("invoice_customer");
+    const invoiceFarmSelect = document.getElementById("invoice_farm_name");
+    const invoiceRateInput = document.getElementById("invoice_rate_override");
+    const invoiceJobDateFromInput = document.getElementById("invoice_job_date_from");
+    const invoiceJobDateFromHint = document.getElementById("invoice_job_date_from_hint");
+    const markCustomerSelect = document.getElementById("mark_customer");
+    const markFarmSelect = document.getElementById("mark_farm_name");
+    const invoiceFeeRows = document.getElementById("invoice_fee_rows");
+    const addFeeRowButton = document.getElementById("add_fee_row");
     const downloadNotice = document.getElementById("download_notice");
     const allFields = {{ all_fields_json|safe }};
     const allFarms = {{ all_farms_json|safe }};
@@ -1125,6 +1427,25 @@ HTML = """
         return plainMatch[1].trim().replace(/^["']|["']$/g, "");
       }
       return fallbackName;
+    }
+
+    function formatDisplayDate(isoValue) {
+      const raw = String(isoValue || "").trim();
+      if (!raw) {
+        return "";
+      }
+      const parts = raw.split("-");
+      if (parts.length !== 3) {
+        return raw;
+      }
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const year = parts[0];
+      const monthIndex = Number(parts[1]) - 1;
+      const day = Number(parts[2]);
+      if (!Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11 || !Number.isFinite(day)) {
+        return raw;
+      }
+      return day + " " + months[monthIndex] + " " + year;
     }
 
     async function triggerExportDownload(link) {
@@ -1354,6 +1675,157 @@ HTML = """
         } catch (error) {
           showDownloadNotice("Download failed");
         }
+      });
+    }
+
+    function syncInvoiceFarmOptions() {
+      if (!invoiceCustomerSelect || !invoiceFarmSelect) {
+        return;
+      }
+      const customerName = String(invoiceCustomerSelect.value || "").trim();
+      const farms = customerName ? (customerFarmMap[customerName] || []) : [];
+      const previous = String(invoiceFarmSelect.value || invoiceFarmSelect.dataset.selected || "");
+      invoiceFarmSelect.innerHTML = "";
+      const allOption = document.createElement("option");
+      allOption.value = "";
+      allOption.textContent = "All Farms For Customer";
+      invoiceFarmSelect.appendChild(allOption);
+      for (const farm of farms) {
+        const option = document.createElement("option");
+        option.value = farm;
+        option.textContent = farm;
+        if (farm === previous) {
+          option.selected = true;
+        }
+        invoiceFarmSelect.appendChild(option);
+      }
+      if (previous && !farms.includes(previous)) {
+        invoiceFarmSelect.value = "";
+      }
+      invoiceFarmSelect.dataset.selected = invoiceFarmSelect.value;
+    }
+
+    function syncMarkFarmOptions() {
+      if (!markCustomerSelect || !markFarmSelect) {
+        return;
+      }
+      const customerName = String(markCustomerSelect.value || "").trim();
+      const farms = customerName ? (customerFarmMap[customerName] || []) : [];
+      const previous = String(markFarmSelect.value || markFarmSelect.dataset.selected || "");
+      markFarmSelect.innerHTML = "";
+      const allOption = document.createElement("option");
+      allOption.value = "";
+      allOption.textContent = "All Farms For Customer";
+      markFarmSelect.appendChild(allOption);
+      for (const farm of farms) {
+        const option = document.createElement("option");
+        option.value = farm;
+        option.textContent = farm;
+        if (farm === previous) {
+          option.selected = true;
+        }
+        markFarmSelect.appendChild(option);
+      }
+      if (previous && !farms.includes(previous)) {
+        markFarmSelect.value = "";
+      }
+      markFarmSelect.dataset.selected = markFarmSelect.value;
+    }
+
+    function invoiceDefaultRate() {
+      if (!invoiceCustomerSelect) {
+        return "";
+      }
+      const customerName = String(invoiceCustomerSelect.value || "").trim();
+      const farmName = String((invoiceFarmSelect && invoiceFarmSelect.value) || "").trim();
+      const customerRates = customerRateMap[customerName] || {};
+      if (farmName && customerRates[farmName]) {
+        return customerRates[farmName];
+      }
+      if (customerRates[""]) {
+        return customerRates[""];
+      }
+      const rateKeys = Object.keys(customerRates);
+      return rateKeys.length ? customerRates[rateKeys[0]] : "";
+    }
+
+    function invoiceDefaultJobDateFrom() {
+      if (!invoiceCustomerSelect) {
+        return "";
+      }
+      const customerName = String(invoiceCustomerSelect.value || "").trim();
+      const farmName = String((invoiceFarmSelect && invoiceFarmSelect.value) || "").trim();
+      const customerDates = customerInvoiceFromMap[customerName] || {};
+      if (farmName && customerDates[farmName]) {
+        return customerDates[farmName];
+      }
+      if (customerDates[""]) {
+        return customerDates[""];
+      }
+      return "";
+    }
+
+    function syncInvoiceRate(force) {
+      if (!invoiceRateInput) {
+        return;
+      }
+      const defaultRate = invoiceDefaultRate();
+      if (force || invoiceRateInput.dataset.userEdited !== "1" || !String(invoiceRateInput.value || "").trim()) {
+        invoiceRateInput.value = defaultRate;
+      }
+    }
+
+    function syncInvoiceJobDateFrom(force) {
+      if (!invoiceJobDateFromInput) {
+        return;
+      }
+      const defaultDate = invoiceDefaultJobDateFrom();
+      if (force || invoiceJobDateFromInput.dataset.userEdited !== "1" || !String(invoiceJobDateFromInput.value || "").trim()) {
+        invoiceJobDateFromInput.value = defaultDate;
+      }
+      if (invoiceJobDateFromHint) {
+        invoiceJobDateFromHint.textContent = defaultDate
+          ? ("Suggested from last invoice: " + formatDisplayDate(defaultDate))
+          : "Leave blank to include all uninvoiced jobs in scope.";
+      }
+    }
+
+    if (invoiceCustomerSelect && invoiceFarmSelect) {
+      invoiceCustomerSelect.addEventListener("change", function () {
+        syncInvoiceFarmOptions();
+        syncInvoiceRate(false);
+        syncInvoiceJobDateFrom(false);
+      });
+      invoiceFarmSelect.addEventListener("change", function () {
+        syncInvoiceRate(false);
+        syncInvoiceJobDateFrom(false);
+      });
+      syncInvoiceFarmOptions();
+      syncInvoiceRate(false);
+      syncInvoiceJobDateFrom(false);
+    }
+    if (markCustomerSelect && markFarmSelect) {
+      markCustomerSelect.addEventListener("change", function () {
+        syncMarkFarmOptions();
+      });
+      syncMarkFarmOptions();
+    }
+    if (invoiceRateInput) {
+      invoiceRateInput.addEventListener("input", function () {
+        invoiceRateInput.dataset.userEdited = "1";
+      });
+    }
+    if (invoiceJobDateFromInput) {
+      invoiceJobDateFromInput.addEventListener("input", function () {
+        invoiceJobDateFromInput.dataset.userEdited = "1";
+      });
+    }
+    if (invoiceFeeRows && addFeeRowButton) {
+      addFeeRowButton.addEventListener("click", function () {
+        const row = document.createElement("div");
+        row.className = "mini-grid";
+        row.innerHTML = '<input type="text" name="additional_fee_description" placeholder="Description"><input type="number" name="additional_fee_amount" inputmode="decimal" min="0" step="0.01" placeholder="Amount">';
+        invoiceFeeRows.appendChild(row);
       });
     }
   </script>
@@ -1817,6 +2289,390 @@ ADMIN_HTML = """
 </html>
 """
 
+INVOICE_HISTORY_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#334d38">
+  <title>Invoice History</title>
+  <style>
+    :root {
+      --bg: #e7decd;
+      --panel: rgba(250, 247, 240, 0.96);
+      --ink: #272d21;
+      --muted: #666653;
+      --line: #cabd9f;
+      --green: #3c5f46;
+      --gold: #ba9450;
+      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
+      --font-main: Georgia, "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-main);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
+        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+    }
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 18px 14px 28px;
+    }
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(82, 69, 42, 0.12);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 24px;
+    }
+    .button {
+      min-height: 48px;
+      padding: 0 18px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      background: rgba(60,95,70,0.1);
+      color: var(--green);
+      border: 1px solid rgba(60,95,70,0.12);
+    }
+    .copy {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .status {
+      margin-bottom: 16px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      font-size: 15px;
+      border: 1px solid transparent;
+      line-height: 1.45;
+    }
+    .status.ok {
+      background: rgba(60,95,70,0.1);
+      border-color: rgba(60,95,70,0.16);
+      color: #284332;
+    }
+    .status.error {
+      background: rgba(139,71,56,0.1);
+      border-color: rgba(139,71,56,0.16);
+      color: #6d3124;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid rgba(82, 69, 42, 0.1);
+      border-radius: 18px;
+    }
+    table {
+      width: 100%;
+      min-width: 860px;
+      border-collapse: collapse;
+      background: rgba(255,255,255,0.68);
+      font-family: var(--font-main);
+    }
+    th, td {
+      padding: 14px 16px;
+      text-align: left;
+      border-bottom: 1px solid rgba(82, 69, 42, 0.1);
+    }
+    th {
+      background: rgba(240,232,216,0.85);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #5d5b48;
+    }
+    tr:last-child td { border-bottom: none; }
+    .empty {
+      padding: 26px;
+      border-radius: 18px;
+      border: 1px dashed var(--line);
+      background: rgba(255,255,255,0.48);
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top-links">
+      <a class="button" href="{{ url_for('invoice_home') }}">Back To Invoices</a>
+      <a class="button" href="{{ url_for('home') }}">Back To Jobs</a>
+    </div>
+
+    {% if status_msg %}
+    <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
+    {% endif %}
+
+    <div class="card">
+      <h1>Invoice History</h1>
+      <p class="copy">One line per invoice or manual mark, newest first.</p>
+      {% if history_rows %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Reference</th>
+              <th>Type</th>
+              <th>Customer</th>
+              <th>Farm</th>
+              <th>Period</th>
+              <th>Jobs</th>
+              <th>Total</th>
+              <th>Created</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in history_rows %}
+            <tr>
+              <td>{{ row.reference_label }}</td>
+              <td>{{ row.type_label }}</td>
+              <td>{{ row.customer }}</td>
+              <td>{{ row.farm_name }}</td>
+              <td>{{ row.period_label }}</td>
+              <td>{{ row.job_count }}</td>
+              <td>{{ row.grand_total_label }}</td>
+              <td>{{ row.created_label }}</td>
+              <td>{{ row.note or '--' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">No invoice history yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+SETTINGS_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#334d38">
+  <title>Settings</title>
+  <style>
+    :root {
+      --bg: #e7decd;
+      --panel: rgba(250, 247, 240, 0.96);
+      --ink: #272d21;
+      --muted: #666653;
+      --line: #cabd9f;
+      --green: #3c5f46;
+      --gold: #ba9450;
+      --red: #8b4738;
+      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
+      --font-main: Georgia, "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-main);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
+        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+    }
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 18px 14px 28px;
+    }
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(82, 69, 42, 0.12);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 24px;
+    }
+    .button {
+      min-height: 48px;
+      padding: 0 18px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      background: rgba(60,95,70,0.1);
+      color: var(--green);
+      border: 1px solid rgba(60,95,70,0.12);
+      font-family: var(--font-main);
+    }
+    .button-primary {
+      background: linear-gradient(135deg, var(--gold), #cda961);
+      color: #2b2212;
+      box-shadow: 0 14px 28px rgba(186,148,80,0.24);
+      border: none;
+    }
+    .status {
+      margin-bottom: 16px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      font-size: 15px;
+      border: 1px solid transparent;
+      line-height: 1.45;
+    }
+    .status.ok {
+      background: rgba(60,95,70,0.1);
+      border-color: rgba(60,95,70,0.16);
+      color: #284332;
+    }
+    .status.error {
+      background: rgba(139,71,56,0.1);
+      border-color: rgba(139,71,56,0.16);
+      color: #6d3124;
+    }
+    .copy {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .hint {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+    .field.full {
+      grid-column: 1 / -1;
+    }
+    label {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: bold;
+      color: #5d5b48;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-height: 56px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fffdfa;
+      color: var(--ink);
+      padding: 12px 14px;
+      outline: none;
+      font-size: 16px;
+      font-family: var(--font-main);
+    }
+    textarea {
+      min-height: 140px;
+      resize: vertical;
+      padding-top: 14px;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 4px rgba(186,148,80,0.14);
+    }
+    .actions {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    @media (max-width: 760px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+      .button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top-links">
+      <a class="button" href="{{ url_for('home') }}">Back To Jobs</a>
+    </div>
+
+    {% if status_msg %}
+    <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
+    {% endif %}
+
+    <div class="card">
+      <h1>Settings</h1>
+      <p class="copy">Change the default invoice wording and payment terms used when you open the invoice page.</p>
+      <form method="post" action="{{ url_for('settings_save') }}">
+        <div class="form-grid">
+          <div class="field">
+            <label for="settings_invoice_from_email">Invoice From Email</label>
+            <input id="settings_invoice_from_email" name="invoice_from_email" type="email" value="{{ settings.invoice_from_email }}">
+          </div>
+          <div class="field">
+            <label for="settings_invoice_default_payment_terms_days">Default Payment Terms</label>
+            <select id="settings_invoice_default_payment_terms_days" name="invoice_default_payment_terms_days">
+              {% for option in invoice_payment_terms_options %}
+              <option value="{{ option }}" {% if settings.invoice_default_payment_terms_days == option %}selected{% endif %}>{{ option }} days</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="settings_invoice_subject_template">Invoice Subject Template</label>
+            <input id="settings_invoice_subject_template" name="invoice_subject_template" type="text" value="{{ settings.invoice_subject_template }}">
+            <div class="hint">Placeholders: `{invoice_number}` `{customer}` `{farm}` `{scope}` `{greeting}`</div>
+          </div>
+          <div class="field full">
+            <label for="settings_invoice_customer_message_template">Customer Message Template</label>
+            <textarea id="settings_invoice_customer_message_template" name="invoice_customer_message_template">{{ settings.invoice_customer_message_template }}</textarea>
+          </div>
+          <div class="field full">
+            <label for="settings_invoice_accounts_message_template">Accounts Message Template</label>
+            <textarea id="settings_invoice_accounts_message_template" name="invoice_accounts_message_template">{{ settings.invoice_accounts_message_template }}</textarea>
+          </div>
+        </div>
+        <div class="hint">The greeting changes automatically to `Good Morning` or `Good Afternoon` when the email is sent.</div>
+        <div class="actions">
+          <button class="button button-primary" type="submit">Save Settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
 
 def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -1859,6 +2715,33 @@ def write_json_lines_atomic(path, rows):
     os.replace(temp_path, path)
 
 
+def load_app_settings():
+    data = read_json_file(APP_SETTINGS_PATH, {})
+    merged = dict(DEFAULT_APP_SETTINGS)
+    if isinstance(data, dict):
+        merged.update(data)
+    merged["invoice_subject_template"] = str(merged.get("invoice_subject_template", DEFAULT_INVOICE_SUBJECT_TEMPLATE) or DEFAULT_INVOICE_SUBJECT_TEMPLATE).strip()
+    merged["invoice_customer_message_template"] = str(merged.get("invoice_customer_message_template", DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE) or DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE).strip()
+    merged["invoice_accounts_message_template"] = str(merged.get("invoice_accounts_message_template", DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE) or DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE).strip()
+    merged["invoice_from_email"] = str(merged.get("invoice_from_email", "andrew@afarrellcontracting.co.uk") or "andrew@afarrellcontracting.co.uk").strip()
+    payment_terms = str(merged.get("invoice_default_payment_terms_days", "14") or "14").strip()
+    if payment_terms not in INVOICE_PAYMENT_TERMS_OPTIONS:
+        payment_terms = "14"
+    merged["invoice_default_payment_terms_days"] = payment_terms
+    return merged
+
+
+def save_app_settings(settings):
+    current = load_app_settings()
+    current.update(settings if isinstance(settings, dict) else {})
+    write_json_atomic(APP_SETTINGS_PATH, current)
+
+
+def invoice_from_email(config):
+    settings = load_app_settings()
+    return str(settings.get("invoice_from_email", "") or config.get("from_email", "") or "").strip()
+
+
 def parse_csv_decimal(value):
     text = str(value or "").strip()
     if not text:
@@ -1882,6 +2765,25 @@ def worksheet_ref_col_index(ref):
     return value
 
 
+def first_child_by_local_name(parent, local_name):
+    if parent is None:
+        return None
+    for child in list(parent):
+        if str(child.tag).rsplit("}", 1)[-1] == local_name:
+            return child
+    return None
+
+
+def children_by_local_name(parent, local_name):
+    if parent is None:
+        return []
+    matches = []
+    for child in list(parent):
+        if str(child.tag).rsplit("}", 1)[-1] == local_name:
+            matches.append(child)
+    return matches
+
+
 def xlsx_shared_strings(archive):
     try:
         root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
@@ -1889,13 +2791,13 @@ def xlsx_shared_strings(archive):
         return []
 
     values = []
-    for item in root.findall("{%s}si" % XLSX_NS):
+    for item in children_by_local_name(root, "si"):
         text_parts = []
-        text_node = item.find("{%s}t" % XLSX_NS)
+        text_node = first_child_by_local_name(item, "t")
         if text_node is not None and text_node.text is not None:
             text_parts.append(text_node.text)
-        for run in item.findall("{%s}r" % XLSX_NS):
-            run_text = run.find("{%s}t" % XLSX_NS)
+        for run in children_by_local_name(item, "r"):
+            run_text = first_child_by_local_name(run, "t")
             if run_text is not None and run_text.text is not None:
                 text_parts.append(run_text.text)
         values.append("".join(text_parts))
@@ -1911,10 +2813,14 @@ def xlsx_first_sheet_rows(path):
             for rel in rels_root.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
                 relationships[rel.attrib.get("Id")] = rel.attrib.get("Target", "")
 
-            first_sheet = workbook_root.find("{%s}sheets/{%s}sheet" % (XLSX_NS, XLSX_NS))
+            sheets_node = first_child_by_local_name(workbook_root, "sheets")
+            first_sheet = first_child_by_local_name(sheets_node, "sheet")
             if first_sheet is None:
                 return []
-            rel_id = first_sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
+            rel_id = (
+                first_sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
+                or first_sheet.attrib.get("{%s}id" % STRICT_REL_NS, "")
+            )
             target = relationships.get(rel_id, "worksheets/sheet1.xml")
             if not target.startswith("xl/"):
                 target = "xl/%s" % target.lstrip("/")
@@ -1925,13 +2831,13 @@ def xlsx_first_sheet_rows(path):
         return []
 
     rows = []
-    sheet_data = sheet_root.find("{%s}sheetData" % XLSX_NS)
+    sheet_data = first_child_by_local_name(sheet_root, "sheetData")
     if sheet_data is None:
         return rows
 
-    for row_node in sheet_data.findall("{%s}row" % XLSX_NS):
+    for row_node in children_by_local_name(sheet_data, "row"):
         row_values = []
-        for cell in row_node.findall("{%s}c" % XLSX_NS):
+        for cell in children_by_local_name(row_node, "c"):
             ref = cell.attrib.get("r", "")
             col_index = worksheet_ref_col_index(ref)
             while len(row_values) < max(col_index - 1, 0):
@@ -1940,11 +2846,11 @@ def xlsx_first_sheet_rows(path):
             value = ""
             cell_type = cell.attrib.get("t", "")
             if cell_type == "inlineStr":
-                inline_node = cell.find("{%s}is/{%s}t" % (XLSX_NS, XLSX_NS))
+                inline_node = first_child_by_local_name(first_child_by_local_name(cell, "is"), "t")
                 if inline_node is not None and inline_node.text is not None:
                     value = inline_node.text
             else:
-                value_node = cell.find("{%s}v" % XLSX_NS)
+                value_node = first_child_by_local_name(cell, "v")
                 if value_node is not None and value_node.text is not None:
                     value = value_node.text
                     if cell_type == "s":
@@ -1962,13 +2868,7 @@ def load_customer_master_raw_rows():
         rows = xlsx_first_sheet_rows(CUSTOMER_MASTER_XLSX_PATH)
         if rows:
             return rows
-    if not os.path.exists(CUSTOMER_MASTER_CSV_PATH):
-        return []
-    try:
-        with open(CUSTOMER_MASTER_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
-            return list(csv.reader(handle))
-    except Exception:
-        return []
+    return []
 
 
 def load_customer_master_rows():
@@ -2056,6 +2956,47 @@ def build_customer_farm_map(master_rows):
             bucket.append(farm_name)
     for customer_name in out:
         out[customer_name].sort(key=lambda item: item.lower())
+    return out
+
+
+def build_customer_rate_map(master_rows):
+    out = {}
+    for row in master_rows:
+        customer_name = row.get("customer_name", "")
+        rate_text = str(row.get("rate_per_ton", "") or "").strip()
+        if not customer_name or not rate_text:
+            continue
+        customer_bucket = out.setdefault(customer_name, {})
+        farm_name = clean_name(row.get("farm_name"))
+        if farm_name:
+            customer_bucket[farm_name] = rate_text
+        elif "" not in customer_bucket:
+            customer_bucket[""] = rate_text
+    return out
+
+
+def iso_day_after(value):
+    try:
+        return (datetime.strptime(str(value or "").strip(), "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+def build_customer_invoice_from_map():
+    out = {}
+    for row in load_invoice_ledger():
+        customer_name = clean_name(row.get("customer"))
+        if not customer_name:
+            continue
+        end_date = str(row.get("end_date", "") or "").strip()
+        next_date = iso_day_after(end_date)
+        if not next_date:
+            continue
+        customer_bucket = out.setdefault(customer_name, {})
+        farm_name = clean_name(row.get("farm_name"))
+        previous = customer_bucket.get(farm_name, "")
+        if not previous or next_date > previous:
+            customer_bucket[farm_name] = next_date
     return out
 
 
@@ -2196,6 +3137,9 @@ def load_email_settings_csv():
         "send_weekday": parse_csv_int(selected_row.get("send_weekday"), 0),
         "send_hour": parse_csv_int(selected_row.get("send_hour"), 7),
         "send_minute": parse_csv_int(selected_row.get("send_minute"), 0),
+        "monthly_enabled": parse_csv_bool(selected_row.get("monthly_enabled"), parse_csv_bool(selected_row.get("enabled"), False)),
+        "monthly_send_hour": parse_csv_int(selected_row.get("monthly_send_hour"), parse_csv_int(selected_row.get("send_hour"), 7)),
+        "monthly_send_minute": parse_csv_int(selected_row.get("monthly_send_minute"), parse_csv_int(selected_row.get("send_minute"), 0)),
         "subject_prefix": str(selected_row.get("subject_prefix", "") or "").strip(),
     }
 
@@ -2207,6 +3151,70 @@ def load_email_settings_csv():
             parsed.setdefault("to_emails", []).append(email)
 
     return parsed
+
+
+def load_email_recipient_options():
+    if not os.path.exists(EMAIL_SETTINGS_CSV_PATH):
+        return []
+
+    try:
+        with open(EMAIL_SETTINGS_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
+            rows = [row for row in csv.DictReader(handle) if isinstance(row, dict)]
+    except Exception:
+        return []
+
+    options = []
+    seen = set()
+    has_record_type_column = bool(rows and "record_type" in rows[0])
+    for row in rows:
+        active_text = str(row.get("active", "1") or "1").strip().lower()
+        if active_text in ["0", "false", "no", "n", "off"]:
+            continue
+        if has_record_type_column and str(row.get("record_type", "") or "").strip().lower() != "recipient":
+            continue
+        email = str(row.get("email", "") or "").strip()
+        if not email or email.lower() in seen:
+            continue
+        seen.add(email.lower())
+        options.append({
+            "email": email,
+            "name": clean_name(row.get("name")) or email,
+        })
+    options.sort(key=lambda item: (item["name"].lower(), item["email"].lower()))
+    return options
+
+
+def invoice_accounts_copy_emails(invoice_recipient_options):
+    preferred = []
+    fallback = []
+    for item in invoice_recipient_options:
+        email = str(item.get("email", "") or "").strip()
+        name = str(item.get("name", "") or "").strip().lower()
+        combined = "%s %s" % (name, email.lower())
+        if not email:
+            continue
+        if "owen" in combined:
+            continue
+        fallback.append(email)
+        if "office" in combined or "andrew" in combined:
+            preferred.append(email)
+    return normalize_email_list(preferred or fallback)
+
+
+def render_invoice_template(template_text, invoice):
+    template = str(template_text or "").strip()
+    if not template:
+        return ""
+    farm_name = clean_name(invoice.get("farm_name"))
+    greeting = "Good Morning" if datetime.now().hour < 12 else "Good Afternoon"
+    return (
+        template
+        .replace("{greeting}", greeting)
+        .replace("{invoice_number}", str(invoice.get("invoice_number_label", "")))
+        .replace("{customer}", str(invoice.get("customer", "")))
+        .replace("{farm}", farm_name)
+        .replace("{scope}", ("%s / %s" % (invoice.get("customer", ""), farm_name)) if farm_name else str(invoice.get("customer", "")))
+    )
 
 
 def load_email_config():
@@ -2236,6 +3244,9 @@ def load_email_config():
     merged["send_weekday"] = max(0, min(6, int(merged.get("send_weekday", 0) or 0)))
     merged["send_hour"] = max(0, min(23, int(merged.get("send_hour", 7) or 7)))
     merged["send_minute"] = max(0, min(59, int(merged.get("send_minute", 0) or 0)))
+    merged["monthly_enabled"] = bool(merged.get("monthly_enabled", merged.get("enabled", False)))
+    merged["monthly_send_hour"] = max(0, min(23, int(merged.get("monthly_send_hour", merged.get("send_hour", 7)) or merged.get("send_hour", 7))))
+    merged["monthly_send_minute"] = max(0, min(59, int(merged.get("monthly_send_minute", merged.get("send_minute", 0)) or merged.get("send_minute", 0))))
     merged["subject_prefix"] = str(merged.get("subject_prefix", "A. Farrell Contracting") or "A. Farrell Contracting").strip()
     return merged
 
@@ -2249,7 +3260,27 @@ def save_email_state(state):
     write_json_atomic(EMAIL_STATE_PATH, state if isinstance(state, dict) else {})
 
 
-def email_config_ready(config):
+def load_invoice_ledger():
+    data = read_json_file(INVOICE_LEDGER_PATH, [])
+    if not isinstance(data, list):
+        return []
+    return [row for row in data if isinstance(row, dict)]
+
+
+def save_invoice_ledger(rows):
+    write_json_atomic(INVOICE_LEDGER_PATH, [row for row in rows if isinstance(row, dict)])
+
+
+def load_invoice_state():
+    data = read_json_file(INVOICE_STATE_PATH, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_invoice_state(state):
+    write_json_atomic(INVOICE_STATE_PATH, state if isinstance(state, dict) else {})
+
+
+def email_sender_ready(config):
     if not isinstance(config, dict):
         return False
     required = [
@@ -2257,6 +3288,12 @@ def email_config_ready(config):
         str(config.get("from_email", "") or "").strip(),
     ]
     if not all(required):
+        return False
+    return True
+
+
+def email_config_ready(config):
+    if not email_sender_ready(config):
         return False
     to_emails = config.get("to_emails", [])
     if not isinstance(to_emails, list) or not to_emails:
@@ -2571,6 +3608,24 @@ def last_month_range(now=None):
     return start_date, end_date
 
 
+def current_full_month_range(now=None):
+    now = now or datetime.now()
+    today = now.date()
+    start_date = today.replace(day=1)
+    if today.month == 12:
+        next_month_start = today.replace(year=today.year + 1, month=1, day=1)
+    else:
+        next_month_start = today.replace(month=today.month + 1, day=1)
+    end_date = next_month_start - timedelta(days=1)
+    return start_date, end_date
+
+
+def is_last_day_of_month(date_value):
+    if date_value is None:
+        return False
+    return date_value == current_full_month_range(datetime.combine(date_value, datetime.min.time()))[1]
+
+
 def jobs_summary_for_range(start_date, end_date, title=None):
     rows = []
     total_spreader = 0.0
@@ -2611,38 +3666,77 @@ def weekly_jobs_summary(start_date=None, end_date=None):
     return jobs_summary_for_range(start_date, end_date, "Weekly Jobs Summary")
 
 
-def weekly_email_subject(summary, config):
+def monthly_jobs_summary(now=None):
+    start_date, end_date = current_month_range(now or datetime.now())
+    return jobs_summary_for_range(start_date, end_date, "Monthly Jobs Summary")
+
+
+def summary_email_subject(summary, config, label):
     prefix = str(config.get("subject_prefix", "A. Farrell Contracting") or "A. Farrell Contracting").strip()
     start_label = format_job_date(summary.get("start_date"))
     end_label = format_job_date(summary.get("end_date"))
-    return "%s Weekly Jobs Summary: %s - %s" % (prefix, start_label, end_label)
+    return "%s %s: %s - %s" % (prefix, label, start_label, end_label)
 
 
-def weekly_email_body(summary):
+def weekly_email_subject(summary, config):
+    return summary_email_subject(summary, config, "Weekly Jobs Summary")
+
+
+def monthly_email_subject(summary, config):
+    return summary_email_subject(summary, config, "Monthly Jobs Summary")
+
+
+def summary_email_body(summary, label):
     return "\n".join([
-        "Weekly Jobs Summary",
+        label,
         "%s to %s" % (format_job_date(summary.get("start_date")), format_job_date(summary.get("end_date"))),
         "",
         "Jobs: %s" % summary.get("job_count", 0),
         "Spreader Tons: %s" % format_tons(summary.get("total_spreader_tons", 0)),
         "Ops Center Tons: %s" % format_tons(summary.get("total_john_deere_tons", 0)),
         "",
-        "The full weekly summary is attached as XLSX and PDF files.",
+        "The full summary is attached as XLSX and PDF files.",
     ])
 
 
+def weekly_email_body(summary):
+    return summary_email_body(summary, "Weekly Jobs Summary")
+
+
+def monthly_email_body(summary):
+    return summary_email_body(summary, "Monthly Jobs Summary")
+
+
+def summary_attachment_filename(summary, prefix):
+    return "%s_%s_to_%s.xlsx" % (
+        prefix,
+        str(summary.get("start_date", "")).replace("-", ""),
+        str(summary.get("end_date", "")).replace("-", ""),
+    )
+
+
 def weekly_summary_attachment_filename(summary):
-    return "weekly_jobs_summary_%s_to_%s.xlsx" % (
+    return summary_attachment_filename(summary, "weekly_jobs_summary")
+
+
+def monthly_summary_attachment_filename(summary):
+    return summary_attachment_filename(summary, "monthly_jobs_summary")
+
+
+def summary_pdf_attachment_filename(summary, prefix):
+    return "%s_%s_to_%s.pdf" % (
+        prefix,
         str(summary.get("start_date", "")).replace("-", ""),
         str(summary.get("end_date", "")).replace("-", ""),
     )
 
 
 def weekly_summary_pdf_attachment_filename(summary):
-    return "weekly_jobs_summary_%s_to_%s.pdf" % (
-        str(summary.get("start_date", "")).replace("-", ""),
-        str(summary.get("end_date", "")).replace("-", ""),
-    )
+    return summary_pdf_attachment_filename(summary, "weekly_jobs_summary")
+
+
+def monthly_summary_pdf_attachment_filename(summary):
+    return summary_pdf_attachment_filename(summary, "monthly_jobs_summary")
 
 
 def summary_export_config(period_key):
@@ -3562,26 +4656,1116 @@ def build_xlsx_attachment_bytes(summary):
     return output.getvalue()
 
 
-def send_weekly_summary_email(summary, config):
+def build_basic_xlsx_bytes(sheet_name, title, sheet_rows, column_widths=None):
+    sheet_xml_rows = []
+    row_index = 1
+    for row in sheet_rows:
+        cell_xml = []
+        col_index = 1
+        for value in row:
+            cell_xml.append(xlsx_cell_xml(row_index, col_index, value))
+            col_index += 1
+        sheet_xml_rows.append('<row r="%s">%s</row>' % (row_index, "".join(cell_xml)))
+        row_index += 1
+
+    cols_xml = ""
+    if isinstance(column_widths, list) and column_widths:
+        col_parts = []
+        for index, width in enumerate(column_widths, start=1):
+            col_parts.append('<col min="%s" max="%s" width="%s" customWidth="1"/>' % (index, index, width))
+        cols_xml = "<cols>%s</cols>" % "".join(col_parts)
+
+    worksheet_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  %s
+  <sheetData>%s</sheetData>
+</worksheet>
+""" % (cols_xml, "".join(sheet_xml_rows))
+
+    workbook_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="%s" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>
+""" % xml_escape(sheet_name)
+
+    workbook_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>
+"""
+
+    root_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>
+"""
+
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>
+"""
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    core_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>%s</dc:title>
+  <dc:creator>A. Farrell Contracting</dc:creator>
+  <cp:lastModifiedBy>A. Farrell Contracting</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">%s</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">%s</dcterms:modified>
+</cp:coreProperties>
+""" % (xml_escape(title), timestamp, timestamp)
+
+    app_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Python</Application>
+</Properties>
+"""
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types_xml)
+        archive.writestr("_rels/.rels", root_rels_xml)
+        archive.writestr("docProps/core.xml", core_xml)
+        archive.writestr("docProps/app.xml", app_xml)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+    return output.getvalue()
+
+
+def build_invoice_sheet_rows(invoice):
+    scope_label = invoice.get("customer", "")
+    if invoice.get("farm_name"):
+        scope_label = "%s / %s" % (scope_label, invoice.get("farm_name"))
+
+    sheet_rows = [
+        ["Invoice"],
+        ["Invoice Number", invoice.get("invoice_number_label", "")],
+        ["Invoice Date", invoice.get("invoice_date_label", "")],
+        ["Customer / Farm", scope_label],
+        ["Billing Email", invoice.get("customer_email", "")],
+        ["Period", "%s to %s" % (invoice.get("start_date_label", ""), invoice.get("end_date_label", ""))],
+        ["Last Invoiced Through", invoice.get("last_invoiced_end_date_label", "")],
+        [],
+    ]
+
+    for line in invoice_address_lines(invoice):
+        sheet_rows.append(["Billing Address", line])
+
+    sheet_rows.extend([
+        [],
+        ["Date", "Farm", "Field", "Product", "Notes", "Tons", "Rate Per Ton", "VAT %", "Line Total"],
+    ])
+
+    for row in invoice.get("line_rows", []):
+        sheet_rows.append([
+            row.get("job_date_label", ""),
+            row.get("farm_name", ""),
+            row.get("field_name", ""),
+            row.get("muck_type", ""),
+            row.get("job_notes", ""),
+            row.get("tons", ""),
+            row.get("rate_per_ton", ""),
+            row.get("vat_rate", 0),
+            row.get("line_total", 0),
+        ])
+
+    sheet_rows.extend([
+        [],
+        ["Jobs", invoice.get("job_count", 0)],
+        ["Total Tons", invoice.get("total_tons", 0)],
+        ["Subtotal", invoice.get("subtotal", 0)],
+        ["VAT", invoice.get("vat_total", 0)],
+        ["Grand Total", invoice.get("grand_total", 0)],
+    ])
+
+    return sheet_rows
+
+
+def build_plain_invoice_xlsx_bytes(invoice):
+    sheet_rows = build_invoice_sheet_rows(invoice)
+
+    return build_basic_xlsx_bytes(
+        "Invoice",
+        "Invoice %s" % invoice.get("invoice_number_label", ""),
+        sheet_rows,
+        column_widths=[16, 20, 24, 20, 28, 12, 14, 10, 14],
+    )
+
+
+def load_invoice_template():
+    invoice_template_path = resolve_invoice_template_path()
+    if not invoice_template_path:
+        return None
+
+    try:
+        with zipfile.ZipFile(invoice_template_path, "r") as archive:
+            entries = {name: archive.read(name) for name in archive.namelist()}
+    except Exception:
+        return None
+
+    sheet_bytes = entries.get("xl/worksheets/sheet1.xml")
+    if not sheet_bytes:
+        return None
+
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except Exception:
+        return None
+
+    rows_by_number = {}
+    sheet_data = root.find("{%s}sheetData" % XLSX_NS)
+    if sheet_data is not None:
+        for row in sheet_data.findall("{%s}row" % XLSX_NS):
+            try:
+                row_number = int(row.attrib.get("r", "0") or "0")
+            except Exception:
+                continue
+            rows_by_number[row_number] = row
+
+    def row_attrs(row_number):
+        row = rows_by_number.get(row_number)
+        if row is None:
+            return {}
+        cleaned = {}
+        for key, value in row.attrib.items():
+            if key in ["r", "spans"] or key.startswith("{"):
+                continue
+            cleaned[key] = value
+        return cleaned
+
+    def row_layout(row_number):
+        row = rows_by_number.get(row_number)
+        if row is None:
+            return {"columns": [], "styles": {}, "attrs": {}}
+
+        columns = []
+        styles = {}
+        for cell in row.findall("{%s}c" % XLSX_NS):
+            ref = cell.attrib.get("r", "")
+            col_index = xlsx_col_index(ref)
+            if not col_index:
+                continue
+            columns.append(col_index)
+            style_id = cell.attrib.get("s")
+            if style_id not in [None, ""]:
+                styles[col_index] = style_id
+
+        return {
+            "columns": columns,
+            "styles": styles,
+            "attrs": row_attrs(row_number),
+        }
+
+    cols = []
+    cols_node = root.find("{%s}cols" % XLSX_NS)
+    if cols_node is not None:
+        for col in cols_node.findall("{%s}col" % XLSX_NS):
+            cols.append(dict(col.attrib))
+
+    page_margins = {}
+    page_margins_node = root.find("{%s}pageMargins" % XLSX_NS)
+    if page_margins_node is not None:
+        page_margins = dict(page_margins_node.attrib)
+
+    return {
+        "entries": entries,
+        "cols": cols,
+        "page_margins": page_margins,
+        "sheet_format_attrs": dict((k, v) for k, v in (root.find("{%s}sheetFormatPr" % XLSX_NS) or ET.Element("x")).attrib.items() if not k.startswith("{")),
+        "row_templates": {
+            "title": row_layout(1),
+            "invoice_number": row_layout(2),
+            "invoice_date": row_layout(3),
+            "customer_scope": row_layout(4),
+            "billing_email": row_layout(5),
+            "period": row_layout(6),
+            "last_invoiced": row_layout(7),
+            "blank_meta": row_layout(8),
+            "address_rows": [row_layout(9), row_layout(10), row_layout(11), row_layout(12)],
+            "blank_before_lines": row_layout(13),
+            "headers": row_layout(14),
+            "detail_rows": [row_layout(15), row_layout(16), row_layout(17), row_layout(18), row_layout(19), row_layout(20)],
+            "blank_before_totals": row_layout(21),
+            "jobs": row_layout(22),
+            "total_tons": row_layout(23),
+            "subtotal": row_layout(24),
+            "vat": row_layout(25),
+            "grand_total": row_layout(26),
+        },
+    }
+
+
+def excel_date_serial(date_text):
+    try:
+        date_value = datetime.strptime(str(date_text or ""), "%Y-%m-%d")
+    except Exception:
+        return None
+    excel_epoch = datetime(1899, 12, 30)
+    return (date_value - excel_epoch).days
+
+
+def invoice_template_is_layout_workbook(template):
+    entries = template.get("entries", {}) if isinstance(template, dict) else {}
+    sheet_bytes = entries.get("xl/worksheets/sheet1.xml")
+    if not sheet_bytes:
+        return False
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except Exception:
+        return False
+    sheet_data = root.find("{%s}sheetData" % XLSX_NS)
+    if sheet_data is None:
+        return False
+    cell_text = {}
+    shared_strings = []
+    shared_bytes = entries.get("xl/sharedStrings.xml")
+    if shared_bytes:
+        try:
+            shared_root = ET.fromstring(shared_bytes)
+            for item in shared_root.findall("{%s}si" % XLSX_NS):
+                shared_strings.append("".join(node.text or "" for node in item.findall(".//{%s}t" % XLSX_NS)))
+        except Exception:
+            shared_strings = []
+    for row in sheet_data.findall("{%s}row" % XLSX_NS):
+        for cell in row.findall("{%s}c" % XLSX_NS):
+            ref = cell.attrib.get("r", "")
+            if ref:
+                cell_text[ref] = template_string_cell_value(cell, shared_strings)
+    return clean_name(cell_text.get("A8")).lower() == "to:" and clean_name(cell_text.get("E11")).lower() == "invoice no."
+
+
+def template_row_cell_map(row):
+    return {
+        cell.attrib.get("r", ""): cell
+        for cell in row.findall("{%s}c" % XLSX_NS)
+        if cell.attrib.get("r")
+    }
+
+
+def set_template_cell_value(row, ref, value):
+    cells = template_row_cell_map(row)
+    cell = cells.get(ref)
+    if cell is None:
+        cell = ET.Element("{%s}c" % XLSX_NS, {"r": ref})
+        row.append(cell)
+    style_id = cell.attrib.get("s")
+    cell.attrib.clear()
+    cell.attrib["r"] = ref
+    if style_id not in [None, ""]:
+        cell.attrib["s"] = style_id
+    for child in list(cell):
+        cell.remove(child)
+    if value is None or value == "":
+        return
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value_node = ET.SubElement(cell, "{%s}v" % XLSX_NS)
+        value_node.text = str(value)
+        return
+    cell.attrib["t"] = "inlineStr"
+    is_node = ET.SubElement(cell, "{%s}is" % XLSX_NS)
+    text_node = ET.SubElement(is_node, "{%s}t" % XLSX_NS)
+    text_node.text = str(value)
+
+
+def patch_currency_number_formats(styles_bytes):
+    try:
+        root = ET.fromstring(styles_bytes)
+    except Exception:
+        return styles_bytes
+
+    custom_formats = {}
+    numfmts_node = first_child_by_local_name(root, "numFmts")
+    if numfmts_node is None:
+        numfmts_node = ET.Element("{%s}numFmts" % XLSX_NS, {"count": "0"})
+        inserted = False
+        for index, child in enumerate(list(root)):
+            local_name = str(child.tag).rsplit("}", 1)[-1]
+            if local_name in ["fonts", "fills", "borders", "cellStyleXfs", "cellXfs"]:
+                root.insert(index, numfmts_node)
+                inserted = True
+                break
+        if not inserted:
+            root.insert(0, numfmts_node)
+
+    for numfmt in children_by_local_name(numfmts_node, "numFmt"):
+        numfmt_id = str(numfmt.attrib.get("numFmtId", "") or "").strip()
+        format_code = str(numfmt.attrib.get("formatCode", "") or "")
+        if numfmt_id:
+            custom_formats[numfmt_id] = format_code
+
+    currency_format_code = '£#,##0.00'
+    currency_numfmt_id = None
+    for numfmt_id, format_code in custom_formats.items():
+        if format_code == currency_format_code:
+            currency_numfmt_id = numfmt_id
+            break
+    if currency_numfmt_id is None:
+        highest_id = 163
+        for numfmt_id in custom_formats.keys():
+            try:
+                highest_id = max(highest_id, int(numfmt_id))
+            except Exception:
+                continue
+        currency_numfmt_id = str(highest_id + 1)
+        ET.SubElement(
+            numfmts_node,
+            "{%s}numFmt" % XLSX_NS,
+            {"numFmtId": currency_numfmt_id, "formatCode": currency_format_code},
+        )
+        custom_formats[currency_numfmt_id] = currency_format_code
+    numfmts_node.attrib["count"] = str(len(children_by_local_name(numfmts_node, "numFmt")))
+
+    cellxfs_node = first_child_by_local_name(root, "cellXfs")
+    if cellxfs_node is None:
+        return styles_bytes
+
+    for xf in children_by_local_name(cellxfs_node, "xf"):
+        numfmt_id = str(xf.attrib.get("numFmtId", "") or "").strip()
+        if not numfmt_id:
+            continue
+        format_code = custom_formats.get(numfmt_id, "")
+        is_currency = numfmt_id in ["5", "6", "7", "8", "44"] or ("£" in format_code)
+        if is_currency:
+            xf.attrib["numFmtId"] = currency_numfmt_id
+            xf.attrib["applyNumberFormat"] = "1"
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def sort_template_row_cells(row):
+    cells = row.findall("{%s}c" % XLSX_NS)
+    cells.sort(key=lambda cell: xlsx_col_index(cell.attrib.get("r", "")))
+    for cell in list(row):
+        row.remove(cell)
+    for cell in cells:
+        row.append(cell)
+
+
+def fill_layout_invoice_template(invoice, template):
+    entries = template.get("entries", {})
+    sheet_bytes = entries.get("xl/worksheets/sheet1.xml")
+    if not sheet_bytes:
+        raise ValueError("Invoice template worksheet is missing.")
+
+    root = ET.fromstring(sheet_bytes)
+    sheet_data = root.find("{%s}sheetData" % XLSX_NS)
+    if sheet_data is None:
+        raise ValueError("Invoice template sheet data is missing.")
+
+    rows_by_number = {}
+    for row in sheet_data.findall("{%s}row" % XLSX_NS):
+        try:
+            rows_by_number[int(row.attrib.get("r", "0") or "0")] = row
+        except Exception:
+            continue
+
+    def row(number):
+        found = rows_by_number.get(number)
+        if found is None:
+            raise ValueError("Invoice template row %s is missing." % number)
+        return found
+
+    address_lines = invoice_address_lines(invoice)[:5]
+    while len(address_lines) < 5:
+        address_lines.append("")
+
+    set_template_cell_value(row(9), "A9", address_lines[0])
+    set_template_cell_value(row(10), "A10", address_lines[1])
+    set_template_cell_value(row(11), "A11", address_lines[2])
+    set_template_cell_value(row(12), "A12", address_lines[3])
+    set_template_cell_value(row(13), "A13", address_lines[4])
+
+    invoice_date_serial = excel_date_serial(invoice.get("invoice_date"))
+    set_template_cell_value(row(10), "G10", invoice_date_serial if invoice_date_serial is not None else invoice.get("invoice_date_label", ""))
+    set_template_cell_value(row(11), "G11", invoice.get("invoice_number_label", ""))
+    set_template_cell_value(row(12), "G12", invoice.get("payment_terms_days", "14"))
+
+    rate_text = invoice.get("rate_override_label", "") or ""
+    set_template_cell_value(row(17), "A17", "Muck Spreading @  %s/ton, Description/Field Name" % rate_text if rate_text else "Muck Spreading, Description/Field Name")
+    set_template_cell_value(row(17), "E17", "Product")
+    set_template_cell_value(row(17), "F17", "Tons")
+    set_template_cell_value(row(17), "G17", "Total")
+
+    detail_rows = invoice.get("line_rows", []) or []
+    detail_start_row = 18
+    detail_end_row = 41
+    available_detail_rows = max(0, (detail_end_row - detail_start_row) + 1)
+    detail_rows = detail_rows[:available_detail_rows]
+
+    current_row_number = detail_start_row
+    for detail in detail_rows:
+        detail_row = row(current_row_number)
+        description = clean_name(detail.get("field_name"))
+        if not description:
+            description = clean_name(detail.get("job_notes"))
+        if detail.get("is_extra_line"):
+            product = ""
+        else:
+            product = clean_name(detail.get("muck_type"))
+        set_template_cell_value(detail_row, "A%s" % current_row_number, description)
+        set_template_cell_value(detail_row, "E%s" % current_row_number, product)
+        set_template_cell_value(detail_row, "F%s" % current_row_number, detail.get("tons", ""))
+        set_template_cell_value(detail_row, "G%s" % current_row_number, format_money(detail.get("line_total", "")) if str(detail.get("line_total", "")).strip() != "" else "")
+        sort_template_row_cells(detail_row)
+        current_row_number += 1
+
+    while current_row_number <= detail_end_row:
+        detail_row = row(current_row_number)
+        set_template_cell_value(detail_row, "A%s" % current_row_number, "")
+        set_template_cell_value(detail_row, "E%s" % current_row_number, "")
+        set_template_cell_value(detail_row, "F%s" % current_row_number, "")
+        set_template_cell_value(detail_row, "G%s" % current_row_number, "")
+        sort_template_row_cells(detail_row)
+        current_row_number += 1
+
+    set_template_cell_value(row(42), "F42", invoice.get("total_tons", ""))
+    set_template_cell_value(row(43), "G43", format_money(invoice.get("subtotal", "")))
+    set_template_cell_value(row(44), "F44", "VAT 20%")
+    set_template_cell_value(row(44), "G44", format_money(invoice.get("vat_total", "")))
+    set_template_cell_value(row(45), "G45", format_money(invoice.get("grand_total", "")))
+
+    for target_row in [9, 10, 11, 12, 13, 17, 42, 43, 44, 45]:
+        sort_template_row_cells(row(target_row))
+
+    ET.register_namespace("", XLSX_NS)
+    ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
+    ET.register_namespace("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006")
+    ET.register_namespace("x14ac", "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac")
+    ET.register_namespace("xr", "http://schemas.microsoft.com/office/spreadsheetml/2014/revision")
+    ET.register_namespace("xr2", "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2")
+    ET.register_namespace("xr3", "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3")
+    worksheet_xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    try:
+        original_xml_text = sheet_bytes.decode("utf-8")
+        generated_xml_text = worksheet_xml.decode("utf-8")
+        original_match = re.search(r"<worksheet\b[^>]*>", original_xml_text)
+        generated_match = re.search(r"<worksheet\b[^>]*>", generated_xml_text)
+        if original_match and generated_match:
+            generated_xml_text = (
+                generated_xml_text[:generated_match.start()]
+                + original_match.group(0)
+                + generated_xml_text[generated_match.end():]
+            )
+            worksheet_xml = generated_xml_text.encode("utf-8")
+    except Exception:
+        pass
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in entries.items():
+            if name == "xl/worksheets/sheet1.xml":
+                archive.writestr(name, worksheet_xml)
+            elif name == "xl/styles.xml":
+                archive.writestr(name, patch_currency_number_formats(data))
+            else:
+                archive.writestr(name, data)
+    return output.getvalue()
+
+
+def invoice_template_rows(invoice):
+    scope_label = invoice.get("customer", "")
+    if invoice.get("farm_name"):
+        scope_label = "%s / %s" % (scope_label, invoice.get("farm_name"))
+
+    rows = [
+        ("title", ["Invoice"]),
+        ("invoice_number", ["Invoice Number", invoice.get("invoice_number_label", "")]),
+        ("invoice_date", ["Invoice Date", invoice.get("invoice_date_label", "")]),
+        ("customer_scope", ["Customer / Farm", scope_label]),
+        ("billing_email", ["Billing Email", invoice.get("customer_email", "")]),
+        ("period", ["Period", "%s to %s" % (invoice.get("start_date_label", ""), invoice.get("end_date_label", ""))]),
+        ("last_invoiced", ["Last Invoiced Through", invoice.get("last_invoiced_end_date_label", "")]),
+        ("blank_meta", []),
+    ]
+
+    address_lines = invoice_address_lines(invoice)[:4]
+    while len(address_lines) < 4:
+        address_lines.append("")
+    for line in address_lines:
+        rows.append(("address", ["Billing Address", line] if line else []))
+
+    rows.extend([
+        ("blank_before_lines", []),
+        ("headers", ["Date", "Farm", "Field", "Product", "Notes", "Tons", "Rate Per Ton", "VAT %", "Line Total"]),
+    ])
+
+    for row in invoice.get("line_rows", []):
+        rows.append((
+            "detail",
+            [
+                row.get("job_date_label", ""),
+                row.get("farm_name", ""),
+                row.get("field_name", ""),
+                row.get("muck_type", ""),
+                row.get("job_notes", ""),
+                row.get("tons", ""),
+                row.get("rate_per_ton", ""),
+                row.get("vat_rate", 0),
+                row.get("line_total", 0),
+            ],
+        ))
+
+    rows.extend([
+        ("blank_before_totals", []),
+        ("jobs", ["Jobs", invoice.get("job_count", 0)]),
+        ("total_tons", ["Total Tons", invoice.get("total_tons", 0)]),
+        ("subtotal", ["Subtotal", invoice.get("subtotal", 0)]),
+        ("vat", ["VAT", invoice.get("vat_total", 0)]),
+        ("grand_total", ["Grand Total", invoice.get("grand_total", 0)]),
+    ])
+    return rows
+
+
+def build_template_based_invoice_xlsx(invoice, template):
+    if invoice_template_is_layout_workbook(template):
+        return fill_layout_invoice_template(invoice, template)
+
+    row_templates = template.get("row_templates", {})
+    row_specs = invoice_template_rows(invoice)
+    detail_templates = row_templates.get("detail_rows") or [row_templates.get("headers", {})]
+    address_templates = row_templates.get("address_rows") or [row_templates.get("billing_email", {})]
+    detail_index = 0
+    address_index = 0
+    xml_rows = []
+    row_number = 1
+
+    for kind, values in row_specs:
+        if kind == "detail":
+            template_row = detail_templates[detail_index % len(detail_templates)]
+            detail_index += 1
+        elif kind == "address":
+            template_row = address_templates[address_index % len(address_templates)]
+            address_index += 1
+        else:
+            template_row = row_templates.get(kind, {})
+        xml_rows.append(
+            worksheet_row_xml(
+                row_number,
+                values,
+                template_row.get("columns"),
+                template_row.get("styles"),
+                template_row.get("attrs"),
+            )
+        )
+        row_number += 1
+
+    cols_xml = ""
+    if template.get("cols"):
+        col_parts = []
+        for col in template["cols"]:
+            attrs = []
+            for key, value in col.items():
+                attrs.append('%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})))
+            col_parts.append("<col %s/>" % " ".join(attrs))
+        cols_xml = "<cols>%s</cols>" % "".join(col_parts)
+
+    sheet_format_attrs = template.get("sheet_format_attrs", {}) or {"defaultRowHeight": "15"}
+    sheet_format_xml = "<sheetFormatPr %s/>" % " ".join(
+        '%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})) for key, value in sheet_format_attrs.items()
+    )
+
+    page_margins = template.get("page_margins", {})
+    page_margins_xml = ""
+    if page_margins:
+        page_margins_xml = "<pageMargins %s/>" % " ".join(
+            '%s="%s"' % (key, xml_escape(str(value), {'"': '&quot;'})) for key, value in page_margins.items()
+        )
+
+    worksheet_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="%s">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  %s
+  %s
+  <sheetData>%s</sheetData>
+  %s
+</worksheet>
+""" % (
+        XLSX_NS,
+        sheet_format_xml,
+        cols_xml,
+        "".join(xml_rows),
+        page_margins_xml,
+    )
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in template.get("entries", {}).items():
+            if name == "xl/worksheets/sheet1.xml":
+                archive.writestr(name, worksheet_xml)
+            else:
+                archive.writestr(name, data)
+    return output.getvalue()
+
+
+def build_invoice_xlsx_bytes(invoice):
+    template = load_invoice_template()
+    if template:
+        try:
+            return build_template_based_invoice_xlsx(invoice, template)
+        except Exception:
+            pass
+    return build_plain_invoice_xlsx_bytes(invoice)
+
+
+def invoice_pdf_filename(invoice):
+    xlsx_name = str(invoice.get("filename", "invoice.xlsx") or "invoice.xlsx")
+    if xlsx_name.lower().endswith(".xlsx"):
+        return xlsx_name[:-5] + ".pdf"
+    return xlsx_name + ".pdf"
+
+
+def office_pdf_converter_path():
+    for candidate in [
+        os.environ.get("MUCKSPREADING_PDF_CONVERTER", ""),
+        shutil.which("soffice") or "",
+        shutil.which("libreoffice") or "",
+        "/usr/bin/soffice",
+        "/usr/bin/libreoffice",
+        "/snap/bin/libreoffice",
+    ]:
+        candidate = str(candidate or "").strip()
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return ""
+
+
+def convert_xlsx_bytes_to_pdf_bytes(xlsx_bytes, xlsx_name="invoice.xlsx"):
+    converter = office_pdf_converter_path()
+    if not converter or not xlsx_bytes:
+        return b""
+
+    safe_xlsx_name = sanitize_filename_part(xlsx_name) or "invoice.xlsx"
+    if not safe_xlsx_name.lower().endswith(".xlsx"):
+        safe_xlsx_name += ".xlsx"
+    pdf_name = safe_xlsx_name[:-5] + ".pdf"
+
+    with tempfile.TemporaryDirectory(prefix="muckspreading-pdf-") as temp_dir:
+        xlsx_path = os.path.join(temp_dir, safe_xlsx_name)
+        pdf_path = os.path.join(temp_dir, pdf_name)
+        with open(xlsx_path, "wb") as handle:
+            handle.write(xlsx_bytes)
+
+        command = [
+            converter,
+            "--headless",
+            "--convert-to",
+            "pdf:calc_pdf_Export",
+            "--outdir",
+            temp_dir,
+            xlsx_path,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=60,
+            )
+        except Exception:
+            return b""
+
+        if completed.returncode != 0 or not os.path.exists(pdf_path):
+            return b""
+
+        try:
+            with open(pdf_path, "rb") as handle:
+                return handle.read()
+        except OSError:
+            return b""
+
+
+def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
+    xlsx_bytes = xlsx_bytes if xlsx_bytes not in [None, b""] else build_invoice_xlsx_bytes(invoice)
+    converted_pdf = convert_xlsx_bytes_to_pdf_bytes(xlsx_bytes, invoice.get("filename", "invoice.xlsx"))
+    if converted_pdf:
+        return converted_pdf
+
+    page_width = 842
+    page_height = 595
+    left = 34
+    top = 560
+    row_height = 18
+    usable_width = 774
+    columns = [82, 88, 138, 102, 165, 52, 58, 89]
+    headers = ["Date", "Farm", "Field", "Product", "Notes", "Tons", "Rate", "Line Total"]
+    x_positions = [left]
+    for width in columns[:-1]:
+        x_positions.append(x_positions[-1] + width)
+
+    def draw_text(x, y, text, font="F1", size=9.2, max_chars=48):
+        return pdf_text_command(x, y, truncate_pdf_text(text, max_chars), font, size)
+
+    customer_scope = invoice.get("customer", "")
+    if invoice.get("farm_name"):
+        customer_scope = "%s / %s" % (customer_scope, invoice.get("farm_name"))
+
+    rows = []
+    for line in invoice.get("line_rows", []):
+        rows.append([
+            line.get("job_date_label", ""),
+            line.get("farm_name", ""),
+            line.get("field_name", ""),
+            line.get("muck_type", ""),
+            line.get("job_notes", ""),
+            format_tons(line.get("tons", 0)) if str(line.get("tons", "")).strip() != "" else "",
+            format_tons(line.get("rate_per_ton", 0)) if str(line.get("rate_per_ton", "")).strip() != "" else "",
+            format_money(line.get("line_total", 0)),
+        ])
+
+    page_rows = []
+    current = []
+    for row in rows:
+        if len(current) >= 18:
+            page_rows.append(current)
+            current = []
+        current.append(row)
+    if current:
+        page_rows.append(current)
+    if not page_rows:
+        page_rows = [[["", "", "No uninvoiced jobs", "", "", "", "", ""]]]
+
+    objects = []
+
+    def add_object(payload):
+        if isinstance(payload, str):
+            payload = payload.encode("latin-1", "replace")
+        objects.append(payload)
+        return len(objects)
+
+    font_regular_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    font_bold_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    pages_id_placeholder = add_object(b"<<>>")
+    page_ids = []
+
+    for page_index, page_data in enumerate(page_rows):
+        commands = []
+        commands.append(draw_text(left, top, "Invoice %s" % invoice.get("invoice_number_label", ""), "F2", 18, 64))
+        commands.append(draw_text(left + 180, top, customer_scope, "F2", 14, 64))
+        commands.append(draw_text(left, top - 20, "Invoice Date: %s" % invoice.get("invoice_date_label", ""), "F1", 10, 64))
+        commands.append(draw_text(left + 170, top - 20, "Period: %s to %s" % (invoice.get("start_date_label", ""), invoice.get("end_date_label", "")), "F1", 10, 64))
+
+        address_y = top - 42
+        for line in invoice_address_lines(invoice):
+            commands.append(draw_text(left, address_y, line, "F1", 9.5, 72))
+            address_y -= 13
+
+        table_top = top - 112
+        commands.append("0 g")
+        commands.append("0.82 0.82 0.82 rg")
+        commands.append("%.2f %.2f %.2f %.2f re f" % (left, table_top - row_height, usable_width, row_height))
+        commands.append("0.65 G")
+        commands.append("0.5 w")
+        commands.append("%.2f %.2f %.2f %.2f re S" % (left, table_top - row_height, usable_width, row_height))
+        for x_pos in x_positions[1:]:
+            commands.append("%.2f %.2f m %.2f %.2f l S" % (x_pos, table_top - row_height, x_pos, table_top))
+        for idx, header in enumerate(headers):
+            commands.append(draw_text(x_positions[idx] + 4, table_top - 12, header, "F2", 8.4, 20))
+
+        y = table_top - row_height
+        for row in page_data:
+            y_next = y - row_height
+            commands.append("%.2f %.2f %.2f %.2f re S" % (left, y_next, usable_width, row_height))
+            for x_pos in x_positions[1:]:
+                commands.append("%.2f %.2f m %.2f %.2f l S" % (x_pos, y_next, x_pos, y))
+            for idx, value in enumerate(row):
+                text = str(value or "")
+                x = x_positions[idx] + 4
+                if idx >= 5:
+                    approx = len(text) * 4.8
+                    x = x_positions[idx] + columns[idx] - approx - 4
+                    commands.append(draw_text(x, y_next + 6, text, "F1", 8.8, 16))
+                else:
+                    commands.append(draw_text(x, y_next + 6, text, "F1", 8.8, 34 if idx == 4 else 22))
+            y = y_next
+
+        if page_index == len(page_rows) - 1:
+            totals_y = y - 18
+            commands.append(draw_text(left + 470, totals_y, "Subtotal:", "F2", 10, 20))
+            commands.append(draw_text(left + 610, totals_y, format_tons(invoice.get("subtotal", 0)), "F2", 10, 16))
+            commands.append(draw_text(left + 470, totals_y - 16, "VAT:", "F2", 10, 20))
+            commands.append(draw_text(left + 610, totals_y - 16, format_tons(invoice.get("vat_total", 0)), "F2", 10, 16))
+            commands.append(draw_text(left + 470, totals_y - 34, "Grand Total:", "F2", 10.5, 20))
+            commands.append(draw_text(left + 610, totals_y - 34, format_tons(invoice.get("grand_total", 0)), "F2", 10.5, 16))
+
+        stream = "\n".join(commands).encode("latin-1", "replace")
+        content_id = add_object(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
+        page_id = add_object(
+            (
+                "<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
+                "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>"
+            ) % (pages_id_placeholder, page_width, page_height, font_regular_id, font_bold_id, content_id)
+        )
+        page_ids.append(page_id)
+
+    pages_payload = "<< /Type /Pages /Count %d /Kids [%s] >>" % (
+        len(page_ids),
+        " ".join("%d 0 R" % page_id for page_id in page_ids),
+    )
+    objects[pages_id_placeholder - 1] = pages_payload.encode("latin-1")
+    catalog_id = add_object(("<< /Type /Catalog /Pages %d 0 R >>" % pages_id_placeholder).encode("latin-1"))
+
+    pdf = io.BytesIO()
+    pdf.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, payload in enumerate(objects, start=1):
+        offsets.append(pdf.tell())
+        pdf.write(("%d 0 obj\n" % index).encode("latin-1"))
+        pdf.write(payload)
+        pdf.write(b"\nendobj\n")
+
+    xref_start = pdf.tell()
+    pdf.write(("xref\n0 %d\n" % (len(objects) + 1)).encode("latin-1"))
+    pdf.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.write(("%010d 00000 n \n" % offset).encode("latin-1"))
+    pdf.write(
+        (
+            "trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF" % (
+                len(objects) + 1,
+                catalog_id,
+                xref_start,
+            )
+        ).encode("latin-1")
+    )
+    return pdf.getvalue()
+
+
+def invoice_email_subject(invoice, config):
+    return render_invoice_template(load_app_settings().get("invoice_subject_template", DEFAULT_INVOICE_SUBJECT_TEMPLATE), invoice)
+
+
+def invoice_email_body(invoice, audience):
+    settings = load_app_settings()
+    if audience == "accounts":
+        return str(settings.get("invoice_accounts_message_template", DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE) or DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE).strip()
+    return str(settings.get("invoice_customer_message_template", DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE) or DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE).strip()
+
+
+def save_invoice_archive(attachment_name, attachment_bytes):
+    os.makedirs(INVOICE_ARCHIVE_DIR, exist_ok=True)
+    file_path = os.path.join(INVOICE_ARCHIVE_DIR, attachment_name)
+    with open(file_path, "wb") as handle:
+        handle.write(attachment_bytes)
+    return file_path
+
+
+def record_invoice(invoice, accounts_emails):
+    ledger = load_invoice_ledger()
+    ledger.append({
+        "invoice_number": int(invoice.get("invoice_number", 0) or 0),
+        "customer": invoice.get("customer", ""),
+        "farm_name": invoice.get("farm_name", ""),
+        "customer_email": invoice.get("customer_email", ""),
+        "accounts_emails": list(accounts_emails or []),
+        "start_date": invoice.get("start_date", ""),
+        "end_date": invoice.get("end_date", ""),
+        "job_ids": list(invoice.get("job_ids", [])),
+        "job_count": int(invoice.get("job_count", 0) or 0),
+        "grand_total": invoice.get("grand_total", 0),
+        "xlsx_filename": invoice.get("filename", ""),
+        "pdf_filename": invoice_pdf_filename(invoice),
+        "created_ts": int(time.time()),
+    })
+    save_invoice_ledger(ledger)
+    reserve_next_invoice_number(int(invoice.get("invoice_number", 0) or 0) + 1)
+
+
+def invoice_status_map():
+    status_by_job_id = {}
+    for row in load_invoice_ledger():
+        if not isinstance(row, dict):
+            continue
+        invoice_number = int(row.get("invoice_number", 0) or 0)
+        manual_only = bool(row.get("manual_only", False))
+        if invoice_number > 0:
+            label = "Invoice %s" % format_invoice_number(invoice_number)
+            status_key = "invoiced"
+        elif manual_only:
+            label = "Marked Invoiced"
+            status_key = "manual"
+        else:
+            label = "Invoiced"
+            status_key = "invoiced"
+        for value in row.get("job_ids", []):
+            try:
+                job_id = int(value)
+            except Exception:
+                continue
+            status_by_job_id[job_id] = {
+                "label": label,
+                "status_key": status_key,
+                "manual_only": manual_only,
+                "invoice_number": invoice_number,
+            }
+    return status_by_job_id
+
+
+def invoice_history_rows():
+    rows = []
+    for row in load_invoice_ledger():
+        if not isinstance(row, dict):
+            continue
+        invoice_number = int(row.get("invoice_number", 0) or 0)
+        manual_only = bool(row.get("manual_only", False))
+        rows.append({
+            "invoice_number": invoice_number,
+            "reference_label": ("Invoice %s" % format_invoice_number(invoice_number)) if invoice_number > 0 else "Marked Invoiced",
+            "type_label": "Manual" if manual_only else "Invoice",
+            "customer": clean_name(row.get("customer")),
+            "farm_name": clean_name(row.get("farm_name")) or "--",
+            "period_label": "%s to %s" % (format_job_date(row.get("start_date")), format_job_date(row.get("end_date"))),
+            "job_count": int(row.get("job_count", 0) or 0),
+            "grand_total_label": format_money(row.get("grand_total", 0)) if not manual_only and str(row.get("grand_total", "")).strip() != "" else "--",
+            "created_label": format_saved_time(row.get("created_ts")),
+            "created_ts": int(row.get("created_ts", 0) or 0),
+            "note": clean_name(row.get("note")),
+        })
+    rows.sort(
+        key=lambda item: (
+            -item["created_ts"],
+            -(item["invoice_number"] if item["invoice_number"] > 0 else 0),
+        )
+    )
+    return rows
+
+
+def manual_mark_jobs_invoiced(customer_name, farm_name="", through_date="", note=""):
+    customer_name = clean_name(customer_name)
+    farm_name = clean_name(farm_name)
+    through_date = str(through_date or "").strip()
+    note = clean_name(note)
+    if not customer_name:
+        return 0, "Customer is required"
+    try:
+        datetime.strptime(through_date, "%Y-%m-%d")
+    except Exception:
+        return 0, "Job date through must be a valid date"
+
+    eligible_rows = []
+    for row in invoice_scope_jobs(customer_name, farm_name):
+        row_job_date = str(row.get("job_date", "") or "").strip()
+        if not row_job_date or row_job_date > through_date:
+            continue
+        eligible_rows.append(row)
+
+    if not eligible_rows:
+        return 0, "No uninvoiced jobs were found in that scope up to the selected date"
+
+    ledger = load_invoice_ledger()
+    ledger.append({
+        "invoice_number": 0,
+        "manual_only": True,
+        "customer": customer_name,
+        "farm_name": farm_name,
+        "customer_email": "",
+        "accounts_emails": [],
+        "start_date": min(str(row.get("job_date", "") or "") for row in eligible_rows),
+        "end_date": max(str(row.get("job_date", "") or "") for row in eligible_rows),
+        "job_ids": [int(row.get("id", 0) or 0) for row in eligible_rows if int(row.get("id", 0) or 0)],
+        "job_count": len(eligible_rows),
+        "grand_total": "",
+        "xlsx_filename": "",
+        "pdf_filename": "",
+        "created_ts": int(time.time()),
+        "note": note or "Marked as already invoiced",
+    })
+    save_invoice_ledger(ledger)
+    return len(eligible_rows), ""
+
+
+def send_invoice_email(invoice, config, accounts_emails, subject_text="", customer_message=""):
+    customer_email = str(invoice.get("customer_email", "") or "").strip()
+    if not customer_email:
+        raise RuntimeError("Customer email is missing for this invoice.")
+
+    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
+    pdf_bytes = build_invoice_pdf_bytes(invoice, xlsx_bytes)
+    pdf_name = invoice_pdf_filename(invoice)
+    subject_value = render_invoice_template(subject_text or invoice_email_subject(invoice, config), invoice)
+    customer_message_value = render_invoice_template(customer_message or invoice_email_body(invoice, "customer"), invoice)
+    accounts_message_value = render_invoice_template(invoice_email_body(invoice, "accounts"), invoice)
+    from_email_value = invoice_from_email(config)
+
+    customer_msg = EmailMessage()
+    customer_msg["Subject"] = subject_value
+    customer_msg["From"] = from_email_value
+    customer_msg["To"] = customer_email
+    customer_msg.set_content(customer_message_value)
+    customer_msg.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="pdf",
+        filename=pdf_name,
+    )
+
+    with smtplib.SMTP(config["smtp_host"], int(config["smtp_port"]), timeout=30) as server:
+        server.ehlo()
+        if config.get("use_tls", True):
+            server.starttls()
+            server.ehlo()
+        if config.get("smtp_username"):
+            server.login(config.get("smtp_username", ""), config.get("smtp_password", ""))
+        server.send_message(customer_msg)
+        if accounts_emails:
+            accounts_msg = EmailMessage()
+            accounts_msg["Subject"] = subject_value
+            accounts_msg["From"] = from_email_value
+            accounts_msg["To"] = ", ".join(accounts_emails)
+            accounts_msg.set_content(accounts_message_value)
+            accounts_msg.add_attachment(
+                pdf_bytes,
+                maintype="application",
+                subtype="pdf",
+                filename=pdf_name,
+            )
+            accounts_msg.add_attachment(
+                xlsx_bytes,
+                maintype="application",
+                subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename=invoice.get("filename", "invoice.xlsx"),
+            )
+            server.send_message(accounts_msg)
+
+    save_invoice_archive(invoice.get("filename", "invoice.xlsx"), xlsx_bytes)
+    save_invoice_archive(pdf_name, pdf_bytes)
+    record_invoice(invoice, accounts_emails)
+
+
+def send_summary_email(summary, config, subject_line, body_text, xlsx_filename, pdf_filename):
     if not email_config_ready(config):
         raise RuntimeError("Email configuration is incomplete")
 
     msg = EmailMessage()
-    msg["Subject"] = weekly_email_subject(summary, config)
+    msg["Subject"] = subject_line
     msg["From"] = config["from_email"]
     msg["To"] = ", ".join(config["to_emails"])
-    msg.set_content(weekly_email_body(summary))
+    msg.set_content(body_text)
     msg.add_attachment(
         build_xlsx_attachment_bytes(summary),
         maintype="application",
         subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=weekly_summary_attachment_filename(summary),
+        filename=xlsx_filename,
     )
     msg.add_attachment(
         build_pdf_attachment_bytes(summary),
         maintype="application",
         subtype="pdf",
-        filename=weekly_summary_pdf_attachment_filename(summary),
+        filename=pdf_filename,
     )
 
     with smtplib.SMTP(config["smtp_host"], int(config["smtp_port"]), timeout=30) as server:
@@ -3592,6 +5776,28 @@ def send_weekly_summary_email(summary, config):
         if config.get("smtp_username"):
             server.login(config.get("smtp_username", ""), config.get("smtp_password", ""))
         server.send_message(msg)
+
+
+def send_weekly_summary_email(summary, config):
+    send_summary_email(
+        summary,
+        config,
+        weekly_email_subject(summary, config),
+        weekly_email_body(summary),
+        weekly_summary_attachment_filename(summary),
+        weekly_summary_pdf_attachment_filename(summary),
+    )
+
+
+def send_monthly_summary_email(summary, config):
+    send_summary_email(
+        summary,
+        config,
+        monthly_email_subject(summary, config),
+        monthly_email_body(summary),
+        monthly_summary_attachment_filename(summary),
+        monthly_summary_pdf_attachment_filename(summary),
+    )
 
 
 def maybe_send_weekly_summary(now=None):
@@ -3616,14 +5822,54 @@ def maybe_send_weekly_summary(now=None):
     summary = weekly_jobs_summary()
     period_key = "%s_%s" % (summary["start_date"], summary["end_date"])
     state = load_email_state()
-    if str(state.get("last_sent_period_key", "")) == period_key:
+    if str(state.get("last_weekly_sent_period_key", "") or state.get("last_sent_period_key", "")) == period_key:
         return {"ok": False, "reason": "already_sent"}
 
     send_weekly_summary_email(summary, config)
-    save_email_state({
+    existing_state = load_email_state()
+    existing_state.update({
         "last_sent_period_key": period_key,
-        "last_sent_at": int(time.time()),
-        "last_summary_job_count": summary.get("job_count", 0),
+        "last_weekly_sent_period_key": period_key,
+        "last_weekly_sent_at": int(time.time()),
+        "last_weekly_summary_job_count": summary.get("job_count", 0),
+    })
+    save_email_state(existing_state)
+    return {"ok": True, "summary": summary}
+
+
+def maybe_send_monthly_summary(now=None):
+    config = load_email_config()
+    if not config.get("enabled", False):
+        return {"ok": False, "reason": "disabled"}
+    if not config.get("monthly_enabled", config.get("enabled", False)):
+        return {"ok": False, "reason": "monthly_disabled"}
+    if not email_config_ready(config):
+        return {"ok": False, "reason": "config_incomplete"}
+
+    now = now or datetime.now()
+    scheduled_at = now.replace(
+        hour=int(config.get("monthly_send_hour", config.get("send_hour", 7))),
+        minute=int(config.get("monthly_send_minute", config.get("send_minute", 0))),
+        second=0,
+        microsecond=0,
+    )
+    if not is_last_day_of_month(now.date()):
+        return {"ok": False, "reason": "not_month_end"}
+    if now < scheduled_at:
+        return {"ok": False, "reason": "before_scheduled_time"}
+
+    summary = monthly_jobs_summary(now)
+    period_key = "%s_%s" % (summary["start_date"], summary["end_date"])
+    state = load_email_state()
+    if str(state.get("last_monthly_sent_period_key", "")) == period_key:
+        return {"ok": False, "reason": "already_sent"}
+
+    send_monthly_summary_email(summary, config)
+    save_email_state({
+        **state,
+        "last_monthly_sent_period_key": period_key,
+        "last_monthly_sent_at": int(time.time()),
+        "last_monthly_summary_job_count": summary.get("job_count", 0),
     })
     return {"ok": True, "summary": summary}
 
@@ -3632,6 +5878,10 @@ def weekly_email_worker():
     while True:
         try:
             maybe_send_weekly_summary()
+        except Exception:
+            pass
+        try:
+            maybe_send_monthly_summary()
         except Exception:
             pass
         time.sleep(EMAIL_CHECK_INTERVAL_SECONDS)
@@ -3703,6 +5953,498 @@ def format_tons(value):
     return ("%.2f" % number).rstrip("0").rstrip(".")
 
 
+def parse_decimal_or_zero(value):
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def parse_optional_decimal(value, label):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return round(float(text), 2)
+    except Exception:
+        raise ValueError("%s must be a number" % label)
+
+
+def format_money(value):
+    try:
+        return "£%0.2f" % float(value or 0)
+    except Exception:
+        return str(value or "")
+
+
+def normalize_email_list(values):
+    unique = []
+    seen = set()
+    for value in values:
+        for part in str(value or "").replace(";", ",").split(","):
+            email = part.strip()
+            if not email:
+                continue
+            lowered = email.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            unique.append(email)
+    return unique
+
+
+def default_invoice_form(invoice_recipient_options, values=None):
+    values = values if isinstance(values, dict) else {}
+    settings = load_app_settings()
+    default_invoice_date = datetime.now().strftime("%Y-%m-%d")
+    descriptions = values.get("additional_fee_descriptions", [])
+    amounts = values.get("additional_fee_amounts", [])
+    if not isinstance(descriptions, list):
+        descriptions = []
+    if not isinstance(amounts, list):
+        amounts = []
+    fee_rows = []
+    max_len = max(len(descriptions), len(amounts), 1)
+    for index in range(max_len):
+        fee_rows.append({
+            "description": str(descriptions[index] if index < len(descriptions) else "" or "").strip(),
+            "amount": str(amounts[index] if index < len(amounts) else "" or "").strip(),
+        })
+    return {
+        "customer": clean_name(values.get("customer", "")),
+        "farm_name": clean_name(values.get("farm_name", "")),
+        "invoice_number": str(values.get("invoice_number", "") or next_invoice_number()).strip(),
+        "invoice_date": str(values.get("invoice_date", "") or default_invoice_date).strip(),
+        "job_date_from": str(values.get("job_date_from", "") or "").strip(),
+        "job_date_from_hint": str(values.get("job_date_from_hint", "") or "").strip(),
+        "payment_terms_days": str(values.get("payment_terms_days", "") or settings.get("invoice_default_payment_terms_days", "14")).strip(),
+        "rate_override": str(values.get("rate_override", "") or "").strip(),
+        "additional_fee_rows": fee_rows,
+        "subject": str(values.get("subject", "") or settings.get("invoice_subject_template", DEFAULT_INVOICE_SUBJECT_TEMPLATE)).strip(),
+        "customer_message": str(values.get("customer_message", "") or settings.get("invoice_customer_message_template", DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE)).strip(),
+    }
+
+
+def invoice_form_from_request(req):
+    return {
+        "customer": clean_name(req.form.get("customer")),
+        "farm_name": clean_name(req.form.get("farm_name")),
+        "invoice_number": str(req.form.get("invoice_number", "") or "").strip(),
+        "invoice_date": str(req.form.get("invoice_date", "") or "").strip(),
+        "job_date_from": str(req.form.get("job_date_from", "") or "").strip(),
+        "payment_terms_days": str(req.form.get("payment_terms_days", "") or "").strip(),
+        "rate_override": str(req.form.get("rate_override", "") or "").strip(),
+        "additional_fee_descriptions": list(req.form.getlist("additional_fee_description")),
+        "additional_fee_amounts": list(req.form.getlist("additional_fee_amount")),
+        "subject": str(req.form.get("subject", "") or "").strip(),
+        "customer_message": str(req.form.get("customer_message", "") or "").strip(),
+    }
+
+
+def build_invoice_from_form(invoice_form):
+    if not invoice_form.get("customer"):
+        return None, "Invoice customer is required"
+    invoice = build_invoice_payload(
+        invoice_form.get("customer", ""),
+        invoice_form.get("farm_name", ""),
+        invoice_form.get("rate_override", ""),
+        invoice_form.get("additional_fee_descriptions", []),
+        invoice_form.get("additional_fee_amounts", []),
+        invoice_form.get("invoice_number", ""),
+        invoice_form.get("invoice_date", ""),
+        invoice_form.get("job_date_from", ""),
+        invoice_form.get("payment_terms_days", ""),
+    )
+    if not invoice:
+        return None, "No uninvoiced jobs were found for that customer/farm"
+    if isinstance(invoice, dict) and invoice.get("error"):
+        return None, str(invoice.get("error"))
+    return invoice, ""
+
+
+def build_invoice_preview(invoice, config, accounts_emails, subject_text="", customer_message=""):
+    customer_email = str(invoice.get("customer_email", "") or "").strip()
+    normalized_accounts = normalize_email_list(accounts_emails)
+    deduped_accounts = [email for email in normalized_accounts if email.lower() != customer_email.lower()]
+    removed_accounts = [email for email in normalized_accounts if email.lower() == customer_email.lower()]
+    subject_value = render_invoice_template(subject_text or invoice_email_subject(invoice, config), invoice)
+    customer_message_value = render_invoice_template(customer_message or invoice_email_body(invoice, "customer"), invoice)
+    accounts_message_value = render_invoice_template(invoice_email_body(invoice, "accounts"), invoice)
+    preview_lines = []
+    for line in invoice.get("line_rows", []):
+        preview_lines.append({
+            "job_date_label": line.get("job_date_label", ""),
+            "farm_name": line.get("farm_name", ""),
+            "field_name": line.get("field_name", ""),
+            "muck_type": line.get("muck_type", ""),
+            "tons_display": format_tons(line.get("tons", 0)) if str(line.get("tons", "")).strip() != "" else "",
+            "rate_display": format_money(line.get("rate_per_ton", 0)) if str(line.get("rate_per_ton", "")).strip() != "" else "",
+            "line_total_display": format_money(line.get("line_total", 0)),
+        })
+    return {
+        "invoice": invoice,
+        "customer_email": customer_email,
+        "accounts_emails": deduped_accounts,
+        "removed_accounts": removed_accounts,
+        "subject": subject_value,
+        "customer_message": customer_message_value,
+        "accounts_message": accounts_message_value,
+        "rate_override": invoice.get("rate_override_label", ""),
+        "grand_total_display": format_money(invoice.get("grand_total", 0)),
+        "preview_lines": preview_lines,
+        "additional_fee_rows": invoice.get("additional_fee_rows", []),
+        "xlsx_filename": invoice.get("filename", "invoice.xlsx"),
+        "pdf_filename": invoice_pdf_filename(invoice),
+    }
+
+
+def format_invoice_number(number):
+    try:
+        return str(int(number))
+    except Exception:
+        return str(number or "")
+
+
+def sanitize_filename_part(value):
+    cleaned = clean_name(value)
+    if not cleaned:
+        return ""
+    safe = []
+    for char in cleaned:
+        if char.isalnum() or char in [" ", "-", "&", "_", "."]:
+            safe.append(char)
+    return "".join(safe).strip().strip(".")
+
+
+def next_invoice_number():
+    highest_issued = 0
+    for invoice in load_invoice_ledger():
+        try:
+            highest_issued = max(highest_issued, int(invoice.get("invoice_number", 0) or 0))
+        except Exception:
+            continue
+    state = load_invoice_state()
+    try:
+        number = int(state.get("next_invoice_number", 1) or 1)
+    except Exception:
+        number = 1
+    return max(1, number, highest_issued + 1)
+
+
+def reserve_next_invoice_number(next_number):
+    save_invoice_state({"next_invoice_number": max(1, int(next_number or 1))})
+
+
+def resolve_invoice_number(requested_value=""):
+    requested_text = str(requested_value or "").strip()
+    if not requested_text:
+        return next_invoice_number()
+    try:
+        requested_number = int(requested_text)
+    except Exception:
+        raise ValueError("Invoice number must be a whole number.")
+    if requested_number < 1:
+        raise ValueError("Invoice number must be at least 1.")
+
+    highest_issued = 0
+    used_numbers = set()
+    for invoice in load_invoice_ledger():
+        try:
+            value = int(invoice.get("invoice_number", 0) or 0)
+        except Exception:
+            continue
+        if value > 0:
+            used_numbers.add(value)
+            highest_issued = max(highest_issued, value)
+
+    if requested_number in used_numbers:
+        raise ValueError("Invoice number %s has already been used." % requested_number)
+    if requested_number < (highest_issued + 1):
+        raise ValueError("Invoice number must be at least %s." % (highest_issued + 1))
+    return requested_number
+
+
+def invoiced_job_ids():
+    used_ids = set()
+    for invoice in load_invoice_ledger():
+        for value in invoice.get("job_ids", []):
+            try:
+                used_ids.add(int(value))
+            except Exception:
+                continue
+    return used_ids
+
+
+def invoice_scope_jobs(customer_name, farm_name="", job_date_from=""):
+    customer_name = clean_name(customer_name)
+    farm_name = clean_name(farm_name)
+    job_date_from = str(job_date_from or "").strip()
+    if not customer_name:
+        return []
+
+    used_ids = invoiced_job_ids()
+    rows = []
+    for row in load_jobs():
+        if clean_name(row.get("customer")).lower() != customer_name.lower():
+            continue
+        if farm_name and clean_name(row.get("farm_name")).lower() != farm_name.lower():
+            continue
+        try:
+            row_id = int(row.get("id", 0) or 0)
+        except Exception:
+            row_id = 0
+        if row_id and row_id in used_ids:
+            continue
+        row_job_date = str(row.get("job_date", "") or "").strip()
+        if job_date_from and row_job_date and row_job_date < job_date_from:
+            continue
+        rows.append(dict(row))
+
+    rows.sort(
+        key=lambda row: (
+            str(row.get("job_date", "")),
+            clean_name(row.get("farm_name")).lower(),
+            clean_name(row.get("field_name")).lower(),
+            int(row.get("created_ts", 0) or 0),
+        )
+    )
+    return rows
+
+
+def last_invoice_for_scope(customer_name, farm_name=""):
+    customer_name = clean_name(customer_name)
+    farm_name = clean_name(farm_name)
+    matches = []
+    for row in load_invoice_ledger():
+        if clean_name(row.get("customer")).lower() != customer_name.lower():
+            continue
+        if clean_name(row.get("farm_name")).lower() != farm_name.lower():
+            continue
+        matches.append(row)
+    if not matches:
+        return None
+    matches.sort(key=lambda row: int(row.get("created_ts", 0) or 0), reverse=True)
+    return matches[0]
+
+
+def invoice_address_lines(invoice):
+    lines = []
+    for key in ["customer", "customer_address_line_1", "customer_address_line_2", "customer_town", "customer_postcode"]:
+        text = clean_name(invoice.get(key))
+        if text:
+            lines.append(text)
+    return lines
+
+
+def invoice_default_vat_rate(jobs):
+    for job in jobs:
+        vat_rate = parse_decimal_or_zero(job.get("vat_rate"))
+        if vat_rate >= 0:
+            return round(vat_rate, 2)
+    return 0.0
+
+
+def parse_additional_fee_lines(descriptions, amounts):
+    lines = []
+    descriptions = descriptions if isinstance(descriptions, list) else []
+    amounts = amounts if isinstance(amounts, list) else []
+    max_len = max(len(descriptions), len(amounts))
+    index = 0
+    while index < max_len:
+        description = clean_name(descriptions[index] if index < len(descriptions) else "")
+        amount_text = str(amounts[index] if index < len(amounts) else "" or "").strip()
+        if not description and not amount_text:
+            index += 1
+            continue
+        if not description:
+            raise ValueError("Additional fee description is required.")
+        try:
+            amount = round(float(amount_text), 2)
+        except Exception:
+            raise ValueError("Additional fee amount must be a number.")
+        lines.append({
+            "description": description,
+            "amount": amount,
+            "vat_rate": 20.0,
+        })
+        index += 1
+    return lines
+
+
+def build_invoice_payload(customer_name, farm_name="", rate_override="", additional_fee_descriptions=None, additional_fee_amounts=None, invoice_number_override="", invoice_date_override="", job_date_from="", payment_terms_days=""):
+    customer_name = clean_name(customer_name)
+    farm_name = clean_name(farm_name)
+    job_date_from_text = str(job_date_from or "").strip()
+    if job_date_from_text:
+        try:
+            datetime.strptime(job_date_from_text, "%Y-%m-%d")
+        except Exception:
+            return {"error": "Job date from must be a valid date."}
+    jobs = invoice_scope_jobs(customer_name, farm_name, job_date_from_text)
+    if not jobs:
+        return None
+
+    try:
+        invoice_number = resolve_invoice_number(invoice_number_override)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    payment_terms_text = str(payment_terms_days or "14").strip()
+    if payment_terms_text not in INVOICE_PAYMENT_TERMS_OPTIONS:
+        return {"error": "Payment terms must be one of: %s days." % ", ".join(INVOICE_PAYMENT_TERMS_OPTIONS)}
+    payment_terms_value = int(payment_terms_text)
+
+    invoice_date_text = str(invoice_date_override or datetime.now().strftime("%Y-%m-%d")).strip()
+    try:
+        datetime.strptime(invoice_date_text, "%Y-%m-%d")
+    except Exception:
+        return {"error": "Invoice date must be a valid date."}
+
+    try:
+        rate_override_value = parse_optional_decimal(rate_override, "Rate per ton override")
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    start_date = min(str(job.get("job_date", "")) for job in jobs)
+    end_date = max(str(job.get("job_date", "")) for job in jobs)
+    default_rate = 0.0
+    for job in jobs:
+        default_rate = parse_decimal_or_zero(job.get("rate_per_ton"))
+        if default_rate > 0:
+            break
+    total_tons = 0.0
+    subtotal = 0.0
+    vat_total = 0.0
+    line_rows = []
+    customer_email = ""
+    customer_address_line_1 = ""
+    customer_address_line_2 = ""
+    customer_town = ""
+    customer_postcode = ""
+
+    for job in jobs:
+        tons = parse_decimal_or_zero(job.get("total_spreader_tons"))
+        rate = rate_override_value if rate_override_value is not None else parse_decimal_or_zero(job.get("rate_per_ton"))
+        vat_rate = parse_decimal_or_zero(job.get("vat_rate"))
+        if rate <= 0:
+            return {"error": "Rate per ton is missing for one or more uninvoiced jobs in this scope."}
+
+        if not customer_email:
+            customer_email = str(job.get("customer_email", "") or "").strip()
+        if not customer_address_line_1:
+            customer_address_line_1 = clean_name(job.get("customer_address_line_1"))
+        if not customer_address_line_2:
+            customer_address_line_2 = clean_name(job.get("customer_address_line_2"))
+        if not customer_town:
+            customer_town = clean_name(job.get("customer_town"))
+        if not customer_postcode:
+            customer_postcode = clean_name(job.get("customer_postcode"))
+
+        line_total = round(tons * rate, 2)
+        line_vat = round(line_total * (vat_rate / 100.0), 2)
+        total_tons += tons
+        subtotal += line_total
+        vat_total += line_vat
+        line_rows.append({
+            "job_id": int(job.get("id", 0) or 0),
+            "job_date": str(job.get("job_date", "") or ""),
+            "job_date_label": format_job_date(job.get("job_date")),
+            "farm_name": clean_name(job.get("farm_name")),
+            "field_name": clean_name(job.get("field_name")),
+            "muck_type": clean_name(job.get("muck_type")),
+            "job_notes": clean_name(job.get("job_notes")),
+            "tons": round(tons, 2),
+            "rate_per_ton": round(rate, 2),
+            "vat_rate": round(vat_rate, 2),
+            "line_total": line_total,
+            "line_vat": line_vat,
+            "is_extra_line": False,
+        })
+
+    if not customer_email:
+        master_record = find_customer_master_record(load_customer_master_rows(), customer_name, farm_name)
+        if isinstance(master_record, dict):
+            customer_email = str(master_record.get("email", "") or "").strip()
+            customer_address_line_1 = customer_address_line_1 or clean_name(master_record.get("address_line_1"))
+            customer_address_line_2 = customer_address_line_2 or clean_name(master_record.get("address_line_2"))
+            customer_town = customer_town or clean_name(master_record.get("town"))
+            customer_postcode = customer_postcode or clean_name(master_record.get("postcode"))
+
+    if not customer_email:
+        return {"error": "Customer email is missing for this customer/farm scope."}
+
+    try:
+        extra_lines = parse_additional_fee_lines(additional_fee_descriptions, additional_fee_amounts)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    for extra in extra_lines:
+        line_total = round(extra["amount"], 2)
+        line_vat = round(line_total * (extra["vat_rate"] / 100.0), 2)
+        subtotal += line_total
+        vat_total += line_vat
+        line_rows.append({
+            "job_id": 0,
+            "job_date": "",
+            "job_date_label": "",
+            "farm_name": "",
+            "field_name": extra["description"],
+            "muck_type": "Additional Fee",
+            "job_notes": "",
+            "tons": "",
+            "rate_per_ton": "",
+            "vat_rate": round(extra["vat_rate"], 2),
+            "line_total": line_total,
+            "line_vat": line_vat,
+            "is_extra_line": True,
+        })
+
+    label_parts = [customer_name]
+    if farm_name:
+        label_parts.append(farm_name)
+    invoice_label = " - ".join(label_parts)
+    filename_label = sanitize_filename_part(invoice_label) or "Invoice"
+    filename = "%s - %s.xlsx" % (format_invoice_number(invoice_number), filename_label)
+    last_invoice = last_invoice_for_scope(customer_name, farm_name)
+
+    return {
+        "invoice_number": invoice_number,
+        "invoice_number_label": format_invoice_number(invoice_number),
+        "payment_terms_days": payment_terms_value,
+        "invoice_date": invoice_date_text,
+        "invoice_date_label": format_job_date(invoice_date_text),
+        "job_date_from": job_date_from_text,
+        "job_date_from_label": format_job_date(job_date_from_text) if job_date_from_text else "",
+        "customer": customer_name,
+        "farm_name": farm_name,
+        "customer_email": customer_email,
+        "customer_address_line_1": customer_address_line_1,
+        "customer_address_line_2": customer_address_line_2,
+        "customer_town": customer_town,
+        "customer_postcode": customer_postcode,
+        "start_date": start_date,
+        "end_date": end_date,
+        "start_date_label": format_job_date(start_date),
+        "end_date_label": format_job_date(end_date),
+        "last_invoiced_end_date_label": format_job_date(last_invoice.get("end_date")) if isinstance(last_invoice, dict) and last_invoice.get("end_date") else "First invoice for this scope",
+        "line_rows": line_rows,
+        "job_ids": [row["job_id"] for row in line_rows if row.get("job_id")],
+        "job_count": len([row for row in line_rows if not row.get("is_extra_line")]),
+        "additional_fee_count": len([row for row in line_rows if row.get("is_extra_line")]),
+        "total_tons": round(total_tons, 2),
+        "subtotal": round(subtotal, 2),
+        "vat_total": round(vat_total, 2),
+        "grand_total": round(subtotal + vat_total, 2),
+        "default_rate_per_ton": round(default_rate, 2) if default_rate > 0 else "",
+        "rate_override_label": format_money(rate_override_value if rate_override_value is not None else default_rate),
+        "additional_fee_rows": [
+            {"description": extra.get("description", ""), "amount": format_money(extra.get("amount", ""))}
+            for extra in extra_lines
+        ],
+        "filename": filename,
+    }
+
+
 def format_job_date(value):
     try:
         return datetime.strptime(str(value), "%Y-%m-%d").strftime("%d %b %Y")
@@ -3717,14 +6459,24 @@ def format_saved_time(value):
         return "--"
 
 
-def build_context():
+def build_context(invoice_form=None, invoice_preview=None, status_msg_override=None, status_ok_override=None, invoice_page=False):
     jobs = load_jobs()
     master_rows = load_customer_master_rows()
     customers = load_customers()
     farms = load_farms()
+    invoice_recipient_options = load_email_recipient_options()
+    invoice_form = default_invoice_form(invoice_recipient_options, invoice_form)
     muck_types = load_muck_types(master_rows)
     field_map = load_field_map()
     customer_farm_map = build_customer_farm_map(master_rows)
+    customer_rate_map = build_customer_rate_map(master_rows)
+    customer_invoice_from_map = build_customer_invoice_from_map()
+    job_invoice_status_map = invoice_status_map()
+    try:
+        jobs_page = max(1, int(str(request.args.get("jobs_page", "1") or "1")))
+    except Exception:
+        jobs_page = 1
+    recent_jobs_limit = jobs_page * 20
     all_fields = []
     recent_jobs = []
     now = datetime.now()
@@ -3767,13 +6519,20 @@ def build_context():
     muck_types.sort(key=lambda item: item.lower())
     customers.sort(key=lambda item: item.lower())
 
-    for job in jobs[:20]:
+    for job in jobs[:recent_jobs_limit]:
         row = dict(job)
+        try:
+            row_id = int(row.get("id", 0) or 0)
+        except Exception:
+            row_id = 0
+        status_info = job_invoice_status_map.get(row_id, {})
         row["job_date_label"] = format_job_date(row.get("job_date"))
         row["spreader_tons_label"] = format_tons(row.get("total_spreader_tons"))
         row["john_deere_tons_label"] = format_tons(row.get("total_john_deere_tons"))
         row["saved_label"] = format_saved_time(row.get("created_ts"))
         row["job_notes"] = clean_name(row.get("job_notes"))
+        row["invoice_status_label"] = str(status_info.get("label", "Uninvoiced") or "Uninvoiced")
+        row["invoice_status_key"] = str(status_info.get("status_key", "open") or "open")
         recent_jobs.append(row)
 
     for job in jobs:
@@ -3850,6 +6609,7 @@ def build_context():
         "today_iso": today_iso,
         "today_human": today_human,
         "app_version": app_version_label(),
+        "invoice_page": bool(invoice_page),
         "customers": customers,
         "customers_json": json.dumps(customers),
         "farms": farms,
@@ -3859,6 +6619,8 @@ def build_context():
         "all_farms_json": json.dumps(farms),
         "all_fields_json": json.dumps(all_fields),
         "customer_farm_map_json": json.dumps(customer_farm_map),
+        "customer_rate_map_json": json.dumps(customer_rate_map),
+        "customer_invoice_from_map_json": json.dumps(customer_invoice_from_map),
         "field_map_json": json.dumps(field_map),
         "recent_jobs": recent_jobs,
         "today_job_count": today_job_count,
@@ -3871,8 +6633,15 @@ def build_context():
         "form_title": form_title,
         "form_submit_label": form_submit_label,
         "is_editing": is_editing,
-        "status_msg": str(request.args.get("msg", "") or "").strip(),
-        "status_ok": str(request.args.get("ok", "1")) == "1",
+        "status_msg": str(status_msg_override if status_msg_override is not None else request.args.get("msg", "") or "").strip(),
+        "status_ok": bool(status_ok_override) if status_msg_override is not None else str(request.args.get("ok", "1")) == "1",
+        "invoice_form": invoice_form,
+        "invoice_preview": invoice_preview,
+        "invoice_payment_terms_options": INVOICE_PAYMENT_TERMS_OPTIONS,
+        "invoice_recipient_options": invoice_recipient_options,
+        "jobs_page": jobs_page,
+        "recent_jobs_limit": recent_jobs_limit,
+        "has_more_recent_jobs": len(jobs) > recent_jobs_limit,
         "data_dir": DATA_DIR,
         "total_jobs": len(jobs),
     }
@@ -3913,6 +6682,81 @@ def web_manifest():
 def home():
     ensure_data_dir()
     return render_template_string(HTML, **build_context())
+
+
+@app.route("/invoice")
+def invoice_home():
+    ensure_data_dir()
+    return render_template_string(HTML, **build_context(invoice_page=True))
+
+
+@app.route("/invoice/history")
+def invoice_history():
+    ensure_data_dir()
+    return render_template_string(
+        INVOICE_HISTORY_HTML,
+        history_rows=invoice_history_rows(),
+        status_msg=str(request.args.get("msg", "") or "").strip(),
+        status_ok=str(request.args.get("ok", "1")) == "1",
+    )
+
+
+@app.route("/settings")
+def settings_home():
+    ensure_data_dir()
+    return render_template_string(
+        SETTINGS_HTML,
+        settings=load_app_settings(),
+        invoice_payment_terms_options=INVOICE_PAYMENT_TERMS_OPTIONS,
+        status_msg=str(request.args.get("msg", "") or "").strip(),
+        status_ok=str(request.args.get("ok", "1")) == "1",
+    )
+
+
+@app.route("/settings/save", methods=["POST"])
+def settings_save():
+    ensure_data_dir()
+    invoice_from_email_value = str(request.form.get("invoice_from_email", "") or "").strip()
+    invoice_subject_template = str(request.form.get("invoice_subject_template", "") or "").strip()
+    invoice_customer_message_template = str(request.form.get("invoice_customer_message_template", "") or "").strip()
+    invoice_accounts_message_template = str(request.form.get("invoice_accounts_message_template", "") or "").strip()
+    invoice_default_payment_terms_days = str(request.form.get("invoice_default_payment_terms_days", "") or "").strip()
+
+    if not invoice_from_email_value:
+        return redirect(url_for("settings_home", ok=0, msg="Invoice from email is required"))
+    if not invoice_subject_template:
+        return redirect(url_for("settings_home", ok=0, msg="Invoice subject template is required"))
+    if not invoice_customer_message_template:
+        return redirect(url_for("settings_home", ok=0, msg="Customer message template is required"))
+    if not invoice_accounts_message_template:
+        return redirect(url_for("settings_home", ok=0, msg="Accounts message template is required"))
+    if invoice_default_payment_terms_days not in INVOICE_PAYMENT_TERMS_OPTIONS:
+        return redirect(url_for("settings_home", ok=0, msg="Default payment terms are invalid"))
+
+    save_app_settings({
+        "invoice_from_email": invoice_from_email_value,
+        "invoice_subject_template": invoice_subject_template,
+        "invoice_customer_message_template": invoice_customer_message_template,
+        "invoice_accounts_message_template": invoice_accounts_message_template,
+        "invoice_default_payment_terms_days": invoice_default_payment_terms_days,
+    })
+    return redirect(url_for("settings_home", ok=1, msg="Settings saved"))
+
+
+@app.route("/invoice/mark-existing", methods=["POST"])
+def invoice_mark_existing():
+    ensure_data_dir()
+    customer = clean_name(request.form.get("customer"))
+    farm_name = clean_name(request.form.get("farm_name"))
+    through_date = str(request.form.get("through_date", "") or "").strip()
+    note = str(request.form.get("note", "") or "").strip()
+    count, error_message = manual_mark_jobs_invoiced(customer, farm_name, through_date, note)
+    if error_message:
+        return redirect(url_for("invoice_home", ok=0, msg=error_message))
+    scope_label = customer
+    if farm_name:
+        scope_label = "%s / %s" % (scope_label, farm_name)
+    return redirect(url_for("invoice_home", ok=1, msg="Marked %s jobs as already invoiced for %s." % (count, scope_label)))
 
 
 @app.route("/admin")
@@ -4181,6 +7025,113 @@ def weekly_email_send_now_api():
     return jsonify({"ok": True, "summary": summary})
 
 
+@app.route("/api/email/monthly/preview")
+def monthly_email_preview_api():
+    summary = monthly_jobs_summary()
+    return jsonify({
+        "ok": True,
+        "config_ready": email_config_ready(load_email_config()),
+        "summary": summary,
+        "subject": monthly_email_subject(summary, load_email_config()),
+        "body": monthly_email_body(summary),
+    })
+
+
+@app.route("/api/email/monthly/send-now", methods=["POST"])
+def monthly_email_send_now_api():
+    config = load_email_config()
+    if not email_config_ready(config):
+        return jsonify({"ok": False, "error": "Email configuration is incomplete"}), 400
+    summary = monthly_jobs_summary()
+    try:
+        send_monthly_summary_email(summary, config)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "summary": summary})
+
+
+@app.route("/invoice/preview.pdf", methods=["POST"])
+def invoice_preview_pdf():
+    ensure_data_dir()
+    invoice_form = invoice_form_from_request(request)
+    invoice, error_message = build_invoice_from_form(invoice_form)
+    if error_message:
+        return Response(error_message, status=400, mimetype="text/plain")
+    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
+    pdf_bytes = build_invoice_pdf_bytes(invoice, xlsx_bytes)
+    response = Response(pdf_bytes, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = 'inline; filename="%s"' % invoice_pdf_filename(invoice)
+    return response
+
+
+@app.route("/invoice/preview.xlsx", methods=["POST"])
+def invoice_preview_xlsx():
+    ensure_data_dir()
+    invoice_form = invoice_form_from_request(request)
+    invoice, error_message = build_invoice_from_form(invoice_form)
+    if error_message:
+        return Response(error_message, status=400, mimetype="text/plain")
+    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
+    response = Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Content-Disposition"] = 'attachment; filename="%s"' % str(invoice.get("filename", "invoice.xlsx"))
+    return response
+
+
+@app.route("/invoice/send", methods=["POST"])
+def invoice_create_and_send():
+    ensure_data_dir()
+    config = load_email_config()
+    if not email_sender_ready(config):
+        return redirect(url_for("invoice_home", ok=0, msg="Email sender settings are incomplete"))
+
+    customer = clean_name(request.form.get("customer"))
+    farm_name = clean_name(request.form.get("farm_name"))
+    invoice_number = str(request.form.get("invoice_number", "") or "").strip()
+    rate_override = str(request.form.get("rate_override", "") or "").strip()
+    additional_fee_descriptions = list(request.form.getlist("additional_fee_description"))
+    additional_fee_amounts = list(request.form.getlist("additional_fee_amount"))
+    subject_text = str(request.form.get("subject", "") or "").strip()
+    customer_message = str(request.form.get("customer_message", "") or "").strip()
+    if not customer:
+        return redirect(url_for("invoice_home", ok=0, msg="Invoice customer is required"))
+
+    invoice, error_message = build_invoice_from_form({
+        "customer": customer,
+        "farm_name": farm_name,
+        "invoice_number": invoice_number,
+        "rate_override": rate_override,
+        "additional_fee_descriptions": additional_fee_descriptions,
+        "additional_fee_amounts": additional_fee_amounts,
+        "subject": subject_text,
+        "customer_message": customer_message,
+    })
+    if error_message:
+        return redirect(url_for("invoice_home", ok=0, msg=error_message))
+
+    accounts_emails = invoice_accounts_copy_emails(load_email_recipient_options())
+    customer_email = str(invoice.get("customer_email", "") or "").strip()
+    accounts_emails = [email for email in accounts_emails if email.lower() != customer_email.lower()]
+
+    try:
+        send_invoice_email(invoice, config, accounts_emails, subject_text, customer_message)
+    except Exception as exc:
+        return redirect(url_for("invoice_home", ok=0, msg="Invoice email failed: %s" % clean_name(exc)))
+
+    invoice_scope = invoice.get("customer", "")
+    if invoice.get("farm_name"):
+        invoice_scope = "%s / %s" % (invoice_scope, invoice.get("farm_name"))
+    return redirect(
+        url_for(
+            "invoice_home",
+            ok=1,
+            msg="Invoice %s emailed for %s." % (invoice.get("invoice_number_label", ""), invoice_scope),
+        )
+    )
+
+
 @app.route("/app/update", methods=["POST"])
 def update_app():
     git_dir = os.path.join(APP_ROOT, ".git")
@@ -4267,8 +7218,6 @@ def backup_export_zip():
             ("app.py", os.path.join(APP_ROOT, "app.py")),
             ("README.md", os.path.join(APP_ROOT, "README.md")),
             ("customer_master.xlsx", os.path.join(APP_ROOT, "customer_master.xlsx")),
-            ("customer_master.csv", os.path.join(APP_ROOT, "customer_master.csv")),
-            ("customer_master.template.csv", os.path.join(APP_ROOT, "customer_master.template.csv")),
             ("email_settings.csv", os.path.join(APP_ROOT, "email_settings.csv")),
             ("email_config.example.json", os.path.join(APP_ROOT, "email_config.example.json")),
             ("muckspreading-app.service", os.path.join(APP_ROOT, "muckspreading-app.service")),
@@ -4282,6 +7231,11 @@ def backup_export_zip():
                 file_path = os.path.join(DATA_DIR, name)
                 if os.path.isfile(file_path):
                     archive.write(file_path, os.path.join("data", name))
+        if os.path.isdir(INVOICE_ARCHIVE_DIR):
+            for name in sorted(os.listdir(INVOICE_ARCHIVE_DIR)):
+                file_path = os.path.join(INVOICE_ARCHIVE_DIR, name)
+                if os.path.isfile(file_path):
+                    archive.write(file_path, os.path.join("data", "invoices", name))
     output.seek(0)
     filename = "muckspreading_backup_%s.zip" % datetime.now().strftime("%Y%m%d_%H%M%S")
     return Response(
@@ -4470,7 +7424,7 @@ def health():
 
 if __name__ == "__main__":
     ensure_data_dir()
-    port = int(os.environ.get("MUCKSPREADING_APP_PORT", "8093"))
+    port = int(os.environ.get("MUCKSPREADING_APP_PORT", "8094"))
     debug_mode = str(os.environ.get("MUCKSPREADING_APP_DEBUG", "") or "").strip().lower() in ["1", "true", "yes", "on"]
     start_background_workers(debug_mode=debug_mode)
     app.run(host="0.0.0.0", port=port, debug=debug_mode, use_reloader=debug_mode)
