@@ -331,7 +331,29 @@ HTML = """
       padding: 24px;
     }
     .hero-title-card {
-      text-align: center;
+      text-align: left;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,0.3), rgba(255,255,255,0) 38%),
+        linear-gradient(180deg, rgba(60,95,70,0.06), rgba(186,148,80,0.08)),
+        var(--panel);
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(60,95,70,0.1);
+      border: 1px solid rgba(60,95,70,0.12);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
     }
     h1 {
       margin: 14px 0 10px;
@@ -351,10 +373,17 @@ HTML = """
       letter-spacing: -0.02em;
     }
     .meta {
-      margin-top: 18px;
+      margin-top: 6px;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+    }
+    .hero-copy {
+      margin: 0;
+      max-width: 40rem;
+      color: #5f5d4f;
+      font-size: 17px;
+      line-height: 1.55;
     }
     .pill {
       padding: 10px 14px;
@@ -411,6 +440,20 @@ HTML = """
       display: grid;
       gap: 18px;
       align-items: start;
+    }
+    .dashboard-main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1.05fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .form-card,
+    .recent-jobs-card {
+      height: 100%;
+    }
+    .recent-jobs-card {
+      position: sticky;
+      top: 18px;
     }
     h2.panel-title {
       margin: 0 0 8px;
@@ -582,9 +625,23 @@ HTML = """
     .section-grid {
       margin-top: 18px;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
       align-items: start;
+    }
+    .section-grid > .card,
+    .bottom-export .card {
+      display: grid;
+      align-content: start;
+    }
+    .bottom-export {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .bottom-export .card {
+      grid-column: 1 / -1;
     }
     .button {
       min-height: 56px;
@@ -620,9 +677,6 @@ HTML = """
     }
     .button-full {
       width: 100%;
-    }
-    .bottom-export {
-      margin-top: 18px;
     }
     .download-notice {
       position: fixed;
@@ -868,6 +922,12 @@ HTML = """
       .hero, .layout {
         grid-template-columns: 1fr;
       }
+      .dashboard-main-grid {
+        grid-template-columns: 1fr;
+      }
+      .recent-jobs-card {
+        position: static;
+      }
       .section-grid {
         grid-template-columns: 1fr;
       }
@@ -880,6 +940,14 @@ HTML = """
         padding: 16px;
         border-radius: 20px;
       }
+      .hero-title-card {
+        text-align: center;
+        justify-items: center;
+      }
+      .hero-copy {
+        text-align: center;
+        font-size: 15px;
+      }
       .hero {
         gap: 14px;
         margin-bottom: 14px;
@@ -889,6 +957,8 @@ HTML = """
       }
       .bottom-export {
         margin-top: 14px;
+        grid-template-columns: 1fr;
+        gap: 14px;
       }
       h1 {
         margin: 12px 0 8px;
@@ -1099,10 +1169,14 @@ HTML = """
     {% else %}
     <section class="hero">
       <div class="card hero-title-card">
-        <h1>
-          <span class="title-line title-line-primary">A. Farrell Contracting</span>
-          <span class="title-line title-line-secondary">Muck Spreading Records</span>
-        </h1>
+        <div class="eyebrow">Live Dashboard</div>
+        <div>
+          <h1>
+            <span class="title-line title-line-primary">A. Farrell Contracting</span>
+            <span class="title-line title-line-secondary">Muck Spreading Records</span>
+          </h1>
+          <p class="hero-copy">Record jobs quickly, keep customer data tidy, and export clean summaries and invoices without leaving the dashboard.</p>
+        </div>
         <div class="meta">
           <div class="pill">Today: {{ today_human }}</div>
           <div class="pill">Saved jobs: {{ total_jobs }}</div>
@@ -1147,7 +1221,8 @@ HTML = """
     </section>
 
     <section class="layout">
-      <div class="card">
+      <div class="dashboard-main-grid">
+      <div class="card form-card">
         <h2 class="panel-title">{{ form_title }}</h2>
 
         {% if status_msg %}
@@ -1204,7 +1279,7 @@ HTML = """
         </form>
       </div>
 
-      <div class="card">
+      <div class="card recent-jobs-card">
         <h2 class="panel-title">Recent Jobs</h2>
         <p class="copy">Newest entries are shown first.</p>
         {% if recent_jobs %}
@@ -1287,6 +1362,7 @@ HTML = """
         {% else %}
         <div class="empty">No jobs saved yet.</div>
         {% endif %}
+      </div>
       </div>
     </section>
 
@@ -1953,6 +2029,7 @@ ADMIN_HTML = """
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
+      align-items: start;
     }
     .card {
       background: var(--panel);
@@ -2095,8 +2172,42 @@ ADMIN_HTML = """
     .map-customer, .map-farm {
       border: 1px solid rgba(82, 69, 42, 0.12);
       border-radius: 16px;
-      padding: 14px;
       background: rgba(255,255,255,0.55);
+    }
+    .map-customer {
+      padding: 0;
+      overflow: hidden;
+    }
+    .map-customer summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px;
+    }
+    .map-customer summary::-webkit-details-marker {
+      display: none;
+    }
+    .map-customer summary::marker {
+      content: "";
+    }
+    .map-customer-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .map-customer-name {
+      font-weight: bold;
+      font-size: 18px;
+    }
+    .map-customer-meta {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .map-customer-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid rgba(82, 69, 42, 0.08);
+      background: rgba(255,255,255,0.42);
     }
     .farm-list {
       display: grid;
@@ -2158,6 +2269,20 @@ ADMIN_HTML = """
       gap: 10px;
       margin-bottom: 18px;
     }
+    .customer-meta-form {
+      margin: 12px 0 14px;
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.44);
+      border: 1px solid rgba(82, 69, 42, 0.08);
+    }
+    .customer-meta-summary {
+      display: grid;
+      gap: 6px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
     @media (max-width: 860px) {
       .grid, .mini-grid {
         grid-template-columns: 1fr;
@@ -2214,49 +2339,76 @@ ADMIN_HTML = """
         <h2>Customer / Farm Links</h2>
         <div class="map-list">
           {% for customer in admin_tree %}
-          <div class="map-customer">
-            <h3>{{ customer.customer_name }}</h3>
-            <div class="farm-list">
-              {% for farm in customer.farms %}
-              <details class="map-farm">
-                <summary>
-                  <div class="map-farm-title">
-                    <div class="map-farm-name">{{ farm.farm_label }}</div>
-                    <div class="map-farm-meta">{{ farm.fields|length }} fields</div>
+          <details class="map-customer">
+            <summary>
+              <div class="map-customer-title">
+                <div class="map-customer-name">{{ customer.customer_name }}</div>
+                <div class="map-customer-meta">{{ customer.farms|length }} farms</div>
+              </div>
+            </summary>
+            <div class="map-customer-body">
+              <form class="mini-form customer-meta-form" method="post" action="{{ url_for('admin_save_customer_details') }}">
+                <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                <div class="mini-grid">
+                  <div>
+                    <label for="customer_email_{{ loop.index }}">Billing Email</label>
+                    <input id="customer_email_{{ loop.index }}" name="customer_email" type="email" value="{{ customer.customer_email }}" placeholder="billing@example.com">
                   </div>
-                </summary>
-                <div class="map-farm-body">
-                  <div class="actions-inline">
-                    {% if farm.fields %}
-                    <form method="post" action="{{ url_for('admin_clear_farm_fields') }}">
-                      <input type="hidden" name="customer" value="{{ customer.customer_name }}">
-                      <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
-                      <button class="button button-danger button-small" type="submit">Clear Farm Fields</button>
-                    </form>
-                    {% endif %}
+                  <div>
+                    <label for="customer_rate_{{ loop.index }}">Rate Per Ton</label>
+                    <input id="customer_rate_{{ loop.index }}" name="rate_per_ton" type="number" inputmode="decimal" min="0" step="0.01" value="{{ customer.rate_per_ton_text }}" placeholder="0.00">
                   </div>
-                  {% if farm.fields %}
-                  <div class="field-tags">
-                    {% for field_name in farm.fields %}
-                    <div class="field-tag">
-                      <span>{{ field_name }}</span>
-                      <form method="post" action="{{ url_for('admin_delete_field') }}">
+                </div>
+                <div class="actions-inline">
+                  <button class="button button-secondary button-small" type="submit">Save Customer Info</button>
+                </div>
+                <div class="customer-meta-summary">
+                  <div>Email: {{ customer.customer_email or 'Not set' }}</div>
+                  <div>Rate: {{ customer.rate_per_ton_label or 'Not set' }}</div>
+                </div>
+              </form>
+              <div class="farm-list">
+                {% for farm in customer.farms %}
+                <details class="map-farm">
+                  <summary>
+                    <div class="map-farm-title">
+                      <div class="map-farm-name">{{ farm.farm_label }}</div>
+                      <div class="map-farm-meta">{{ farm.fields|length }} fields</div>
+                    </div>
+                  </summary>
+                  <div class="map-farm-body">
+                    <div class="actions-inline">
+                      {% if farm.fields %}
+                      <form method="post" action="{{ url_for('admin_clear_farm_fields') }}">
                         <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                         <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
-                        <input type="hidden" name="field_name" value="{{ field_name }}">
-                        <button class="button button-danger button-small" type="submit">Remove</button>
+                        <button class="button button-danger button-small" type="submit">Clear Farm Fields</button>
                       </form>
+                      {% endif %}
                     </div>
-                    {% endfor %}
+                    {% if farm.fields %}
+                    <div class="field-tags">
+                      {% for field_name in farm.fields %}
+                      <div class="field-tag">
+                        <span>{{ field_name }}</span>
+                        <form method="post" action="{{ url_for('admin_delete_field') }}">
+                          <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                          <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
+                          <input type="hidden" name="field_name" value="{{ field_name }}">
+                          <button class="button button-danger button-small" type="submit">Remove</button>
+                        </form>
+                      </div>
+                      {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="copy">No saved fields yet.</p>
+                    {% endif %}
                   </div>
-                  {% else %}
-                  <p class="copy">No saved fields yet.</p>
-                  {% endif %}
-                </div>
-              </details>
-              {% endfor %}
+                </details>
+                {% endfor %}
+              </div>
             </div>
-          </div>
+          </details>
           {% endfor %}
         </div>
       </div>
@@ -3006,6 +3158,213 @@ def load_customer_master_rows():
     return rows
 
 
+def namespace_from_tag(tag, fallback=XLSX_NS):
+    text = str(tag or "")
+    if text.startswith("{") and "}" in text:
+        return text[1:].split("}", 1)[0]
+    return fallback
+
+
+def worksheet_cell_string_value(cell, shared_strings):
+    if cell is None:
+        return ""
+    cell_type = str(cell.attrib.get("t", "") or "").strip()
+    if cell_type == "inlineStr":
+        text_parts = []
+        inline_node = first_child_by_local_name(cell, "is")
+        if inline_node is not None:
+            text_node = first_child_by_local_name(inline_node, "t")
+            if text_node is not None and text_node.text is not None:
+                text_parts.append(text_node.text)
+            for run in children_by_local_name(inline_node, "r"):
+                run_text = first_child_by_local_name(run, "t")
+                if run_text is not None and run_text.text is not None:
+                    text_parts.append(run_text.text)
+        return "".join(text_parts)
+    value_node = first_child_by_local_name(cell, "v")
+    raw_value = value_node.text if value_node is not None and value_node.text is not None else ""
+    if cell_type == "s":
+        try:
+            return shared_strings[int(str(raw_value or "0").strip())]
+        except Exception:
+            return ""
+    return str(raw_value or "")
+
+
+def worksheet_row_values(row_node, shared_strings):
+    row_values = []
+    for cell in children_by_local_name(row_node, "c"):
+        ref = cell.attrib.get("r", "")
+        col_index = worksheet_ref_col_index(ref)
+        while len(row_values) < max(col_index - 1, 0):
+            row_values.append("")
+        row_values.append(worksheet_cell_string_value(cell, shared_strings))
+    return row_values
+
+
+def worksheet_find_or_create_cell(row_node, row_number, col_index, namespace):
+    target_ref = "%s%s" % (xlsx_col_name(col_index), row_number)
+    for cell in children_by_local_name(row_node, "c"):
+        if str(cell.attrib.get("r", "") or "").upper() == target_ref.upper():
+            return cell
+
+    new_cell = ET.Element("{%s}c" % namespace, {"r": target_ref})
+    inserted = False
+    existing_children = list(row_node)
+    insert_at = len(existing_children)
+    for index, child in enumerate(existing_children):
+        if str(child.tag).rsplit("}", 1)[-1] != "c":
+            continue
+        child_ref = child.attrib.get("r", "")
+        if xlsx_col_index(child_ref) > col_index:
+            insert_at = index
+            break
+    row_node.insert(insert_at, new_cell)
+    return new_cell
+
+
+def worksheet_set_cell_inline_text(cell, value, namespace):
+    style_value = cell.attrib.get("s")
+    ref_value = cell.attrib.get("r")
+    cell.clear()
+    if ref_value:
+        cell.attrib["r"] = ref_value
+    if style_value not in [None, ""]:
+        cell.attrib["s"] = style_value
+    text = str(value or "")
+    if not text:
+        return
+    cell.attrib["t"] = "inlineStr"
+    is_node = ET.SubElement(cell, "{%s}is" % namespace)
+    t_node = ET.SubElement(is_node, "{%s}t" % namespace)
+    t_node.text = text
+
+
+def worksheet_set_cell_number(cell, value_text, namespace):
+    style_value = cell.attrib.get("s")
+    ref_value = cell.attrib.get("r")
+    cell.clear()
+    if ref_value:
+        cell.attrib["r"] = ref_value
+    if style_value not in [None, ""]:
+        cell.attrib["s"] = style_value
+    text = str(value_text or "").strip()
+    if not text:
+        return
+    value_node = ET.SubElement(cell, "{%s}v" % namespace)
+    value_node.text = text
+
+
+def save_customer_master_customer_details(customer_name, customer_email, rate_per_ton_text):
+    customer_name = clean_name(customer_name)
+    if not customer_name:
+        return False, "Customer is required"
+    if not os.path.exists(CUSTOMER_MASTER_XLSX_PATH):
+        return False, "customer_master.xlsx could not be found"
+
+    normalized_email = str(customer_email or "").strip()
+    normalized_rate = str(rate_per_ton_text or "").strip()
+    if normalized_rate:
+        try:
+            normalized_rate = ("%.2f" % float(normalized_rate)).rstrip("0").rstrip(".")
+        except Exception:
+            return False, "Rate per ton must be a number"
+
+    try:
+        with zipfile.ZipFile(CUSTOMER_MASTER_XLSX_PATH, "r") as source_archive:
+            archive_names = source_archive.namelist()
+            entries = {name: source_archive.read(name) for name in archive_names}
+            workbook_root = ET.fromstring(entries["xl/workbook.xml"])
+            rels_root = ET.fromstring(entries["xl/_rels/workbook.xml.rels"])
+            relationships = {}
+            for rel in rels_root.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
+                relationships[rel.attrib.get("Id")] = rel.attrib.get("Target", "")
+            sheets_node = first_child_by_local_name(workbook_root, "sheets")
+            first_sheet = first_child_by_local_name(sheets_node, "sheet")
+            if first_sheet is None:
+                return False, "No worksheet found in customer master"
+            rel_id = (
+                first_sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
+                or first_sheet.attrib.get("{%s}id" % STRICT_REL_NS, "")
+            )
+            target = relationships.get(rel_id, "worksheets/sheet1.xml")
+            if not target.startswith("xl/"):
+                target = "xl/%s" % target.lstrip("/")
+            sheet_root = ET.fromstring(entries[target])
+            shared_strings = xlsx_shared_strings(source_archive)
+    except Exception:
+        return False, "Could not open customer_master.xlsx"
+
+    sheet_namespace = namespace_from_tag(sheet_root.tag)
+    ET.register_namespace("", sheet_namespace)
+    sheet_data = first_child_by_local_name(sheet_root, "sheetData")
+    if sheet_data is None:
+        return False, "Customer master sheet is missing row data"
+
+    header_row = None
+    headers = []
+    all_rows = children_by_local_name(sheet_data, "row")
+    for row_node in all_rows:
+        candidate = [clean_name(cell).lower() for cell in worksheet_row_values(row_node, shared_strings)]
+        if "customer_name" in candidate:
+            header_row = row_node
+            headers = candidate
+            break
+    if header_row is None:
+        return False, "Customer master headers could not be found"
+
+    email_col = headers.index("email") + 1 if "email" in headers else 0
+    rate_col = headers.index("rate_per_ton") + 1 if "rate_per_ton" in headers else 0
+    if not email_col or not rate_col:
+        return False, "Customer master must include email and rate_per_ton columns"
+
+    matched_rows = 0
+    header_found = False
+    for row_node in all_rows:
+        if row_node is header_row:
+            header_found = True
+            continue
+        if not header_found:
+            continue
+        row_values = worksheet_row_values(row_node, shared_strings)
+        row_dict = customer_master_row_to_dict(headers, row_values)
+        if clean_name(row_dict.get("customer_name")).lower() != customer_name.lower():
+            continue
+        row_number = str(row_node.attrib.get("r", "") or "").strip()
+        try:
+            row_number_value = int(row_number)
+        except Exception:
+            continue
+        email_cell = worksheet_find_or_create_cell(row_node, row_number_value, email_col, sheet_namespace)
+        rate_cell = worksheet_find_or_create_cell(row_node, row_number_value, rate_col, sheet_namespace)
+        worksheet_set_cell_inline_text(email_cell, normalized_email, sheet_namespace)
+        worksheet_set_cell_number(rate_cell, normalized_rate, sheet_namespace)
+        matched_rows += 1
+
+    if not matched_rows:
+        return False, "No customer master rows were found for %s" % customer_name
+
+    entries[target] = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
+
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx", dir=APP_ROOT) as temp_handle:
+            temp_path = temp_handle.name
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as output_archive:
+            for name in archive_names:
+                output_archive.writestr(name, entries[name])
+        os.replace(temp_path, CUSTOMER_MASTER_XLSX_PATH)
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        return False, "Could not save customer_master.xlsx"
+
+    return True, "%s updated" % customer_name
+
+
 def customer_master_row_to_dict(header_row, raw_row):
     row_dict = {}
     i = 0
@@ -3075,6 +3434,7 @@ def build_customer_invoice_from_map():
 
 def build_customer_field_admin_map(master_rows, jobs, field_map):
     tree = {}
+    customer_meta = {}
 
     def ensure_bucket(customer_name, farm_name):
         customer_name = clean_name(customer_name)
@@ -3086,7 +3446,16 @@ def build_customer_field_admin_map(master_rows, jobs, field_map):
         return farm_bucket
 
     for row in master_rows:
-        ensure_bucket(row.get("customer_name"), row.get("farm_name"))
+        customer_name = row.get("customer_name")
+        ensure_bucket(customer_name, row.get("farm_name"))
+        if customer_name:
+            meta = customer_meta.setdefault(customer_name, {"customer_email": "", "rate_per_ton": ""})
+            email = str(row.get("email", "") or "").strip()
+            if email and not meta["customer_email"]:
+                meta["customer_email"] = email
+            rate_value = str(row.get("rate_per_ton", "") or "").strip()
+            if rate_value and not meta["rate_per_ton"]:
+                meta["rate_per_ton"] = rate_value
 
     for job in jobs:
         ensure_bucket(job.get("customer"), job.get("farm_name"))
@@ -3116,6 +3485,9 @@ def build_customer_field_admin_map(master_rows, jobs, field_map):
             })
         output.append({
             "customer_name": customer_name,
+            "customer_email": customer_meta.get(customer_name, {}).get("customer_email", ""),
+            "rate_per_ton_text": customer_meta.get(customer_name, {}).get("rate_per_ton", ""),
+            "rate_per_ton_label": format_money(parse_decimal_or_zero(customer_meta.get(customer_name, {}).get("rate_per_ton", ""))) if str(customer_meta.get(customer_name, {}).get("rate_per_ton", "") or "").strip() else "",
             "farms": farms,
         })
     return output
@@ -6854,6 +7226,18 @@ def admin_home():
         status_msg=str(request.args.get("msg", "") or "").strip(),
         status_ok=str(request.args.get("ok", "1")) == "1",
     )
+
+
+@app.route("/admin/customer-details/save", methods=["POST"])
+def admin_save_customer_details():
+    ensure_data_dir()
+    customer = clean_name(request.form.get("customer"))
+    customer_email = str(request.form.get("customer_email", "") or "").strip()
+    rate_per_ton = str(request.form.get("rate_per_ton", "") or "").strip()
+    ok, message = save_customer_master_customer_details(customer, customer_email, rate_per_ton)
+    if not ok:
+        return redirect(url_for("admin_home", ok=0, msg=message))
+    return redirect(url_for("admin_home", ok=1, msg="%s customer details saved" % customer))
 
 
 @app.route("/jobs/save", methods=["POST"])
