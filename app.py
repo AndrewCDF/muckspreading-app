@@ -381,13 +381,6 @@ HTML = """
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
     }
-    .hero-copy {
-      margin: 0;
-      max-width: 40rem;
-      color: #5f5d4f;
-      font-size: 17px;
-      line-height: 1.55;
-    }
     .pill {
       padding: 10px 14px;
       border-radius: 999px;
@@ -1019,10 +1012,6 @@ HTML = """
         text-align: center;
         justify-items: center;
       }
-      .hero-copy {
-        text-align: center;
-        font-size: 15px;
-      }
       .hero {
         gap: 14px;
         margin-bottom: 14px;
@@ -1304,7 +1293,6 @@ HTML = """
             <span class="title-line title-line-primary">A. Farrell Contracting</span>
             <span class="title-line title-line-secondary">Muck Spreading Records</span>
           </h1>
-          <p class="hero-copy">Record jobs quickly, keep customer data tidy, and export clean summaries and invoices without leaving the dashboard.</p>
         </div>
         <div class="meta">
           <div class="pill">Today: {{ today_human }}</div>
@@ -1399,7 +1387,6 @@ HTML = """
               <textarea id="job_notes" name="job_notes" placeholder="Optional notes for this job">{{ form_job.job_notes }}</textarea>
             </div>
             <div class="field issue-photos-field">
-              <label for="issue_photos">Issue Photos</label>
               <input id="issue_photos" class="file-input" name="issue_photos" type="file" accept="image/*" multiple>
               <label class="button button-secondary file-button" for="issue_photos">Add Photos</label>
               <div id="issue_photo_selection" class="file-selection">No new photos selected</div>
