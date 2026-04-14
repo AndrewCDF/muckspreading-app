@@ -3961,6 +3961,42 @@ def save_email_state(state):
     write_json_atomic(EMAIL_STATE_PATH, state if isinstance(state, dict) else {})
 
 
+SUMMARY_SEND_LOCK_SECONDS = 4 * 60 * 60
+
+
+def summary_send_locked(state, lock_key, period_key, now_ts=None):
+    state = state if isinstance(state, dict) else {}
+    current_period = str(state.get(lock_key, "") or "")
+    if current_period != str(period_key or ""):
+        return False
+    try:
+        locked_at = int(state.get(lock_key + "_at", 0) or 0)
+    except Exception:
+        locked_at = 0
+    now_ts = int(now_ts or time.time())
+    return bool(locked_at and (now_ts - locked_at) < SUMMARY_SEND_LOCK_SECONDS)
+
+
+def claim_summary_send_lock(lock_key, period_key):
+    now_ts = int(time.time())
+    state = load_email_state()
+    if summary_send_locked(state, lock_key, period_key, now_ts):
+        return False
+    state[lock_key] = str(period_key or "")
+    state[lock_key + "_at"] = now_ts
+    save_email_state(state)
+    refreshed = load_email_state()
+    return str(refreshed.get(lock_key, "") or "") == str(period_key or "")
+
+
+def clear_summary_send_lock(lock_key, period_key):
+    state = load_email_state()
+    if str(state.get(lock_key, "") or "") == str(period_key or ""):
+        state.pop(lock_key, None)
+        state.pop(lock_key + "_at", None)
+        save_email_state(state)
+
+
 def load_invoice_ledger():
     data = read_json_file(INVOICE_LEDGER_PATH, [])
     if not isinstance(data, list):
@@ -6527,17 +6563,27 @@ def maybe_send_weekly_summary(now=None):
     state = load_email_state()
     if str(state.get("last_weekly_sent_period_key", "") or state.get("last_sent_period_key", "")) == period_key:
         return {"ok": False, "reason": "already_sent"}
+    if summary_send_locked(state, "weekly_sending_period_key", period_key):
+        return {"ok": False, "reason": "send_in_progress"}
+    if not claim_summary_send_lock("weekly_sending_period_key", period_key):
+        return {"ok": False, "reason": "send_in_progress"}
 
-    send_weekly_summary_email(summary, config)
-    existing_state = load_email_state()
-    existing_state.update({
-        "last_sent_period_key": period_key,
-        "last_weekly_sent_period_key": period_key,
-        "last_weekly_sent_at": int(time.time()),
-        "last_weekly_summary_job_count": summary.get("job_count", 0),
-    })
-    save_email_state(existing_state)
-    return {"ok": True, "summary": summary}
+    try:
+        send_weekly_summary_email(summary, config)
+        existing_state = load_email_state()
+        existing_state.update({
+            "last_sent_period_key": period_key,
+            "last_weekly_sent_period_key": period_key,
+            "last_weekly_sent_at": int(time.time()),
+            "last_weekly_summary_job_count": summary.get("job_count", 0),
+        })
+        existing_state.pop("weekly_sending_period_key", None)
+        existing_state.pop("weekly_sending_period_key_at", None)
+        save_email_state(existing_state)
+        return {"ok": True, "summary": summary}
+    except Exception:
+        clear_summary_send_lock("weekly_sending_period_key", period_key)
+        raise
 
 
 def maybe_send_monthly_summary(now=None):
@@ -6566,15 +6612,25 @@ def maybe_send_monthly_summary(now=None):
     state = load_email_state()
     if str(state.get("last_monthly_sent_period_key", "")) == period_key:
         return {"ok": False, "reason": "already_sent"}
+    if summary_send_locked(state, "monthly_sending_period_key", period_key):
+        return {"ok": False, "reason": "send_in_progress"}
+    if not claim_summary_send_lock("monthly_sending_period_key", period_key):
+        return {"ok": False, "reason": "send_in_progress"}
 
-    send_monthly_summary_email(summary, config)
-    save_email_state({
-        **state,
-        "last_monthly_sent_period_key": period_key,
-        "last_monthly_sent_at": int(time.time()),
-        "last_monthly_summary_job_count": summary.get("job_count", 0),
-    })
-    return {"ok": True, "summary": summary}
+    try:
+        send_monthly_summary_email(summary, config)
+        save_email_state({
+            **load_email_state(),
+            "last_monthly_sent_period_key": period_key,
+            "last_monthly_sent_at": int(time.time()),
+            "last_monthly_summary_job_count": summary.get("job_count", 0),
+            "monthly_sending_period_key": "",
+            "monthly_sending_period_key_at": 0,
+        })
+        return {"ok": True, "summary": summary}
+    except Exception:
+        clear_summary_send_lock("monthly_sending_period_key", period_key)
+        raise
 
 
 def weekly_email_worker():
