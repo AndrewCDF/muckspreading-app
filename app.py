@@ -2,6 +2,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 import csv
 import io
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ APP_SETTINGS_PATH = os.path.join(DATA_DIR, "app_settings.json")
 INVOICE_LEDGER_PATH = os.path.join(DATA_DIR, "invoice_ledger.json")
 INVOICE_STATE_PATH = os.path.join(DATA_DIR, "invoice_state.json")
 INVOICE_ARCHIVE_DIR = os.path.join(DATA_DIR, "invoices")
+ISSUE_PHOTOS_DIR = os.path.join(DATA_DIR, "job_issue_photos")
 CUSTOMER_MASTER_XLSX_PATH = os.path.join(APP_ROOT, "customer_master.xlsx")
 EMAIL_SETTINGS_CSV_PATH = os.path.join(APP_ROOT, "email_settings.csv")
 WEEKLY_SUMMARY_TEMPLATE_PATH = os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")
@@ -58,6 +60,7 @@ CUSTOMER_MASTER_HEADERS = [
     "active",
     "muck_type",
 ]
+ALLOWED_ISSUE_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"}
 
 DEFAULT_EMAIL_CONFIG = {
     "enabled": False,
@@ -515,6 +518,9 @@ HTML = """
     .field.notes-field {
       grid-column: 1 / 2;
     }
+    .field.issue-photos-field {
+      grid-column: 2 / 3;
+    }
     label {
       font-size: 13px;
       text-transform: uppercase;
@@ -540,6 +546,75 @@ HTML = """
       min-height: 110px;
       resize: vertical;
       padding-top: 14px;
+    }
+    .file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .file-button {
+      min-height: 56px;
+      width: 100%;
+    }
+    .file-selection {
+      margin-top: 2px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .photo-help {
+      margin-top: 2px;
+    }
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .photo-thumb {
+      display: grid;
+      gap: 6px;
+      text-decoration: none;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .photo-thumb img {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      border-radius: 14px;
+      border: 1px solid rgba(82, 69, 42, 0.12);
+      background: rgba(255,255,255,0.72);
+      box-shadow: 0 8px 18px rgba(60, 49, 25, 0.08);
+    }
+    .photo-count {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(60,95,70,0.08);
+      border: 1px solid rgba(60,95,70,0.1);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+    .job-photo-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .job-photo-grid .photo-thumb {
+      width: 56px;
+    }
+    .job-photo-grid .photo-thumb span {
+      display: none;
     }
     input:focus, select:focus, textarea:focus {
       border-color: var(--gold);
@@ -992,6 +1067,7 @@ HTML = """
       }
       .form-grid {
         grid-template-columns: 1fr;
+        gap: 12px;
       }
       .mini-grid {
         grid-template-columns: 1fr;
@@ -999,17 +1075,70 @@ HTML = """
       .invoice-preview-grid {
         grid-template-columns: 1fr;
       }
-      .field-date {
-        max-width: min(100%, 220px);
+      .field {
+        gap: 8px;
+      }
+      label {
+        font-size: 14px;
+        text-transform: none;
+        letter-spacing: 0.02em;
+      }
+      input, select, textarea {
+        min-height: 60px;
+        padding: 14px 15px;
+        font-size: 17px;
+      }
+      textarea {
+        min-height: 128px;
+      }
+      .field-date,
+      .invoice-date-field {
+        max-width: none;
+      }
+      .field.notes-field,
+      .field.issue-photos-field,
+      .field.full {
+        grid-column: 1 / -1;
+      }
+      .suggestion-item {
+        padding: 14px 15px;
+        font-size: 16px;
+      }
+      .file-button {
+        min-height: 60px;
       }
       .actions {
         margin-top: 16px;
       }
       .button {
         width: 100%;
+        min-height: 58px;
       }
       .actions-inline .button {
         width: auto;
+      }
+      .job-row {
+        padding: 14px 15px;
+      }
+      .job-row-main {
+        gap: 8px;
+      }
+      .job-row-customer {
+        font-size: 17px;
+      }
+      .job-row-farm,
+      .job-row-date,
+      .job-row-tons,
+      .job-row-status {
+        font-size: 14px;
+      }
+      .job-row-summary {
+        font-size: 15px;
+        line-height: 1.38;
+        gap: 8px;
+      }
+      .photo-grid {
+        grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
       }
       .table-wrap {
         display: none;
@@ -1229,7 +1358,7 @@ HTML = """
         <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
         {% endif %}
 
-        <form method="post" action="{{ url_for('save_job') }}">
+        <form method="post" action="{{ url_for('save_job') }}" enctype="multipart/form-data">
           <input type="hidden" name="edit_job_id" value="{{ form_job.id }}">
           <input type="hidden" name="job_date" value="{{ form_job.job_date or today_iso }}">
           <div class="form-grid">
@@ -1269,6 +1398,23 @@ HTML = """
               <label for="job_notes">Job Notes</label>
               <textarea id="job_notes" name="job_notes" placeholder="Optional notes for this job">{{ form_job.job_notes }}</textarea>
             </div>
+            <div class="field issue-photos-field">
+              <label for="issue_photos">Issue Photos</label>
+              <input id="issue_photos" class="file-input" name="issue_photos" type="file" accept="image/*" multiple>
+              <label class="button button-secondary file-button" for="issue_photos">Add Photos</label>
+              <div id="issue_photo_selection" class="file-selection">No new photos selected</div>
+              <div class="hint photo-help">Add photos of any issue found during the job. You can add more when editing later.</div>
+              {% if form_job.issue_photo_items %}
+              <div class="photo-grid">
+                {% for photo in form_job.issue_photo_items %}
+                <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener">
+                  <img src="{{ photo.url }}" alt="Issue photo">
+                  <span>{{ loop.index }}</span>
+                </a>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
           </div>
           <div class="actions">
             <button class="button button-primary" type="submit">{{ form_submit_label }}</button>
@@ -1293,6 +1439,7 @@ HTML = """
                   <th>Field</th>
                   <th>Muck Type</th>
                   <th>Notes</th>
+                  <th>Issue Photos</th>
                   <th>Spreader Tons</th>
                   <th>Ops Center Tons</th>
                   <th>Invoice Status</th>
@@ -1309,6 +1456,20 @@ HTML = """
                   <td>{{ job.field_name }}</td>
                   <td>{{ job.muck_type }}</td>
                   <td>{{ job.job_notes or '--' }}</td>
+                  <td>
+                    {% if job.issue_photo_items %}
+                    <div class="job-photo-grid">
+                      {% for photo in job.issue_photo_items %}
+                      <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener">
+                        <img src="{{ photo.url }}" alt="Issue photo">
+                        <span>{{ loop.index }}</span>
+                      </a>
+                      {% endfor %}
+                    </div>
+                    {% else %}
+                    --
+                    {% endif %}
+                  </td>
                   <td>{{ job.spreader_tons_label }}</td>
                   <td>{{ job.john_deere_tons_label }}</td>
                   <td><span class="status-chip {{ job.invoice_status_key }}">{{ job.invoice_status_label }}</span></td>
@@ -1339,6 +1500,19 @@ HTML = """
                   <div>{{ job.field_name }} | {{ job.muck_type }}</div>
                   <div class="job-row-tons">Spreader {{ job.spreader_tons_label }} | Ops Center {{ job.john_deere_tons_label }}</div>
                   <div class="job-row-status">Invoice: {{ job.invoice_status_label }}</div>
+                  {% if job.issue_photo_count %}
+                  <div class="photo-count">{{ job.issue_photo_count }} issue photo{% if job.issue_photo_count != 1 %}s{% endif %}</div>
+                  {% endif %}
+                  {% if job.issue_photo_items %}
+                  <div class="job-photo-grid">
+                    {% for photo in job.issue_photo_items %}
+                    <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener">
+                      <img src="{{ photo.url }}" alt="Issue photo">
+                      <span>{{ loop.index }}</span>
+                    </a>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
                 </div>
               </div>
               <div class="job-row-meta">
@@ -1428,6 +1602,8 @@ HTML = """
     const markFarmSelect = document.getElementById("mark_farm_name");
     const invoiceFeeRows = document.getElementById("invoice_fee_rows");
     const addFeeRowButton = document.getElementById("add_fee_row");
+    const issuePhotosInput = document.getElementById("issue_photos");
+    const issuePhotoSelection = document.getElementById("issue_photo_selection");
     const downloadNotice = document.getElementById("download_notice");
     const updateAppForm = document.getElementById("update_app_form");
     const updateAppButton = updateAppForm ? updateAppForm.querySelector('button[type="submit"]') : null;
@@ -1975,6 +2151,12 @@ HTML = """
         row.className = "mini-grid";
         row.innerHTML = '<input type="text" name="additional_fee_description" placeholder="Description"><input type="number" name="additional_fee_amount" inputmode="decimal" min="0" step="0.01" placeholder="Amount">';
         invoiceFeeRows.appendChild(row);
+      });
+    }
+    if (issuePhotosInput && issuePhotoSelection) {
+      issuePhotosInput.addEventListener("change", function () {
+        const count = issuePhotosInput.files ? issuePhotosInput.files.length : 0;
+        issuePhotoSelection.textContent = count ? (count + " new photo" + (count === 1 ? "" : "s") + " selected") : "No new photos selected";
       });
     }
   </script>
@@ -2901,6 +3083,7 @@ SETTINGS_HTML = """
 
 def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(ISSUE_PHOTOS_DIR, exist_ok=True)
 
 
 def read_json_file(path, default):
@@ -2938,6 +3121,79 @@ def write_json_lines_atomic(path, rows):
                 handle.write(json.dumps(row))
                 handle.write("\n")
     os.replace(temp_path, path)
+
+
+def sanitize_issue_photo_filename(name):
+    base = os.path.basename(str(name or "").strip())
+    return base if base else ""
+
+
+def normalize_issue_photo_names(values):
+    names = []
+    seen = set()
+    if not isinstance(values, list):
+        return names
+    for value in values:
+        filename = sanitize_issue_photo_filename(value)
+        if not filename:
+            continue
+        lowered = filename.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        names.append(filename)
+    return names
+
+
+def save_issue_photo_uploads(job_id, uploads):
+    ensure_data_dir()
+    saved = []
+    uploads = uploads if isinstance(uploads, list) else []
+    timestamp = int(time.time() * 1000)
+    index = 0
+    for upload in uploads:
+        filename = sanitize_issue_photo_filename(getattr(upload, "filename", ""))
+        if not filename:
+            continue
+        extension = os.path.splitext(filename)[1].lower()
+        mimetype = str(getattr(upload, "mimetype", "") or "").strip().lower()
+        if extension not in ALLOWED_ISSUE_PHOTO_EXTENSIONS and not mimetype.startswith("image/"):
+            continue
+        if extension not in ALLOWED_ISSUE_PHOTO_EXTENSIONS:
+            extension = ".jpg"
+        safe_name = "%s_%s_%s%s" % (int(job_id or 0), timestamp, index, extension)
+        output_path = os.path.join(ISSUE_PHOTOS_DIR, safe_name)
+        try:
+            upload.save(output_path)
+        except Exception:
+            index += 1
+            continue
+        saved.append(safe_name)
+        index += 1
+    return saved
+
+
+def delete_issue_photo_files(values):
+    for filename in normalize_issue_photo_names(values):
+        file_path = os.path.join(ISSUE_PHOTOS_DIR, filename)
+        if os.path.isfile(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+
+
+def issue_photo_items(values):
+    items = []
+    for filename in normalize_issue_photo_names(values):
+        file_path = os.path.join(ISSUE_PHOTOS_DIR, filename)
+        if not os.path.isfile(file_path):
+            continue
+        items.append({
+            "name": filename,
+            "url": url_for("job_issue_photo", filename=filename),
+        })
+    return items
 
 
 def load_app_settings():
@@ -3904,6 +4160,7 @@ def load_jobs():
                 except Exception:
                     continue
                 if isinstance(row, dict):
+                    row["issue_photos"] = normalize_issue_photo_names(row.get("issue_photos"))
                     rows.append(row)
     except Exception:
         return []
@@ -3966,6 +4223,7 @@ def delete_job_by_id(job_id):
         except Exception:
             matches = False
         if matches:
+            delete_issue_photo_files(row.get("issue_photos"))
             removed = True
             continue
         kept.append(row)
@@ -6976,6 +7234,8 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
         row["john_deere_tons_label"] = format_tons(row.get("total_john_deere_tons"))
         row["saved_label"] = format_saved_time(row.get("created_ts"))
         row["job_notes"] = clean_name(row.get("job_notes"))
+        row["issue_photo_items"] = issue_photo_items(row.get("issue_photos"))[:4]
+        row["issue_photo_count"] = len(normalize_issue_photo_names(row.get("issue_photos")))
         row["invoice_status_label"] = str(status_info.get("label", "Uninvoiced") or "Uninvoiced")
         row["invoice_status_key"] = str(status_info.get("status_key", "open") or "open")
         recent_jobs.append(row)
@@ -7020,6 +7280,7 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
         "total_spreader_tons": "",
         "total_john_deere_tons": "",
         "job_notes": "",
+        "issue_photo_items": [],
     }
     is_editing = False
     form_title = "New Job"
@@ -7046,6 +7307,7 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
             "total_spreader_tons": format_tons(seed_job.get("total_spreader_tons")) if str(seed_job.get("total_spreader_tons", "")).strip() else "",
             "total_john_deere_tons": format_tons(seed_job.get("total_john_deere_tons")) if str(seed_job.get("total_john_deere_tons", "")).strip() else "",
             "job_notes": seed_job.get("job_notes", ""),
+            "issue_photo_items": issue_photo_items(seed_job.get("issue_photos")),
         }
 
     default_week_start, default_week_end = previous_full_week_range(now)
@@ -7288,6 +7550,7 @@ def save_job():
         "total_john_deere_tons": john_deere_tons,
         "created_ts": int(existing_job.get("created_ts")) if isinstance(existing_job, dict) and str(existing_job.get("created_ts", "")).strip() else int(time.time()),
         "updated_ts": int(time.time()),
+        "issue_photos": normalize_issue_photo_names(existing_job.get("issue_photos")) if isinstance(existing_job, dict) else [],
     }
 
     master_record = find_customer_master_record(master_rows, customer, farm_name)
@@ -7313,6 +7576,10 @@ def save_job():
             "vat_rate": "",
             "customer_master_match": False,
         })
+
+    uploaded_photos = save_issue_photo_uploads(record["id"], request.files.getlist("issue_photos"))
+    if uploaded_photos:
+        record["issue_photos"] = normalize_issue_photo_names(record.get("issue_photos", []) + uploaded_photos)
 
     upsert_job(record)
 
@@ -7351,6 +7618,25 @@ def delete_job(job_id):
     if not delete_job_by_id(job_id):
         return redirect(url_for("home", ok=0, msg="Saved job could not be found"))
     return redirect(url_for("home", ok=1, msg="Deleted saved job"))
+
+
+@app.route("/jobs/issue-photos/<path:filename>")
+def job_issue_photo(filename):
+    safe_name = sanitize_issue_photo_filename(filename)
+    if not safe_name:
+        return Response(status=404)
+    file_path = os.path.join(ISSUE_PHOTOS_DIR, safe_name)
+    if not os.path.isfile(file_path):
+        return Response(status=404)
+    mimetype, _ = mimetypes.guess_type(file_path)
+    try:
+        with open(file_path, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return Response(status=404)
+    response = Response(data, mimetype=mimetype or "application/octet-stream")
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/admin/fields/add", methods=["POST"])
@@ -7736,6 +8022,11 @@ def backup_export_zip():
                 file_path = os.path.join(DATA_DIR, name)
                 if os.path.isfile(file_path):
                     archive.write(file_path, os.path.join("data", name))
+        if os.path.isdir(ISSUE_PHOTOS_DIR):
+            for name in sorted(os.listdir(ISSUE_PHOTOS_DIR)):
+                file_path = os.path.join(ISSUE_PHOTOS_DIR, name)
+                if os.path.isfile(file_path):
+                    archive.write(file_path, os.path.join("data", "job_issue_photos", name))
         if os.path.isdir(INVOICE_ARCHIVE_DIR):
             for name in sorted(os.listdir(INVOICE_ARCHIVE_DIR)):
                 file_path = os.path.join(INVOICE_ARCHIVE_DIR, name)
@@ -7780,6 +8071,7 @@ def export_jobs_xlsx():
         "field_name",
         "muck_type",
         "job_notes",
+        "issue_photos",
         "total_spreader_tons",
         "total_john_deere_tons",
         "customer_email",
@@ -7801,6 +8093,7 @@ def export_jobs_xlsx():
             row.get("field_name", ""),
             row.get("muck_type", ""),
             row.get("job_notes", ""),
+            ", ".join(normalize_issue_photo_names(row.get("issue_photos"))),
             row.get("total_spreader_tons", ""),
             row.get("total_john_deere_tons", ""),
             row.get("customer_email", ""),
