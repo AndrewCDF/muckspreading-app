@@ -1865,15 +1865,9 @@ HTML = """
     }
 
     function syncDependentInputs() {
-      const farmOptions = currentFarmOptions();
-      if (String(farmInput.value || "").trim() && !valueInOptions(farmInput.value, farmOptions)) {
-        farmInput.value = "";
-      }
-
-      const fieldOptions = currentFieldOptions();
-      if (String(fieldInput.value || "").trim() && !valueInOptions(fieldInput.value, fieldOptions)) {
-        fieldInput.value = "";
-      }
+      // Keep existing edit values in place when the customer changes.
+      // Suggestions still update to the new customer/farm scope, but we do not
+      // silently clear the farm or field while the user is correcting a job.
     }
 
     function showCustomerSuggestions() {
@@ -5615,7 +5609,7 @@ def build_invoice_sheet_rows(invoice):
         sheet_rows.append([
             row.get("job_date_label", ""),
             row.get("farm_name", ""),
-            row.get("field_name", ""),
+            invoice_line_field_label(row),
             row.get("muck_type", ""),
             row.get("job_notes", ""),
             row.get("tons", ""),
@@ -5950,7 +5944,7 @@ def fill_layout_invoice_template(invoice, template):
     current_row_number = detail_start_row
     for detail in detail_rows:
         detail_row = row(current_row_number)
-        description = clean_name(detail.get("field_name"))
+        description = invoice_line_field_label(detail)
         if not description:
             description = clean_name(detail.get("job_notes"))
         if detail.get("is_extra_line"):
@@ -6050,7 +6044,7 @@ def invoice_template_rows(invoice):
             [
                 row.get("job_date_label", ""),
                 row.get("farm_name", ""),
-                row.get("field_name", ""),
+                invoice_line_field_label(row),
                 row.get("muck_type", ""),
                 row.get("job_notes", ""),
                 row.get("tons", ""),
@@ -6260,7 +6254,7 @@ def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
         rows.append([
             line.get("job_date_label", ""),
             line.get("farm_name", ""),
-            line.get("field_name", ""),
+            invoice_line_field_label(line),
             line.get("muck_type", ""),
             line.get("job_notes", ""),
             format_tons(line.get("tons", 0)) if str(line.get("tons", "")).strip() != "" else "",
@@ -7080,7 +7074,7 @@ def build_invoice_preview(invoice, config, accounts_emails, subject_text="", cus
         preview_lines.append({
             "job_date_label": line.get("job_date_label", ""),
             "farm_name": line.get("farm_name", ""),
-            "field_name": line.get("field_name", ""),
+            "field_name": invoice_line_field_label(line),
             "muck_type": line.get("muck_type", ""),
             "tons_display": format_tons(line.get("tons", 0)) if str(line.get("tons", "")).strip() != "" else "",
             "rate_display": format_money(line.get("rate_per_ton", 0)) if str(line.get("rate_per_ton", "")).strip() != "" else "",
@@ -7239,6 +7233,18 @@ def invoice_address_lines(invoice):
         if text:
             lines.append(text)
     return lines
+
+
+def invoice_line_field_label(line):
+    if not isinstance(line, dict):
+        return ""
+    if line.get("is_extra_line"):
+        return clean_name(line.get("field_name"))
+    farm_name = clean_name(line.get("farm_name"))
+    field_name = clean_name(line.get("field_name"))
+    if farm_name and field_name:
+        return "%s - %s" % (farm_name, field_name)
+    return field_name or farm_name
 
 
 def invoice_default_vat_rate(jobs):
