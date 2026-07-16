@@ -343,6 +343,13 @@ HTML = """
         linear-gradient(180deg, rgba(60,95,70,0.06), rgba(186,148,80,0.08)),
         var(--panel);
     }
+    .hero-copy {
+      margin: 0;
+      max-width: 40rem;
+      color: #5f5d4f;
+      font-size: 17px;
+      line-height: 1.55;
+    }
     .eyebrow {
       display: inline-flex;
       align-items: center;
@@ -1012,6 +1019,10 @@ HTML = """
         text-align: center;
         justify-items: center;
       }
+      .hero-copy {
+        text-align: center;
+        font-size: 15px;
+      }
       .hero {
         gap: 14px;
         margin-bottom: 14px;
@@ -1293,6 +1304,7 @@ HTML = """
             <span class="title-line title-line-primary">A. Farrell Contracting</span>
             <span class="title-line title-line-secondary">Muck Spreading Records</span>
           </h1>
+          <p class="hero-copy">Record jobs quickly, keep customer data tidy, and export clean summaries and invoices without leaving the dashboard.</p>
         </div>
         <div class="meta">
           <div class="pill">Today: {{ today_human }}</div>
@@ -1387,6 +1399,7 @@ HTML = """
               <textarea id="job_notes" name="job_notes" placeholder="Optional notes for this job">{{ form_job.job_notes }}</textarea>
             </div>
             <div class="field issue-photos-field">
+              <label for="issue_photos">Issue Photos</label>
               <input id="issue_photos" class="file-input" name="issue_photos" type="file" accept="image/*" multiple>
               <label class="button button-secondary file-button" for="issue_photos">Add Photos</label>
               <div id="issue_photo_selection" class="file-selection">No new photos selected</div>
@@ -5472,6 +5485,82 @@ def build_basic_xlsx_bytes(sheet_name, title, sheet_rows, column_widths=None):
     return output.getvalue()
 
 
+def enforce_invoice_single_page_print_settings(xlsx_bytes):
+    if not xlsx_bytes:
+        return xlsx_bytes
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(xlsx_bytes), "r") as archive:
+            entries = {name: archive.read(name) for name in archive.namelist()}
+    except Exception:
+        return xlsx_bytes
+
+    sheet_path = "xl/worksheets/sheet1.xml"
+    sheet_bytes = entries.get(sheet_path)
+    if not sheet_bytes:
+        return xlsx_bytes
+
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except Exception:
+        return xlsx_bytes
+
+    namespace = namespace_from_tag(root.tag, XLSX_NS)
+
+    def ensure_root_child(local_name, insert_before=None):
+        existing = first_child_by_local_name(root, local_name)
+        if existing is not None:
+            return existing
+        node = ET.Element("{%s}%s" % (namespace, local_name))
+        children = list(root)
+        insert_index = len(children)
+        if isinstance(insert_before, list):
+            for index, child in enumerate(children):
+                if str(child.tag).rsplit("}", 1)[-1] in insert_before:
+                    insert_index = index
+                    break
+        root.insert(insert_index, node)
+        return node
+
+    sheet_pr = ensure_root_child("sheetPr", insert_before=["dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData"])
+    page_setup_pr = first_child_by_local_name(sheet_pr, "pageSetUpPr")
+    if page_setup_pr is None:
+        page_setup_pr = ET.SubElement(sheet_pr, "{%s}pageSetUpPr" % namespace)
+    page_setup_pr.attrib["fitToPage"] = "1"
+    page_setup_pr.attrib["autoPageBreaks"] = "0"
+
+    print_options = ensure_root_child("printOptions", insert_before=["pageMargins", "pageSetup", "headerFooter", "drawing"])
+    print_options.attrib["horizontalCentered"] = "1"
+    print_options.attrib["verticalCentered"] = "0"
+
+    page_margins = ensure_root_child("pageMargins", insert_before=["pageSetup", "headerFooter", "drawing"])
+    page_margins.attrib["left"] = page_margins.attrib.get("left", "0.3")
+    page_margins.attrib["right"] = page_margins.attrib.get("right", "0.3")
+    page_margins.attrib["top"] = page_margins.attrib.get("top", "0.35")
+    page_margins.attrib["bottom"] = page_margins.attrib.get("bottom", "0.35")
+    page_margins.attrib["header"] = page_margins.attrib.get("header", "0.2")
+    page_margins.attrib["footer"] = page_margins.attrib.get("footer", "0.2")
+
+    page_setup = ensure_root_child("pageSetup", insert_before=["headerFooter", "drawing"])
+    page_setup.attrib["paperSize"] = "9"
+    page_setup.attrib["orientation"] = "portrait"
+    page_setup.attrib["fitToWidth"] = "1"
+    page_setup.attrib["fitToHeight"] = "1"
+    page_setup.attrib["usePrinterDefaults"] = "0"
+
+    ET.register_namespace("", namespace)
+    entries[sheet_path] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    output = io.BytesIO()
+    try:
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, data in entries.items():
+                archive.writestr(name, data)
+    except Exception:
+        return xlsx_bytes
+    return output.getvalue()
+
+
 def build_invoice_sheet_rows(invoice):
     scope_label = invoice.get("customer", "")
     if invoice.get("farm_name"):
@@ -6041,10 +6130,10 @@ def build_invoice_xlsx_bytes(invoice):
     template = load_invoice_template()
     if template:
         try:
-            return build_template_based_invoice_xlsx(invoice, template)
+            return enforce_invoice_single_page_print_settings(build_template_based_invoice_xlsx(invoice, template))
         except Exception:
             pass
-    return build_plain_invoice_xlsx_bytes(invoice)
+    return enforce_invoice_single_page_print_settings(build_plain_invoice_xlsx_bytes(invoice))
 
 
 def invoice_pdf_filename(invoice):
