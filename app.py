@@ -3108,6 +3108,7 @@ SETTINGS_HTML = """
 def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ISSUE_PHOTOS_DIR, exist_ok=True)
+    normalize_customer_case_storage()
 
 
 def read_json_file(path, default):
@@ -4083,14 +4084,172 @@ def clean_name(value):
     return " ".join(str(value or "").strip().split())
 
 
+def normalized_name_key(value):
+    return clean_name(value).lower()
+
+
+_customer_case_normalized = False
+
+
+def canonical_customer_name(value, master_rows=None, customers=None, jobs=None, field_map=None, invoice_ledger=None):
+    name = clean_name(value)
+    if not name:
+        return ""
+    wanted_key = normalized_name_key(name)
+    sources = []
+    if isinstance(master_rows, list):
+        sources.append([clean_name(row.get("customer_name")) for row in master_rows if isinstance(row, dict)])
+    if isinstance(customers, list):
+        sources.append([clean_name(item) for item in customers])
+    if isinstance(field_map, dict):
+        sources.append([clean_name(item) for item in field_map.keys()])
+    if isinstance(jobs, list):
+        sources.append([clean_name(row.get("customer")) for row in jobs if isinstance(row, dict)])
+    if isinstance(invoice_ledger, list):
+        sources.append([clean_name(row.get("customer")) for row in invoice_ledger if isinstance(row, dict)])
+
+    for source in sources:
+        for candidate in source:
+            if candidate and normalized_name_key(candidate) == wanted_key:
+                return candidate
+    return name
+
+
+def normalize_customer_case_storage():
+    global _customer_case_normalized
+    if _customer_case_normalized:
+        return
+
+    master_rows = load_customer_master_rows()
+    customers_data = read_json_file(CUSTOMERS_PATH, [])
+    field_map_data = read_json_file(FIELD_MAP_PATH, {})
+    invoice_ledger_data = read_json_file(INVOICE_LEDGER_PATH, [])
+
+    jobs_rows = []
+    if os.path.exists(JOBS_PATH):
+        try:
+            with open(JOBS_PATH, "r") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(row, dict):
+                        jobs_rows.append(row)
+        except Exception:
+            jobs_rows = []
+
+    changed = False
+
+    normalized_customers = []
+    seen_customer_keys = set()
+    if isinstance(customers_data, list):
+        for item in customers_data:
+            canonical = canonical_customer_name(
+                item,
+                master_rows=master_rows,
+                customers=customers_data,
+                jobs=jobs_rows,
+                field_map=field_map_data,
+                invoice_ledger=invoice_ledger_data,
+            )
+            key = normalized_name_key(canonical)
+            if not canonical or key in seen_customer_keys:
+                if clean_name(item):
+                    changed = True
+                continue
+            seen_customer_keys.add(key)
+            normalized_customers.append(canonical)
+            if canonical != clean_name(item):
+                changed = True
+    normalized_customers.sort(key=lambda item: item.lower())
+
+    normalized_field_map = {}
+    if isinstance(field_map_data, dict):
+        for customer_name, farms_by_field in field_map_data.items():
+            canonical_customer = canonical_customer_name(
+                customer_name,
+                master_rows=master_rows,
+                customers=normalized_customers,
+                jobs=jobs_rows,
+                field_map=field_map_data,
+                invoice_ledger=invoice_ledger_data,
+            )
+            if not canonical_customer or not isinstance(farms_by_field, dict):
+                continue
+            existing_customer_bucket = normalized_field_map.setdefault(canonical_customer, {})
+            if canonical_customer != clean_name(customer_name):
+                changed = True
+            for farm_name, fields in farms_by_field.items():
+                farm_key = clean_name(farm_name)
+                field_bucket = existing_customer_bucket.setdefault(farm_key, [])
+                if isinstance(fields, list):
+                    for field_name in fields:
+                        cleaned_field = clean_name(field_name)
+                        if cleaned_field and cleaned_field not in field_bucket:
+                            field_bucket.append(cleaned_field)
+        for customer_name in normalized_field_map:
+            for farm_name in normalized_field_map[customer_name]:
+                normalized_field_map[customer_name][farm_name].sort(key=lambda item: item.lower())
+
+    normalized_jobs = []
+    for row in jobs_rows:
+        updated = dict(row)
+        canonical_customer = canonical_customer_name(
+            row.get("customer"),
+            master_rows=master_rows,
+            customers=normalized_customers,
+            jobs=jobs_rows,
+            field_map=field_map_data,
+            invoice_ledger=invoice_ledger_data,
+        )
+        if canonical_customer and canonical_customer != clean_name(row.get("customer")):
+            updated["customer"] = canonical_customer
+            changed = True
+        normalized_jobs.append(updated)
+
+    normalized_invoice_ledger = []
+    if isinstance(invoice_ledger_data, list):
+        for row in invoice_ledger_data:
+            if not isinstance(row, dict):
+                continue
+            updated = dict(row)
+            canonical_customer = canonical_customer_name(
+                row.get("customer"),
+                master_rows=master_rows,
+                customers=normalized_customers,
+                jobs=normalized_jobs,
+                field_map=normalized_field_map,
+                invoice_ledger=invoice_ledger_data,
+            )
+            if canonical_customer and canonical_customer != clean_name(row.get("customer")):
+                updated["customer"] = canonical_customer
+                changed = True
+            normalized_invoice_ledger.append(updated)
+
+    if changed:
+        write_json_atomic(CUSTOMERS_PATH, normalized_customers)
+        write_json_atomic(FIELD_MAP_PATH, normalized_field_map)
+        write_json_atomic(INVOICE_LEDGER_PATH, normalized_invoice_ledger)
+        write_json_lines_atomic(JOBS_PATH, normalized_jobs)
+
+    _customer_case_normalized = True
+
+
 def load_customers():
     data = read_json_file(CUSTOMERS_PATH, [])
     if not isinstance(data, list):
         return []
     names = []
+    seen = set()
     for item in data:
         name = clean_name(item)
-        if name and name not in names:
+        key = normalized_name_key(name)
+        if name and key not in seen:
+            seen.add(key)
             names.append(name)
     names.sort(key=lambda item: item.lower())
     return names
@@ -4098,9 +4257,12 @@ def load_customers():
 
 def save_customers(customers):
     cleaned = []
+    seen = set()
     for item in customers:
         name = clean_name(item)
-        if name and name not in cleaned:
+        key = normalized_name_key(name)
+        if name and key not in seen:
+            seen.add(key)
             cleaned.append(name)
     cleaned.sort(key=lambda item: item.lower())
     write_json_atomic(CUSTOMERS_PATH, cleaned)
@@ -8010,7 +8172,14 @@ def admin_home():
 @app.route("/admin/customer-details/save", methods=["POST"])
 def admin_save_customer_details():
     ensure_data_dir()
-    customer = clean_name(request.form.get("customer"))
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=load_customer_master_rows(),
+        customers=load_customers(),
+        jobs=load_jobs(),
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
     customer_email = str(request.form.get("customer_email", "") or "").strip()
     rate_per_ton = str(request.form.get("rate_per_ton", "") or "").strip()
     ok, message = save_customer_master_customer_details(customer, customer_email, rate_per_ton)
@@ -8024,7 +8193,14 @@ def save_job():
     ensure_data_dir()
     master_rows = load_customer_master_rows()
     edit_job_id = str(request.form.get("edit_job_id", "") or "").strip()
-    customer = clean_name(request.form.get("customer"))
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=load_jobs(),
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
     farm_name = clean_name(request.form.get("farm_name"))
     field_name = clean_name(request.form.get("field_name"))
     muck_type = clean_name(request.form.get("muck_type"))
@@ -8159,7 +8335,14 @@ def job_issue_photo(filename):
 @app.route("/admin/fields/add", methods=["POST"])
 def admin_add_field():
     ensure_data_dir()
-    customer = clean_name(request.form.get("new_customer")) or clean_name(request.form.get("customer"))
+    customer = canonical_customer_name(
+        clean_name(request.form.get("new_customer")) or clean_name(request.form.get("customer")),
+        master_rows=load_customer_master_rows(),
+        customers=load_customers(),
+        jobs=load_jobs(),
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
     farm_name = clean_name(request.form.get("farm_name"))
     field_name = clean_name(request.form.get("field_name"))
     if not customer or not field_name:
@@ -8190,7 +8373,14 @@ def admin_add_field():
 @app.route("/admin/fields/delete", methods=["POST"])
 def admin_delete_field():
     ensure_data_dir()
-    customer = clean_name(request.form.get("customer"))
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=load_customer_master_rows(),
+        customers=load_customers(),
+        jobs=load_jobs(),
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
     farm_name = clean_name(request.form.get("farm_name"))
     field_name = clean_name(request.form.get("field_name"))
     field_map = load_field_map()
@@ -8212,7 +8402,14 @@ def admin_delete_field():
 @app.route("/admin/fields/clear-farm", methods=["POST"])
 def admin_clear_farm_fields():
     ensure_data_dir()
-    customer = clean_name(request.form.get("customer"))
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=load_customer_master_rows(),
+        customers=load_customers(),
+        jobs=load_jobs(),
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
     farm_name = clean_name(request.form.get("farm_name"))
     field_map = load_field_map()
     customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
