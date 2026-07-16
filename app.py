@@ -7118,6 +7118,8 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     jobs = invoice_scope_jobs(customer_name, farm_name, job_date_from_text)
     if not jobs:
         return None
+    master_rows = load_customer_master_rows()
+    scope_master_record = find_customer_master_record(master_rows, customer_name, farm_name)
 
     try:
         invoice_number = resolve_invoice_number(invoice_number_override)
@@ -7144,7 +7146,11 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     end_date = max(str(job.get("job_date", "")) for job in jobs)
     default_rate = 0.0
     for job in jobs:
+        job_farm_name = clean_name(job.get("farm_name"))
+        job_master_record = find_customer_master_record(master_rows, customer_name, job_farm_name) or scope_master_record
         default_rate = parse_decimal_or_zero(job.get("rate_per_ton"))
+        if default_rate <= 0 and isinstance(job_master_record, dict):
+            default_rate = parse_decimal_or_zero(job_master_record.get("rate_per_ton"))
         if default_rate > 0:
             break
     total_tons = 0.0
@@ -7158,22 +7164,39 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     customer_postcode = ""
 
     for job in jobs:
+        job_farm_name = clean_name(job.get("farm_name"))
+        job_master_record = find_customer_master_record(master_rows, customer_name, job_farm_name) or scope_master_record
         tons = parse_decimal_or_zero(job.get("total_spreader_tons"))
-        rate = rate_override_value if rate_override_value is not None else parse_decimal_or_zero(job.get("rate_per_ton"))
+        saved_rate = parse_decimal_or_zero(job.get("rate_per_ton"))
+        if saved_rate <= 0 and isinstance(job_master_record, dict):
+            saved_rate = parse_decimal_or_zero(job_master_record.get("rate_per_ton"))
+        rate = rate_override_value if rate_override_value is not None else saved_rate
         vat_rate = parse_decimal_or_zero(job.get("vat_rate"))
+        if vat_rate <= 0 and isinstance(job_master_record, dict):
+            vat_rate = parse_decimal_or_zero(job_master_record.get("vat_rate"))
         if rate <= 0:
             return {"error": "Rate per ton is missing for one or more uninvoiced jobs in this scope."}
 
         if not customer_email:
             customer_email = str(job.get("customer_email", "") or "").strip()
+        if not customer_email and isinstance(job_master_record, dict):
+            customer_email = str(job_master_record.get("email", "") or "").strip()
         if not customer_address_line_1:
             customer_address_line_1 = clean_name(job.get("customer_address_line_1"))
+        if not customer_address_line_1 and isinstance(job_master_record, dict):
+            customer_address_line_1 = clean_name(job_master_record.get("address_line_1"))
         if not customer_address_line_2:
             customer_address_line_2 = clean_name(job.get("customer_address_line_2"))
+        if not customer_address_line_2 and isinstance(job_master_record, dict):
+            customer_address_line_2 = clean_name(job_master_record.get("address_line_2"))
         if not customer_town:
             customer_town = clean_name(job.get("customer_town"))
+        if not customer_town and isinstance(job_master_record, dict):
+            customer_town = clean_name(job_master_record.get("town"))
         if not customer_postcode:
             customer_postcode = clean_name(job.get("customer_postcode"))
+        if not customer_postcode and isinstance(job_master_record, dict):
+            customer_postcode = clean_name(job_master_record.get("postcode"))
 
         line_total = round(tons * rate, 2)
         line_vat = round(line_total * (vat_rate / 100.0), 2)
@@ -7197,7 +7220,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         })
 
     if not customer_email:
-        master_record = find_customer_master_record(load_customer_master_rows(), customer_name, farm_name)
+        master_record = scope_master_record
         if isinstance(master_record, dict):
             customer_email = str(master_record.get("email", "") or "").strip()
             customer_address_line_1 = customer_address_line_1 or clean_name(master_record.get("address_line_1"))
