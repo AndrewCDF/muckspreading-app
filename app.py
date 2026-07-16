@@ -1186,6 +1186,10 @@ HTML = """
         <h2 class="panel-title">Invoices</h2>
         <p class="copy">Create an invoice from uninvoiced jobs in the selected customer or farm scope. The customer receives the PDF only, and your accounts copies receive both the PDF and Excel workbook.</p>
         <form method="post" action="{{ url_for('invoice_create_and_send') }}">
+          <input type="hidden" name="history_ledger_index" value="{{ invoice_form.history_ledger_index }}">
+          {% if invoice_form.edit_reference_label %}
+          <div class="status ok">Editing {{ invoice_form.edit_reference_label }}. Preview or send here will update and re-send this invoice.</div>
+          {% endif %}
           <div class="form-grid">
             <div class="field">
               <label for="invoice_customer">Customer</label>
@@ -2759,6 +2763,11 @@ INVOICE_HISTORY_HTML = """
       color: var(--green);
       border: 1px solid rgba(60,95,70,0.12);
     }
+    .button-small {
+      min-height: 40px;
+      padding: 0 14px;
+      font-size: 14px;
+    }
     .copy {
       margin: 0 0 18px;
       color: var(--muted);
@@ -2807,6 +2816,11 @@ INVOICE_HISTORY_HTML = """
       color: #5d5b48;
     }
     tr:last-child td { border-bottom: none; }
+    .actions-inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .empty {
       padding: 26px;
       border-radius: 18px;
@@ -2845,6 +2859,7 @@ INVOICE_HISTORY_HTML = """
               <th>Total</th>
               <th>Created</th>
               <th>Note</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -2859,6 +2874,17 @@ INVOICE_HISTORY_HTML = """
               <td>{{ row.grand_total_label }}</td>
               <td>{{ row.created_label }}</td>
               <td>{{ row.note or '--' }}</td>
+              <td>
+                {% if row.can_edit %}
+                <div class="actions-inline">
+                  <a class="button button-small" href="{{ url_for('invoice_history_edit', ledger_index=row.ledger_index) }}">Edit / Re-send</a>
+                  <a class="button button-small" href="{{ url_for('invoice_history_show_pdf', ledger_index=row.ledger_index) }}" target="_blank" rel="noopener">Show Invoice</a>
+                  <a class="button button-small" href="{{ url_for('invoice_history_download_xlsx', ledger_index=row.ledger_index) }}">Download Invoice</a>
+                </div>
+                {% else %}
+                --
+                {% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -6379,14 +6405,113 @@ def save_invoice_archive(attachment_name, attachment_bytes):
     return file_path
 
 
-def record_invoice(invoice, accounts_emails):
+def invoice_archive_path(filename):
+    name = str(filename or "").strip()
+    if not name:
+        return ""
+    return os.path.join(INVOICE_ARCHIVE_DIR, name)
+
+
+def invoice_history_row_at(ledger_index):
     ledger = load_invoice_ledger()
-    ledger.append({
+    try:
+        wanted = int(ledger_index)
+    except Exception:
+        return None, -1, ledger
+    if wanted < 0 or wanted >= len(ledger):
+        return None, -1, ledger
+    row = ledger[wanted]
+    if not isinstance(row, dict):
+        return None, -1, ledger
+    return row, wanted, ledger
+
+
+def invoice_jobs_for_history_row(history_row):
+    if not isinstance(history_row, dict):
+        return []
+    wanted_ids = []
+    for value in history_row.get("job_ids", []):
+        try:
+            wanted_ids.append(int(value))
+        except Exception:
+            continue
+    if not wanted_ids:
+        return []
+    jobs_by_id = {}
+    for row in load_jobs():
+        try:
+            job_id = int(row.get("id", 0) or 0)
+        except Exception:
+            continue
+        if job_id:
+            jobs_by_id[job_id] = dict(row)
+    rows = [jobs_by_id[job_id] for job_id in wanted_ids if job_id in jobs_by_id]
+    rows.sort(
+        key=lambda row: (
+            str(row.get("job_date", "")),
+            clean_name(row.get("farm_name")).lower(),
+            clean_name(row.get("field_name")).lower(),
+            int(row.get("created_ts", 0) or 0),
+        )
+    )
+    return rows
+
+
+def invoice_history_form_values(history_row, ledger_index):
+    if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
+        return None
+    stored_fee_rows = history_row.get("additional_fee_rows", [])
+    if not isinstance(stored_fee_rows, list):
+        stored_fee_rows = []
+    invoice_date_value = str(history_row.get("invoice_date", "") or "").strip()
+    if not invoice_date_value:
+        try:
+            invoice_date_value = datetime.fromtimestamp(int(history_row.get("created_ts", 0) or 0)).strftime("%Y-%m-%d")
+        except Exception:
+            invoice_date_value = datetime.now().strftime("%Y-%m-%d")
+    return {
+        "history_ledger_index": str(ledger_index),
+        "customer": clean_name(history_row.get("customer")),
+        "farm_name": clean_name(history_row.get("farm_name")),
+        "invoice_number": str(history_row.get("invoice_number", "") or "").strip(),
+        "invoice_date": invoice_date_value,
+        "job_date_from": str(history_row.get("job_date_from", "") or "").strip(),
+        "payment_terms_days": str(history_row.get("payment_terms_days", "") or DEFAULT_APP_SETTINGS.get("invoice_default_payment_terms_days", "14")).strip(),
+        "rate_override": str(history_row.get("rate_override", "") or "").strip(),
+        "additional_fee_rows": [
+            {
+                "description": clean_name(row.get("description")),
+                "amount": str(row.get("amount", "") or "").strip(),
+            }
+            for row in stored_fee_rows if isinstance(row, dict)
+        ],
+        "subject": str(history_row.get("subject_text", "") or "").strip(),
+        "customer_message": str(history_row.get("customer_message", "") or "").strip(),
+        "edit_reference_label": ("Invoice %s" % format_invoice_number(history_row.get("invoice_number", ""))).strip(),
+    }
+
+
+def record_invoice(invoice, accounts_emails, subject_text="", customer_message="", history_ledger_index=""):
+    ledger = load_invoice_ledger()
+    entry = {
         "invoice_number": int(invoice.get("invoice_number", 0) or 0),
         "customer": invoice.get("customer", ""),
         "farm_name": invoice.get("farm_name", ""),
         "customer_email": invoice.get("customer_email", ""),
         "accounts_emails": list(accounts_emails or []),
+        "invoice_date": invoice.get("invoice_date", ""),
+        "job_date_from": invoice.get("job_date_from", ""),
+        "payment_terms_days": str(invoice.get("payment_terms_days", "") or ""),
+        "rate_override": str(invoice.get("rate_override_input", "") or "").strip(),
+        "additional_fee_rows": [
+            {
+                "description": clean_name(row.get("description")),
+                "amount": str(row.get("amount", "") or "").strip(),
+            }
+            for row in invoice.get("additional_fee_input_rows", []) if isinstance(row, dict)
+        ],
+        "subject_text": str(subject_text or "").strip(),
+        "customer_message": str(customer_message or "").strip(),
         "start_date": invoice.get("start_date", ""),
         "end_date": invoice.get("end_date", ""),
         "job_ids": list(invoice.get("job_ids", [])),
@@ -6395,7 +6520,18 @@ def record_invoice(invoice, accounts_emails):
         "xlsx_filename": invoice.get("filename", ""),
         "pdf_filename": invoice_pdf_filename(invoice),
         "created_ts": int(time.time()),
-    })
+    }
+    try:
+        wanted_index = int(str(history_ledger_index or "").strip())
+    except Exception:
+        wanted_index = -1
+    if 0 <= wanted_index < len(ledger) and isinstance(ledger[wanted_index], dict) and not bool(ledger[wanted_index].get("manual_only", False)):
+        existing_row = ledger[wanted_index]
+        entry["created_ts"] = int(existing_row.get("created_ts", 0) or entry["created_ts"])
+        entry["updated_ts"] = int(time.time())
+        ledger[wanted_index] = entry
+    else:
+        ledger.append(entry)
     save_invoice_ledger(ledger)
     reserve_next_invoice_number(int(invoice.get("invoice_number", 0) or 0) + 1)
 
@@ -6432,12 +6568,19 @@ def invoice_status_map():
 
 def invoice_history_rows():
     rows = []
-    for row in load_invoice_ledger():
+    ledger = load_invoice_ledger()
+    index = 0
+    while index < len(ledger):
+        row = ledger[index]
         if not isinstance(row, dict):
+            index += 1
             continue
         invoice_number = int(row.get("invoice_number", 0) or 0)
         manual_only = bool(row.get("manual_only", False))
+        pdf_filename = str(row.get("pdf_filename", "") or "").strip()
+        xlsx_filename = str(row.get("xlsx_filename", "") or "").strip()
         rows.append({
+            "ledger_index": index,
             "invoice_number": invoice_number,
             "reference_label": ("Invoice %s" % format_invoice_number(invoice_number)) if invoice_number > 0 else "Marked Invoiced",
             "type_label": "Manual" if manual_only else "Invoice",
@@ -6449,7 +6592,11 @@ def invoice_history_rows():
             "created_label": format_saved_time(row.get("created_ts")),
             "created_ts": int(row.get("created_ts", 0) or 0),
             "note": clean_name(row.get("note")),
+            "can_edit": not manual_only and invoice_number > 0,
+            "pdf_available": bool(pdf_filename),
+            "xlsx_available": bool(xlsx_filename),
         })
+        index += 1
     rows.sort(
         key=lambda item: (
             -item["created_ts"],
@@ -6503,7 +6650,7 @@ def manual_mark_jobs_invoiced(customer_name, farm_name="", through_date="", note
     return len(eligible_rows), ""
 
 
-def send_invoice_email(invoice, config, accounts_emails, subject_text="", customer_message=""):
+def send_invoice_email(invoice, config, accounts_emails, subject_text="", customer_message="", history_ledger_index=""):
     customer_email = str(invoice.get("customer_email", "") or "").strip()
     if not customer_email:
         raise RuntimeError("Customer email is missing for this invoice.")
@@ -6558,7 +6705,7 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
 
     save_invoice_archive(invoice.get("filename", "invoice.xlsx"), xlsx_bytes)
     save_invoice_archive(pdf_name, pdf_bytes)
-    record_invoice(invoice, accounts_emails)
+    record_invoice(invoice, accounts_emails, subject_text, customer_message, history_ledger_index)
 
 
 def send_summary_email(summary, config, subject_line, body_text, xlsx_filename, pdf_filename):
@@ -6834,6 +6981,10 @@ def default_invoice_form(invoice_recipient_options, values=None):
     default_invoice_date = datetime.now().strftime("%Y-%m-%d")
     descriptions = values.get("additional_fee_descriptions", [])
     amounts = values.get("additional_fee_amounts", [])
+    if (not isinstance(descriptions, list) or not isinstance(amounts, list) or (not descriptions and not amounts)) and isinstance(values.get("additional_fee_rows"), list):
+        fee_rows_input = [row for row in values.get("additional_fee_rows", []) if isinstance(row, dict)]
+        descriptions = [str(row.get("description", "") or "").strip() for row in fee_rows_input]
+        amounts = [str(row.get("amount", "") or "").strip() for row in fee_rows_input]
     if not isinstance(descriptions, list):
         descriptions = []
     if not isinstance(amounts, list):
@@ -6857,6 +7008,8 @@ def default_invoice_form(invoice_recipient_options, values=None):
         "additional_fee_rows": fee_rows,
         "subject": str(values.get("subject", "") or settings.get("invoice_subject_template", DEFAULT_INVOICE_SUBJECT_TEMPLATE)).strip(),
         "customer_message": str(values.get("customer_message", "") or settings.get("invoice_customer_message_template", DEFAULT_INVOICE_CUSTOMER_MESSAGE_TEMPLATE)).strip(),
+        "history_ledger_index": str(values.get("history_ledger_index", "") or "").strip(),
+        "edit_reference_label": str(values.get("edit_reference_label", "") or "").strip(),
     }
 
 
@@ -6873,15 +7026,28 @@ def invoice_form_from_request(req):
         "additional_fee_amounts": list(req.form.getlist("additional_fee_amount")),
         "subject": str(req.form.get("subject", "") or "").strip(),
         "customer_message": str(req.form.get("customer_message", "") or "").strip(),
+        "history_ledger_index": str(req.form.get("history_ledger_index", "") or "").strip(),
     }
 
 
 def build_invoice_from_form(invoice_form):
     if not invoice_form.get("customer"):
         return None, "Invoice customer is required"
+    history_row = None
+    history_index_text = str(invoice_form.get("history_ledger_index", "") or "").strip()
+    jobs_override = None
+    existing_invoice_number = None
+    if history_index_text:
+        history_row, history_index, _ = invoice_history_row_at(history_index_text)
+        if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
+            return None, "That invoice history entry could not be loaded."
+        jobs_override = invoice_jobs_for_history_row(history_row)
+        if not jobs_override:
+            return None, "The original jobs for that invoice could not be found."
+        existing_invoice_number = int(history_row.get("invoice_number", 0) or 0)
     invoice = build_invoice_payload(
-        invoice_form.get("customer", ""),
-        invoice_form.get("farm_name", ""),
+        clean_name(history_row.get("customer")) if isinstance(history_row, dict) else invoice_form.get("customer", ""),
+        clean_name(history_row.get("farm_name")) if isinstance(history_row, dict) else invoice_form.get("farm_name", ""),
         invoice_form.get("rate_override", ""),
         invoice_form.get("additional_fee_descriptions", []),
         invoice_form.get("additional_fee_amounts", []),
@@ -6889,11 +7055,15 @@ def build_invoice_from_form(invoice_form):
         invoice_form.get("invoice_date", ""),
         invoice_form.get("job_date_from", ""),
         invoice_form.get("payment_terms_days", ""),
+        jobs_override=jobs_override,
+        existing_invoice_number=existing_invoice_number,
     )
     if not invoice:
         return None, "No uninvoiced jobs were found for that customer/farm"
     if isinstance(invoice, dict) and invoice.get("error"):
         return None, str(invoice.get("error"))
+    if history_index_text:
+        invoice["history_ledger_index"] = history_index_text
     return invoice, ""
 
 
@@ -6970,7 +7140,7 @@ def reserve_next_invoice_number(next_number):
     save_invoice_state({"next_invoice_number": max(1, int(next_number or 1))})
 
 
-def resolve_invoice_number(requested_value=""):
+def resolve_invoice_number(requested_value="", existing_invoice_number=None):
     requested_text = str(requested_value or "").strip()
     if not requested_text:
         return next_invoice_number()
@@ -6992,9 +7162,9 @@ def resolve_invoice_number(requested_value=""):
             used_numbers.add(value)
             highest_issued = max(highest_issued, value)
 
-    if requested_number in used_numbers:
+    if requested_number in used_numbers and requested_number != int(existing_invoice_number or 0):
         raise ValueError("Invoice number %s has already been used." % requested_number)
-    if requested_number < (highest_issued + 1):
+    if requested_number < (highest_issued + 1) and requested_number != int(existing_invoice_number or 0):
         raise ValueError("Invoice number must be at least %s." % (highest_issued + 1))
     return requested_number
 
@@ -7106,7 +7276,7 @@ def parse_additional_fee_lines(descriptions, amounts):
     return lines
 
 
-def build_invoice_payload(customer_name, farm_name="", rate_override="", additional_fee_descriptions=None, additional_fee_amounts=None, invoice_number_override="", invoice_date_override="", job_date_from="", payment_terms_days=""):
+def build_invoice_payload(customer_name, farm_name="", rate_override="", additional_fee_descriptions=None, additional_fee_amounts=None, invoice_number_override="", invoice_date_override="", job_date_from="", payment_terms_days="", jobs_override=None, existing_invoice_number=None):
     customer_name = clean_name(customer_name)
     farm_name = clean_name(farm_name)
     job_date_from_text = str(job_date_from or "").strip()
@@ -7115,14 +7285,30 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
             datetime.strptime(job_date_from_text, "%Y-%m-%d")
         except Exception:
             return {"error": "Job date from must be a valid date."}
-    jobs = invoice_scope_jobs(customer_name, farm_name, job_date_from_text)
+    if isinstance(jobs_override, list):
+        jobs = [dict(row) for row in jobs_override if isinstance(row, dict)]
+        if job_date_from_text:
+            jobs = [
+                row for row in jobs
+                if not str(row.get("job_date", "") or "").strip() or str(row.get("job_date", "") or "").strip() >= job_date_from_text
+            ]
+        jobs.sort(
+            key=lambda row: (
+                str(row.get("job_date", "")),
+                clean_name(row.get("farm_name")).lower(),
+                clean_name(row.get("field_name")).lower(),
+                int(row.get("created_ts", 0) or 0),
+            )
+        )
+    else:
+        jobs = invoice_scope_jobs(customer_name, farm_name, job_date_from_text)
     if not jobs:
         return None
     master_rows = load_customer_master_rows()
     scope_master_record = find_customer_master_record(master_rows, customer_name, farm_name)
 
     try:
-        invoice_number = resolve_invoice_number(invoice_number_override)
+        invoice_number = resolve_invoice_number(invoice_number_override, existing_invoice_number)
     except ValueError as exc:
         return {"error": str(exc)}
 
@@ -7294,7 +7480,12 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         "vat_total": round(vat_total, 2),
         "grand_total": round(subtotal + vat_total, 2),
         "default_rate_per_ton": round(default_rate, 2) if default_rate > 0 else "",
+        "rate_override_input": str(rate_override or "").strip(),
         "rate_override_label": format_money(rate_override_value if rate_override_value is not None else default_rate),
+        "additional_fee_input_rows": [
+            {"description": extra.get("description", ""), "amount": ("%.2f" % float(extra.get("amount", 0) or 0))}
+            for extra in extra_lines
+        ],
         "additional_fee_rows": [
             {"description": extra.get("description", ""), "amount": format_money(extra.get("amount", ""))}
             for extra in extra_lines
@@ -7561,6 +7752,112 @@ def invoice_history():
         status_msg=str(request.args.get("msg", "") or "").strip(),
         status_ok=str(request.args.get("ok", "1")) == "1",
     )
+
+
+def build_invoice_form_from_history_entry(history_row, ledger_index):
+    values = invoice_history_form_values(history_row, ledger_index)
+    if not isinstance(values, dict):
+        return None
+    fee_rows = values.get("additional_fee_rows", [])
+    return {
+        "history_ledger_index": values.get("history_ledger_index", ""),
+        "customer": values.get("customer", ""),
+        "farm_name": values.get("farm_name", ""),
+        "invoice_number": values.get("invoice_number", ""),
+        "invoice_date": values.get("invoice_date", ""),
+        "job_date_from": values.get("job_date_from", ""),
+        "payment_terms_days": values.get("payment_terms_days", ""),
+        "rate_override": values.get("rate_override", ""),
+        "additional_fee_descriptions": [str(row.get("description", "") or "") for row in fee_rows if isinstance(row, dict)],
+        "additional_fee_amounts": [str(row.get("amount", "") or "") for row in fee_rows if isinstance(row, dict)],
+        "subject": values.get("subject", ""),
+        "customer_message": values.get("customer_message", ""),
+        "edit_reference_label": values.get("edit_reference_label", ""),
+    }
+
+
+def build_invoice_from_history_entry(history_row, ledger_index):
+    invoice_form = build_invoice_form_from_history_entry(history_row, ledger_index)
+    if not isinstance(invoice_form, dict):
+        return None, "That invoice history entry could not be loaded."
+    return build_invoice_from_form(invoice_form)
+
+
+def invoice_archive_response(filename, mimetype, download=False):
+    file_path = invoice_archive_path(filename)
+    if not file_path or not os.path.exists(file_path):
+        return None
+    try:
+        with open(file_path, "rb") as handle:
+            payload = handle.read()
+    except OSError:
+        return None
+    response = Response(payload, mimetype=mimetype)
+    disposition = "attachment" if download else "inline"
+    response.headers["Content-Disposition"] = '%s; filename="%s"' % (disposition, str(filename))
+    return response
+
+
+@app.route("/invoice/history/<int:ledger_index>/edit")
+def invoice_history_edit(ledger_index):
+    ensure_data_dir()
+    history_row, actual_index, _ = invoice_history_row_at(ledger_index)
+    if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
+        return redirect(url_for("invoice_history", ok=0, msg="That invoice history entry could not be edited"))
+    invoice_form = invoice_history_form_values(history_row, actual_index)
+    return render_template_string(
+        HTML,
+        **build_context(
+            invoice_form=invoice_form,
+            invoice_page=True,
+            status_msg_override="Editing %s." % ((("Invoice %s" % format_invoice_number(history_row.get("invoice_number", ""))).strip()) or "invoice"),
+            status_ok_override=True,
+        )
+    )
+
+
+@app.route("/invoice/history/<int:ledger_index>/show")
+def invoice_history_show_pdf(ledger_index):
+    ensure_data_dir()
+    history_row, actual_index, _ = invoice_history_row_at(ledger_index)
+    if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
+        return redirect(url_for("invoice_history", ok=0, msg="That invoice PDF is not available"))
+    archived = invoice_archive_response(history_row.get("pdf_filename", ""), "application/pdf", download=False)
+    if archived is not None:
+        return archived
+    invoice, error_message = build_invoice_from_history_entry(history_row, actual_index)
+    if error_message:
+        return redirect(url_for("invoice_history", ok=0, msg=error_message))
+    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
+    pdf_bytes = build_invoice_pdf_bytes(invoice, xlsx_bytes)
+    response = Response(pdf_bytes, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = 'inline; filename="%s"' % invoice_pdf_filename(invoice)
+    return response
+
+
+@app.route("/invoice/history/<int:ledger_index>/download")
+def invoice_history_download_xlsx(ledger_index):
+    ensure_data_dir()
+    history_row, actual_index, _ = invoice_history_row_at(ledger_index)
+    if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
+        return redirect(url_for("invoice_history", ok=0, msg="That invoice workbook is not available"))
+    archived = invoice_archive_response(
+        history_row.get("xlsx_filename", ""),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        download=True,
+    )
+    if archived is not None:
+        return archived
+    invoice, error_message = build_invoice_from_history_entry(history_row, actual_index)
+    if error_message:
+        return redirect(url_for("invoice_history", ok=0, msg=error_message))
+    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
+    response = Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Content-Disposition"] = 'attachment; filename="%s"' % str(invoice.get("filename", "invoice.xlsx"))
+    return response
 
 
 @app.route("/settings")
@@ -7991,6 +8288,7 @@ def invoice_create_and_send():
     invoice_date = str(request.form.get("invoice_date", "") or "").strip()
     job_date_from = str(request.form.get("job_date_from", "") or "").strip()
     payment_terms_days = str(request.form.get("payment_terms_days", "") or "").strip()
+    history_ledger_index = str(request.form.get("history_ledger_index", "") or "").strip()
     rate_override = str(request.form.get("rate_override", "") or "").strip()
     additional_fee_descriptions = list(request.form.getlist("additional_fee_description"))
     additional_fee_amounts = list(request.form.getlist("additional_fee_amount"))
@@ -8011,6 +8309,7 @@ def invoice_create_and_send():
         "additional_fee_amounts": additional_fee_amounts,
         "subject": subject_text,
         "customer_message": customer_message,
+        "history_ledger_index": history_ledger_index,
     })
     if error_message:
         return redirect(url_for("invoice_home", ok=0, msg=error_message))
@@ -8020,7 +8319,7 @@ def invoice_create_and_send():
     accounts_emails = [email for email in accounts_emails if email.lower() != customer_email.lower()]
 
     try:
-        send_invoice_email(invoice, config, accounts_emails, subject_text, customer_message)
+        send_invoice_email(invoice, config, accounts_emails, subject_text, customer_message, history_ledger_index)
     except Exception as exc:
         return redirect(url_for("invoice_home", ok=0, msg="Invoice email failed: %s" % clean_name(exc)))
 
