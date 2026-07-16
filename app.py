@@ -7191,7 +7191,7 @@ def invoiced_job_ids():
     return used_ids
 
 
-def invoice_scope_jobs(customer_name, farm_name="", job_date_from=""):
+def invoice_scope_jobs(customer_name, farm_name="", job_date_from="", master_rows=None):
     customer_name = clean_name(customer_name)
     farm_name = clean_name(farm_name)
     job_date_from = str(job_date_from or "").strip()
@@ -7200,10 +7200,9 @@ def invoice_scope_jobs(customer_name, farm_name="", job_date_from=""):
 
     used_ids = invoiced_job_ids()
     rows = []
+    master_rows = master_rows if isinstance(master_rows, list) else load_customer_master_rows()
     for row in load_jobs():
-        if clean_name(row.get("customer")).lower() != customer_name.lower():
-            continue
-        if farm_name and clean_name(row.get("farm_name")).lower() != farm_name.lower():
+        if not job_matches_invoice_scope(row, customer_name, farm_name, master_rows):
             continue
         try:
             row_id = int(row.get("id", 0) or 0)
@@ -7297,6 +7296,45 @@ def parse_additional_fee_lines(descriptions, amounts):
         })
         index += 1
     return lines
+
+
+def customer_scope_farm_aliases(master_rows, customer_name):
+    customer_name = clean_name(customer_name)
+    aliases = []
+    if not customer_name or not isinstance(master_rows, list):
+        return aliases
+    for row in master_rows:
+        if not isinstance(row, dict):
+            continue
+        row_customer = clean_name(row.get("customer_name"))
+        farm_name = clean_name(row.get("farm_name"))
+        if row_customer.lower() == customer_name.lower() and farm_name and farm_name not in aliases:
+            aliases.append(farm_name)
+    return aliases
+
+
+def job_matches_invoice_scope(job_row, customer_name, farm_name="", master_rows=None):
+    if not isinstance(job_row, dict):
+        return False
+    customer_name = clean_name(customer_name)
+    farm_name = clean_name(farm_name)
+    row_customer = clean_name(job_row.get("customer"))
+    row_farm_name = clean_name(job_row.get("farm_name"))
+    if not customer_name or not row_customer:
+        return False
+
+    farm_aliases = customer_scope_farm_aliases(master_rows or [], customer_name)
+
+    if farm_name:
+        if row_customer.lower() == customer_name.lower() and row_farm_name.lower() == farm_name.lower():
+            return True
+        if row_customer.lower() == farm_name.lower():
+            return True
+        return False
+
+    if row_customer.lower() == customer_name.lower():
+        return True
+    return any(row_customer.lower() == alias.lower() for alias in farm_aliases)
 
 
 def build_invoice_payload(customer_name, farm_name="", rate_override="", additional_fee_descriptions=None, additional_fee_amounts=None, invoice_number_override="", invoice_date_override="", job_date_from="", payment_terms_days="", jobs_override=None, existing_invoice_number=None):
