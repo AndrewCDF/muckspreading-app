@@ -2441,11 +2441,28 @@ ADMIN_HTML = """
     .field-tag {
       display: inline-flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 6px;
       padding: 8px 10px;
       border-radius: 999px;
       background: rgba(60,95,70,0.08);
       border: 1px solid rgba(60,95,70,0.1);
+    }
+    .field-move-form {
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .field-move-input {
+      min-width: 160px;
+      max-width: 220px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(82, 69, 42, 0.16);
+      background: rgba(255,255,255,0.92);
+      font: inherit;
+      color: var(--ink);
     }
     .top-links {
       display: flex;
@@ -2552,6 +2569,14 @@ ADMIN_HTML = """
                 </div>
               </form>
               <div class="farm-list">
+                {% set customer_index = loop.index %}
+                <datalist id="farm_move_options_{{ customer_index }}">
+                  {% for option_farm in customer.farms %}
+                  {% if option_farm.farm_name %}
+                  <option value="{{ option_farm.farm_name }}"></option>
+                  {% endif %}
+                  {% endfor %}
+                </datalist>
                 {% for farm in customer.farms %}
                 <details class="map-farm">
                   <summary>
@@ -2562,19 +2587,24 @@ ADMIN_HTML = """
                   </summary>
                   <div class="map-farm-body">
                     <div class="actions-inline">
-                      {% if farm.fields %}
-                      <form method="post" action="{{ url_for('admin_clear_farm_fields') }}">
+                      <form method="post" action="{{ url_for('admin_remove_farm') }}">
                         <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                         <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
-                        <button class="button button-danger button-small" type="submit">Clear Farm Fields</button>
+                        <button class="button button-danger button-small" type="submit">Remove Farm</button>
                       </form>
-                      {% endif %}
                     </div>
                     {% if farm.fields %}
                     <div class="field-tags">
                       {% for field_name in farm.fields %}
                       <div class="field-tag">
                         <span>{{ field_name }}</span>
+                        <form class="field-move-form" method="post" action="{{ url_for('admin_move_field') }}">
+                          <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                          <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
+                          <input type="hidden" name="field_name" value="{{ field_name }}">
+                          <input class="field-move-input" name="to_farm_name" type="text" list="farm_move_options_{{ customer_index }}" placeholder="Move to farm" required>
+                          <button class="button button-secondary button-small" type="submit">Move</button>
+                        </form>
                         <form method="post" action="{{ url_for('admin_delete_field') }}">
                           <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                           <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
@@ -4289,6 +4319,40 @@ def save_farms(farms):
             cleaned.append(name)
     cleaned.sort(key=lambda item: item.lower())
     write_json_atomic(FARMS_PATH, cleaned)
+
+
+def sync_farms_store(master_rows=None, jobs=None, field_map=None):
+    master_rows = master_rows if isinstance(master_rows, list) else load_customer_master_rows()
+    jobs = jobs if isinstance(jobs, list) else load_jobs()
+    field_map = field_map if isinstance(field_map, dict) else load_field_map()
+    farms = []
+    seen = set()
+
+    def add_farm(value):
+        name = clean_name(value)
+        key = normalized_name_key(name)
+        if not name or key in seen:
+            return
+        seen.add(key)
+        farms.append(name)
+
+    for row in master_rows:
+        if isinstance(row, dict):
+            add_farm(row.get("farm_name"))
+
+    for row in jobs:
+        if isinstance(row, dict):
+            add_farm(row.get("farm_name"))
+
+    for fields_by_farm in field_map.values():
+        if not isinstance(fields_by_farm, dict):
+            continue
+        for farm_name in fields_by_farm.keys():
+            add_farm(farm_name)
+
+    farms.sort(key=lambda item: item.lower())
+    save_farms(farms)
+    return farms
 
 
 def load_muck_types(master_rows=None):
@@ -8399,6 +8463,88 @@ def admin_delete_field():
     return redirect(url_for("admin_home", ok=1, msg="Field removed"))
 
 
+@app.route("/admin/fields/move", methods=["POST"])
+def admin_move_field():
+    ensure_data_dir()
+    master_rows = load_customer_master_rows()
+    jobs = load_jobs()
+    field_map = load_field_map()
+    invoice_ledger = load_invoice_ledger()
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=field_map,
+        invoice_ledger=invoice_ledger,
+    )
+    from_farm_name = clean_name(request.form.get("farm_name"))
+    to_farm_name = clean_name(request.form.get("to_farm_name"))
+    field_name = clean_name(request.form.get("field_name"))
+
+    if not customer or not field_name:
+        return redirect(url_for("admin_home", ok=0, msg="Customer and field name are required"))
+    if not to_farm_name:
+        return redirect(url_for("admin_home", ok=0, msg="Move to farm name is required"))
+    if normalized_name_key(from_farm_name) == normalized_name_key(to_farm_name):
+        return redirect(url_for("admin_home", ok=0, msg="Field is already on that farm"))
+
+    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    from_bucket = customer_bucket.get(from_farm_name, [])
+    updated_from_bucket = [name for name in from_bucket if normalized_name_key(name) != normalized_name_key(field_name)]
+    if updated_from_bucket:
+        customer_bucket[from_farm_name] = updated_from_bucket
+    elif from_farm_name in customer_bucket:
+        del customer_bucket[from_farm_name]
+
+    to_bucket = customer_bucket.get(to_farm_name, [])
+    if field_name not in to_bucket:
+        to_bucket.append(field_name)
+        to_bucket.sort(key=lambda item: item.lower())
+    customer_bucket[to_farm_name] = to_bucket
+    if customer_bucket:
+        field_map[customer] = customer_bucket
+    elif customer in field_map:
+        del field_map[customer]
+    save_field_map(field_map)
+
+    updated_jobs = 0
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        if normalized_name_key(row.get("customer")) != normalized_name_key(customer):
+            continue
+        if normalized_name_key(row.get("farm_name")) != normalized_name_key(from_farm_name):
+            continue
+        if normalized_name_key(row.get("field_name")) != normalized_name_key(field_name):
+            continue
+        row["farm_name"] = to_farm_name
+        master_record = find_customer_master_record(master_rows, customer, to_farm_name)
+        if isinstance(master_record, dict):
+            row.update({
+                "customer_email": master_record.get("email", ""),
+                "customer_address_line_1": master_record.get("address_line_1", ""),
+                "customer_address_line_2": master_record.get("address_line_2", ""),
+                "customer_town": master_record.get("town", ""),
+                "customer_postcode": master_record.get("postcode", ""),
+                "rate_per_ton": master_record.get("rate_per_ton", ""),
+                "vat_rate": master_record.get("vat_rate", ""),
+                "customer_master_match": True,
+            })
+        updated_jobs += 1
+    if updated_jobs:
+        save_jobs(jobs)
+
+    sync_farms_store(master_rows, jobs, field_map)
+    return redirect(
+        url_for(
+            "admin_home",
+            ok=1,
+            msg="Moved %s to %s. Updated %s saved jobs." % (field_name, to_farm_name, updated_jobs),
+        )
+    )
+
+
 @app.route("/admin/fields/clear-farm", methods=["POST"])
 def admin_clear_farm_fields():
     ensure_data_dir()
@@ -8421,6 +8567,60 @@ def admin_clear_farm_fields():
         del field_map[customer]
     save_field_map(field_map)
     return redirect(url_for("admin_home", ok=1, msg="Farm fields cleared"))
+
+
+@app.route("/admin/farms/remove", methods=["POST"])
+def admin_remove_farm():
+    ensure_data_dir()
+    master_rows = load_customer_master_rows()
+    jobs = load_jobs()
+    field_map = load_field_map()
+    invoice_ledger = load_invoice_ledger()
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=field_map,
+        invoice_ledger=invoice_ledger,
+    )
+    farm_name = clean_name(request.form.get("farm_name"))
+    if not customer or not farm_name:
+        return redirect(url_for("admin_home", ok=0, msg="Customer and farm name are required"))
+
+    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    had_field_link = farm_name in customer_bucket
+    if had_field_link:
+        del customer_bucket[farm_name]
+        if customer_bucket:
+            field_map[customer] = customer_bucket
+        elif customer in field_map:
+            del field_map[customer]
+        save_field_map(field_map)
+
+    master_refs = 0
+    for row in master_rows:
+        if normalized_name_key(row.get("customer_name")) == normalized_name_key(customer) and normalized_name_key(row.get("farm_name")) == normalized_name_key(farm_name):
+            master_refs += 1
+
+    job_refs = 0
+    for row in jobs:
+        if normalized_name_key(row.get("customer")) == normalized_name_key(customer) and normalized_name_key(row.get("farm_name")) == normalized_name_key(farm_name):
+            job_refs += 1
+
+    sync_farms_store(master_rows, jobs, field_map)
+
+    if master_refs or job_refs:
+        return redirect(
+            url_for(
+                "admin_home",
+                ok=1,
+                msg="Removed %s field link, but %s master rows and %s saved jobs still use that farm." % (farm_name, master_refs, job_refs),
+            )
+        )
+    if had_field_link:
+        return redirect(url_for("admin_home", ok=1, msg="Removed farm %s." % farm_name))
+    return redirect(url_for("admin_home", ok=1, msg="Farm %s is already removed from field links." % farm_name))
 
 
 @app.route("/admin/muck-types/add", methods=["POST"])
