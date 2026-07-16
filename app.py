@@ -3652,16 +3652,33 @@ def customer_master_row_to_dict(header_row, raw_row):
     return row_dict
 
 
-def build_customer_farm_map(master_rows):
+def build_customer_farm_map(master_rows, jobs=None, field_map=None):
     out = {}
-    for row in master_rows:
-        customer_name = row.get("customer_name", "")
-        farm_name = clean_name(row.get("farm_name"))
-        if not customer_name:
-            continue
+
+    def add_farm(customer_name, farm_name):
+        customer_name = clean_name(customer_name)
+        farm_name = clean_name(farm_name)
+        if not customer_name or not farm_name:
+            return
         bucket = out.setdefault(customer_name, [])
-        if farm_name and farm_name not in bucket:
+        if farm_name not in bucket:
             bucket.append(farm_name)
+
+    for row in master_rows:
+        add_farm(row.get("customer_name", ""), row.get("farm_name"))
+
+    if isinstance(jobs, list):
+        for row in jobs:
+            if isinstance(row, dict):
+                add_farm(row.get("customer", ""), row.get("farm_name"))
+
+    if isinstance(field_map, dict):
+        for customer_name, farms_by_field in field_map.items():
+            if not isinstance(farms_by_field, dict):
+                continue
+            for farm_name in farms_by_field.keys():
+                add_farm(customer_name, farm_name)
+
     for customer_name in out:
         out[customer_name].sort(key=lambda item: item.lower())
     return out
@@ -7523,7 +7540,7 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
     invoice_form = default_invoice_form(invoice_recipient_options, invoice_form)
     muck_types = load_muck_types(master_rows)
     field_map = load_field_map()
-    customer_farm_map = build_customer_farm_map(master_rows)
+    customer_farm_map = build_customer_farm_map(master_rows, jobs, field_map)
     customer_rate_map = build_customer_rate_map(master_rows)
     customer_invoice_from_map = build_customer_invoice_from_map()
     job_invoice_status_map = invoice_status_map()
