@@ -1904,39 +1904,43 @@ HTML = """
       });
     }
 
-    customerInput.addEventListener("input", function () {
-      syncDependentInputs();
-      showCustomerSuggestions();
-      if (!String(farmInput.value || "").trim()) {
+    if (customerInput && customerSuggestions && farmInput && farmSuggestions && fieldInput && fieldSuggestions) {
+      customerInput.addEventListener("input", function () {
+        syncDependentInputs();
+        showCustomerSuggestions();
+        if (!String(farmInput.value || "").trim()) {
+          showFarmSuggestions();
+        }
+        showFieldSuggestions();
+      });
+      customerInput.addEventListener("keyup", showCustomerSuggestions);
+      customerInput.addEventListener("focus", function () {
+        showCustomerSuggestions();
+      });
+      farmInput.addEventListener("input", function () {
         showFarmSuggestions();
-      }
-      showFieldSuggestions();
-    });
-    customerInput.addEventListener("keyup", showCustomerSuggestions);
-    customerInput.addEventListener("focus", function () {
-      showCustomerSuggestions();
-    });
-    farmInput.addEventListener("input", function () {
-      showFarmSuggestions();
-      showFieldSuggestions();
-    });
-    farmInput.addEventListener("keyup", function () {
-      showFarmSuggestions();
-      showFieldSuggestions();
-    });
-    farmInput.addEventListener("focus", function () {
-      showFarmSuggestions();
-    });
-    fieldInput.addEventListener("input", showFieldSuggestions);
-    fieldInput.addEventListener("keyup", showFieldSuggestions);
-    fieldInput.addEventListener("focus", function () {
-      showFieldSuggestions();
-    });
-    muckTypeInput.addEventListener("input", showMuckTypeSuggestions);
-    muckTypeInput.addEventListener("keyup", showMuckTypeSuggestions);
-    muckTypeInput.addEventListener("focus", function () {
-      showMuckTypeSuggestions();
-    });
+        showFieldSuggestions();
+      });
+      farmInput.addEventListener("keyup", function () {
+        showFarmSuggestions();
+        showFieldSuggestions();
+      });
+      farmInput.addEventListener("focus", function () {
+        showFarmSuggestions();
+      });
+      fieldInput.addEventListener("input", showFieldSuggestions);
+      fieldInput.addEventListener("keyup", showFieldSuggestions);
+      fieldInput.addEventListener("focus", function () {
+        showFieldSuggestions();
+      });
+    }
+    if (muckTypeInput && muckTypeSuggestions) {
+      muckTypeInput.addEventListener("input", showMuckTypeSuggestions);
+      muckTypeInput.addEventListener("keyup", showMuckTypeSuggestions);
+      muckTypeInput.addEventListener("focus", function () {
+        showMuckTypeSuggestions();
+      });
+    }
 
     document.addEventListener("click", function (event) {
       if (!event.target.closest(".field")) {
