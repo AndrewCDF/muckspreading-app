@@ -7988,6 +7988,9 @@ def invoice_create_and_send():
     customer = clean_name(request.form.get("customer"))
     farm_name = clean_name(request.form.get("farm_name"))
     invoice_number = str(request.form.get("invoice_number", "") or "").strip()
+    invoice_date = str(request.form.get("invoice_date", "") or "").strip()
+    job_date_from = str(request.form.get("job_date_from", "") or "").strip()
+    payment_terms_days = str(request.form.get("payment_terms_days", "") or "").strip()
     rate_override = str(request.form.get("rate_override", "") or "").strip()
     additional_fee_descriptions = list(request.form.getlist("additional_fee_description"))
     additional_fee_amounts = list(request.form.getlist("additional_fee_amount"))
@@ -8000,6 +8003,9 @@ def invoice_create_and_send():
         "customer": customer,
         "farm_name": farm_name,
         "invoice_number": invoice_number,
+        "invoice_date": invoice_date,
+        "job_date_from": job_date_from,
+        "payment_terms_days": payment_terms_days,
         "rate_override": rate_override,
         "additional_fee_descriptions": additional_fee_descriptions,
         "additional_fee_amounts": additional_fee_amounts,
