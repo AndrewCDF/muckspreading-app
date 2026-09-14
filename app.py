@@ -7515,37 +7515,63 @@ def build_invoice_email_message(to_email, from_email, subject_value, body_value,
     return msg
 
 
+def smtp_recipient_refusal_is_transient(exception, recipient):
+    refused = getattr(exception, "recipients", {}) or {}
+    for refused_recipient, response in refused.items():
+        if str(refused_recipient).lower() != str(recipient).lower():
+            continue
+        try:
+            code = int(response[0] if isinstance(response, tuple) else response)
+        except (TypeError, ValueError):
+            return False
+        return 400 <= code < 500
+    return False
+
+
 def send_invoice_smtp_batch(server, recipients, from_email, subject_value, body_value, attachments, require_all=True):
     recipients = normalize_email_list(recipients)
     if not recipients:
         return []
 
     if len(recipients) == 1:
-        msg = build_invoice_email_message(recipients[0], from_email, subject_value, body_value, attachments)
-        try:
-            server.send_message(msg)
-            return []
-        except smtplib.SMTPRecipientsRefused as exc:
-            if require_all:
-                raise
-            failed = getattr(exc, "recipients", {}) or {}
-            return list(failed.keys())
+        recipient = recipients[0]
+        for attempt in range(3):
+            msg = build_invoice_email_message(recipient, from_email, subject_value, body_value, attachments)
+            try:
+                server.send_message(msg)
+                return []
+            except smtplib.SMTPRecipientsRefused as exc:
+                if not smtp_recipient_refusal_is_transient(exc, recipient) or attempt == 2:
+                    if require_all:
+                        raise
+                    failed = getattr(exc, "recipients", {}) or {}
+                    return list(failed.keys())
+                time.sleep(2)
 
     failed = []
     for recipient in recipients:
-        msg = build_invoice_email_message(recipient, from_email, subject_value, body_value, attachments)
-        try:
-            server.send_message(msg)
-        except smtplib.SMTPRecipientsRefused as exc:
-            refused = getattr(exc, "recipients", {}) or {}
-            if recipient.lower() in {key.lower() for key in refused}:
+        sent = False
+        for attempt in range(3):
+            msg = build_invoice_email_message(recipient, from_email, subject_value, body_value, attachments)
+            try:
+                server.send_message(msg)
+                sent = True
+                break
+            except smtplib.SMTPRecipientsRefused as exc:
+                if not smtp_recipient_refusal_is_transient(exc, recipient) or attempt == 2:
+                    refused = getattr(exc, "recipients", {}) or {}
+                    if recipient.lower() in {key.lower() for key in refused}:
+                        failed.append(recipient)
+                        break
+                    raise
+                time.sleep(2)
+            except Exception:
+                if require_all:
+                    raise
                 failed.append(recipient)
-                continue
-            raise
-        except Exception:
-            if require_all:
-                raise
-            failed.append(recipient)
+                break
+        if not sent and recipient not in failed and require_all:
+            raise RuntimeError("Invoice email was not accepted for %s." % recipient)
     if require_all and not failed and len(failed) == 0:
         return []
     return failed
