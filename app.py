@@ -2624,6 +2624,32 @@ ADMIN_HTML = """
                   <div>Rate: {{ customer.rate_per_ton_label or 'Not set' }}</div>
                 </div>
               </form>
+                            {% if customer.master_records %}
+                            <details class="customer-meta-form">
+                                <summary>Edit Customer Spreadsheet Rows ({{ customer.master_records|length }})</summary>
+                                <div class="stack">
+                                {% for record in customer.master_records %}
+                                <form class="mini-form customer-meta-form" method="post" action="{{ url_for('admin_save_customer_master_row') }}">
+                                    <input type="hidden" name="row_number" value="{{ record._row_number }}">
+                                    <div class="mini-grid">
+                                        <div><label>Customer Name</label><input name="customer_name" type="text" value="{{ record.customer_name }}" required></div>
+                                        <div><label>Farm Name</label><input name="farm_name" type="text" value="{{ record.farm_name }}"></div>
+                                        <div><label>Email</label><input name="email" type="email" value="{{ record.email }}"></div>
+                                        <div><label>Address Line 1</label><input name="address_line_1" type="text" value="{{ record.address_line_1 }}"></div>
+                                        <div><label>Address Line 2</label><input name="address_line_2" type="text" value="{{ record.address_line_2 }}"></div>
+                                        <div><label>Town</label><input name="town" type="text" value="{{ record.town }}"></div>
+                                        <div><label>Postcode</label><input name="postcode" type="text" value="{{ record.postcode }}"></div>
+                                        <div><label>Rate Per Ton</label><input name="rate_per_ton" type="number" min="0" step="0.01" value="{{ record.rate_per_ton }}"></div>
+                                        <div><label>VAT Rate</label><input name="vat_rate" type="number" min="0" step="0.01" value="{{ record.vat_rate }}"></div>
+                                        <div><label>Active</label><select name="active"><option value="1" {% if record.active|string in ['1', 'True', 'true'] %}selected{% endif %}>Yes</option><option value="0" {% if record.active|string in ['0', 'False', 'false'] %}selected{% endif %}>No</option></select></div>
+                                        <div><label>Muck Type</label><input name="muck_type" type="text" value="{{ record.muck_type }}"></div>
+                                    </div>
+                                    <button class="button button-secondary button-small" type="submit">Save Spreadsheet Row</button>
+                                </form>
+                                {% endfor %}
+                                </div>
+                            </details>
+                            {% endif %}
               <div class="farm-list">
                 {% set customer_index = loop.index %}
                 <datalist id="farm_move_options_{{ customer_index }}">
@@ -3509,6 +3535,7 @@ def load_customer_master_rows():
             j += 1
             continue
         rows.append({
+            "_row_number": j + 1,
             "customer_name": customer_name,
             "farm_name": farm_name,
             "muck_type": clean_name(row_dict.get("muck_type")),
@@ -3623,7 +3650,7 @@ def worksheet_set_cell_number(cell, value_text, namespace):
     value_node.text = text
 
 
-def save_customer_master_customer_details(customer_name, customer_email, rate_per_ton_text):
+def save_customer_master_customer_details(customer_name, customer_email, rate_per_ton_text, row_number=None, field_values=None):
     customer_name = clean_name(customer_name)
     if not customer_name:
         return False, "Customer is required"
@@ -3672,6 +3699,7 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
     header_row = None
     headers = []
     all_rows = children_by_local_name(sheet_data, "row")
+    row_number_filter = row_number
     for row_node in all_rows:
         candidate = [clean_name(cell).lower() for cell in worksheet_row_values(row_node, shared_strings)]
         if "customer_name" in candidate:
@@ -3696,17 +3724,33 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
             continue
         row_values = worksheet_row_values(row_node, shared_strings)
         row_dict = customer_master_row_to_dict(headers, row_values)
-        if clean_name(row_dict.get("customer_name")).lower() != customer_name.lower():
+        if row_number_filter is not None:
+            try:
+                if int(row_node.attrib.get("r", "0") or "0") != int(row_number_filter):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        elif clean_name(row_dict.get("customer_name")).lower() != customer_name.lower():
             continue
-        row_number = str(row_node.attrib.get("r", "") or "").strip()
+        row_number_text = str(row_node.attrib.get("r", "") or "").strip()
         try:
-            row_number_value = int(row_number)
+            row_number_value = int(row_number_text)
         except Exception:
             continue
         email_cell = worksheet_find_or_create_cell(row_node, row_number_value, email_col, sheet_namespace)
         rate_cell = worksheet_find_or_create_cell(row_node, row_number_value, rate_col, sheet_namespace)
         worksheet_set_cell_inline_text(email_cell, normalized_email, sheet_namespace)
         worksheet_set_cell_number(rate_cell, normalized_rate, sheet_namespace)
+        if isinstance(field_values, dict):
+            for header, value in field_values.items():
+                col_index = headers.index(header) + 1 if header in headers else 0
+                if not col_index:
+                    continue
+                cell = worksheet_find_or_create_cell(row_node, row_number_value, col_index, sheet_namespace)
+                if header in ["rate_per_ton", "vat_rate", "active"]:
+                    worksheet_set_cell_number(cell, value, sheet_namespace)
+                else:
+                    worksheet_set_cell_inline_text(cell, value, sheet_namespace)
         matched_rows += 1
 
     if not matched_rows:
@@ -3900,6 +3944,7 @@ def build_customer_field_admin_map(master_rows, jobs, field_map):
 
     output = []
     for customer_name in sorted(tree.keys(), key=lambda item: item.lower()):
+        master_records = [dict(row) for row in master_rows if clean_name(row.get("customer_name")).lower() == customer_name.lower()]
         farms = []
         for farm_name in sorted(tree[customer_name].keys(), key=lambda item: item.lower()):
             fields = sorted(tree[customer_name][farm_name], key=lambda item: item.lower())
@@ -3913,6 +3958,7 @@ def build_customer_field_admin_map(master_rows, jobs, field_map):
             "customer_email": customer_meta.get(customer_name, {}).get("customer_email", ""),
             "rate_per_ton_text": customer_meta.get(customer_name, {}).get("rate_per_ton", ""),
             "rate_per_ton_label": format_money(parse_decimal_or_zero(customer_meta.get(customer_name, {}).get("rate_per_ton", ""))) if str(customer_meta.get(customer_name, {}).get("rate_per_ton", "") or "").strip() else "",
+            "master_records": master_records,
             "farms": farms,
         })
     return output
@@ -8651,6 +8697,34 @@ def admin_save_customer_details():
     if not ok:
         return redirect(url_for("admin_home", ok=0, msg=message))
     return redirect(url_for("admin_home", ok=1, msg="%s customer details saved" % customer))
+
+
+@app.route("/admin/customer-master-row/save", methods=["POST"])
+def admin_save_customer_master_row():
+    ensure_data_dir()
+    customer_name = clean_name(request.form.get("customer_name"))
+    row_number = str(request.form.get("row_number", "") or "").strip()
+    field_values = {
+        "customer_name": customer_name,
+        "farm_name": clean_name(request.form.get("farm_name")),
+        "email": str(request.form.get("email", "") or "").strip(),
+        "address_line_1": clean_name(request.form.get("address_line_1")),
+        "address_line_2": clean_name(request.form.get("address_line_2")),
+        "town": clean_name(request.form.get("town")),
+        "postcode": clean_name(request.form.get("postcode")),
+        "rate_per_ton": str(request.form.get("rate_per_ton", "") or "").strip(),
+        "vat_rate": str(request.form.get("vat_rate", "") or "").strip(),
+        "active": "1" if request.form.get("active") == "1" else "0",
+        "muck_type": clean_name(request.form.get("muck_type")),
+    }
+    ok, message = save_customer_master_customer_details(
+        customer_name,
+        field_values["email"],
+        field_values["rate_per_ton"],
+        row_number=row_number,
+        field_values=field_values,
+    )
+    return redirect(url_for("admin_home", ok=1 if ok else 0, msg=message if not ok else "%s customer row saved" % customer_name))
 
 
 @app.route("/jobs/save", methods=["POST"])
