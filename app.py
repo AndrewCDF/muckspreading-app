@@ -1376,11 +1376,10 @@ HTML = """
 
         <form method="post" action="{{ url_for('save_job') }}" enctype="multipart/form-data">
           <input type="hidden" name="edit_job_id" value="{{ form_job.id }}">
-          <input type="hidden" name="job_date" value="{{ form_job.job_date or today_iso }}">
           <div class="form-grid">
             <div class="field field-date">
               <label for="job_date">Date</label>
-              <input id="job_date" type="text" value="{{ form_job.job_date_label }}" readonly>
+                            <input id="job_date" name="job_date" type="date" value="{{ form_job.job_date or today_iso }}" required>
             </div>
             <div class="field">
               <label for="customer">Customer</label>
@@ -8811,6 +8810,7 @@ def save_job():
     muck_type = clean_name(request.form.get("muck_type"))
     job_notes = clean_name(request.form.get("job_notes"))
     today_iso = datetime.now().strftime("%Y-%m-%d")
+    job_date = str(request.form.get("job_date", "") or "").strip()
 
     if not customer:
         return redirect(url_for("home", ok=0, msg="Customer is required"))
@@ -8818,6 +8818,10 @@ def save_job():
         return redirect(url_for("home", ok=0, msg="Field name is required"))
     if not muck_type:
         return redirect(url_for("home", ok=0, msg="Muck type is required"))
+    try:
+        datetime.strptime(job_date, "%Y-%m-%d")
+    except ValueError:
+        return redirect(url_for("home", ok=0, msg="Job date must be a valid date"))
 
     try:
         spreader_tons = parse_tons(request.form.get("spreader_tons"), "Total spreader tons")
@@ -8830,11 +8834,6 @@ def save_job():
         existing_job = find_job_by_id(edit_job_id)
         if not existing_job:
             return redirect(url_for("home", ok=0, msg="Saved job could not be found for editing"))
-
-    if isinstance(existing_job, dict):
-        job_date = str(existing_job.get("job_date", "") or "").strip() or today_iso
-    else:
-        job_date = today_iso
 
     record = {
         "id": int(existing_job.get("id")) if isinstance(existing_job, dict) else int(time.time() * 1000),
