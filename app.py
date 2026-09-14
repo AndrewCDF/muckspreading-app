@@ -7379,14 +7379,14 @@ def invoice_unmark_options(customers=None):
         if not isinstance(row, dict):
             continue
         customer = clean_name(row.get("customer"))
-        invoice_date = str(row.get("invoice_date", "") or "").strip()
+        invoice_date = str(row.get("invoice_date", "") or row.get("end_date", "") or "").strip()
         if not customer or not invoice_date:
             continue
         options.setdefault(customer, {})[invoice_date] = {
             "value": invoice_date,
-            "label": "%s - Invoice %s%s" % (
+                "label": "%s - %s%s" % (
                 format_invoice_date(invoice_date),
-                format_invoice_number(row.get("invoice_number", "")) if int(row.get("invoice_number", 0) or 0) else "marked",
+                ("Invoice " + format_invoice_number(row.get("invoice_number", ""))) if int(row.get("invoice_number", 0) or 0) else "Marked through",
                 " (manual mark)" if bool(row.get("manual_only", False)) else "",
             ),
         }
@@ -8950,7 +8950,7 @@ def invoice_unmark_from_date():
     restored_jobs = 0
     for row in ledger:
         row_customer = clean_name(row.get("customer")) if isinstance(row, dict) else ""
-        row_date = str(row.get("invoice_date", "") or "").strip() if isinstance(row, dict) else ""
+        row_date = str(row.get("invoice_date", "") or row.get("end_date", "") or "").strip() if isinstance(row, dict) else ""
         if row_customer.lower() == customer.lower() and row_date >= invoice_date:
             removed += 1
             restored_jobs += len(row.get("job_ids", []))
