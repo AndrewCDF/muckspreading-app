@@ -3396,11 +3396,7 @@ def save_app_settings(settings):
 
 def invoice_from_email(config):
     settings = load_app_settings()
-    configured_sender = str(settings.get("invoice_from_email", "") or config.get("from_email", "") or "").strip()
-    authenticated_sender = str(config.get("smtp_username", "") or "").strip()
-    if authenticated_sender and configured_sender.lower() != authenticated_sender.lower():
-        return authenticated_sender
-    return configured_sender
+    return str(settings.get("invoice_from_email", "") or config.get("from_email", "") or "").strip()
 
 
 def parse_csv_decimal(value):
@@ -7304,6 +7300,7 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
     customer_message_value = render_invoice_template(customer_message or invoice_email_body(invoice, "customer"), invoice)
     accounts_message_value = render_invoice_template(invoice_email_body(invoice, "accounts"), invoice)
     from_email_value = invoice_from_email(config)
+    envelope_from_value = str(config.get("smtp_username", "") or from_email_value).strip()
 
     customer_attachments = [
         (pdf_bytes, pdf_name, "application", "pdf"),
@@ -7329,6 +7326,7 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
             customer_message_value,
             customer_attachments,
             require_all=True,
+            envelope_from=envelope_from_value,
         )
 
         if accounts_emails:
@@ -7340,6 +7338,7 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
                 accounts_message_value,
                 accounts_attachments,
                 require_all=False,
+                envelope_from=envelope_from_value,
             )
             if failed_accounts:
                 app.logger.warning("Invoice accounts copy rejected by SMTP for: %s", ", ".join(failed_accounts))
@@ -7666,7 +7665,7 @@ def smtp_recipient_refusal_is_transient(exception, recipient):
     return False
 
 
-def send_invoice_smtp_batch(server, recipients, from_email, subject_value, body_value, attachments, require_all=True):
+def send_invoice_smtp_batch(server, recipients, from_email, subject_value, body_value, attachments, require_all=True, envelope_from=""):
     recipients = normalize_email_list(recipients)
     if not recipients:
         return []
@@ -7676,7 +7675,7 @@ def send_invoice_smtp_batch(server, recipients, from_email, subject_value, body_
         for attempt in range(3):
             msg = build_invoice_email_message(recipient, from_email, subject_value, body_value, attachments)
             try:
-                server.send_message(msg)
+                server.send_message(msg, from_addr=envelope_from or from_email)
                 return []
             except smtplib.SMTPRecipientsRefused as exc:
                 if not smtp_recipient_refusal_is_transient(exc, recipient) or attempt == 2:
@@ -7692,7 +7691,7 @@ def send_invoice_smtp_batch(server, recipients, from_email, subject_value, body_
         for attempt in range(3):
             msg = build_invoice_email_message(recipient, from_email, subject_value, body_value, attachments)
             try:
-                server.send_message(msg)
+                server.send_message(msg, from_addr=envelope_from or from_email)
                 sent = True
                 break
             except smtplib.SMTPRecipientsRefused as exc:
