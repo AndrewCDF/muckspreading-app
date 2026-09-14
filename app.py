@@ -7369,8 +7369,12 @@ def invoice_history_rows():
     return rows
 
 
-def invoice_unmark_options():
+def invoice_unmark_options(customers=None):
     options = {}
+    for customer in customers if isinstance(customers, list) else []:
+        customer_name = clean_name(customer)
+        if customer_name:
+            options.setdefault(customer_name, {})
     for row in load_invoice_ledger():
         if not isinstance(row, dict):
             continue
@@ -8505,7 +8509,7 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
     customer_rate_map = build_customer_rate_map(master_rows)
     customer_invoice_from_map = build_customer_invoice_from_map()
     job_invoice_status_map = invoice_status_map()
-    invoice_unmark_choices = invoice_unmark_options()
+    invoice_unmark_choices = invoice_unmark_options(customers)
     try:
         jobs_page = max(1, int(str(request.args.get("jobs_page", "1") or "1")))
     except Exception:
