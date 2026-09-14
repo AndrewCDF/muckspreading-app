@@ -3710,7 +3710,47 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
         matched_rows += 1
 
     if not matched_rows:
-        return False, "No customer master rows were found for %s" % customer_name
+        data_rows = [row_node for row_node in all_rows if row_node is not header_row]
+        if not data_rows:
+            return False, "Customer master has no data row template"
+        template_row = data_rows[-1]
+        row_number_text = str(template_row.attrib.get("r", "0") or "0").strip()
+        try:
+            new_row_number = int(row_number_text) + 1
+        except ValueError:
+            return False, "Customer master row numbering is invalid"
+        new_row = ET.fromstring(ET.tostring(template_row, encoding="utf-8"))
+        new_row.attrib["r"] = str(new_row_number)
+        for cell in children_by_local_name(new_row, "c"):
+            cell_ref = cell.attrib.get("r", "")
+            col_index = worksheet_ref_col_index(cell_ref)
+            if not col_index:
+                continue
+            cell.attrib["r"] = "%s%s" % (xlsx_col_name(col_index), new_row_number)
+            worksheet_set_cell_inline_text(cell, "", sheet_namespace)
+
+        header_positions = {header: index + 1 for index, header in enumerate(headers) if header}
+        customer_cell = worksheet_find_or_create_cell(new_row, new_row_number, header_positions.get("customer_name", 0), sheet_namespace)
+        email_cell = worksheet_find_or_create_cell(new_row, new_row_number, header_positions.get("email", 0), sheet_namespace)
+        rate_cell = worksheet_find_or_create_cell(new_row, new_row_number, header_positions.get("rate_per_ton", 0), sheet_namespace)
+        worksheet_set_cell_inline_text(customer_cell, customer_name, sheet_namespace)
+        worksheet_set_cell_inline_text(email_cell, normalized_email, sheet_namespace)
+        worksheet_set_cell_number(rate_cell, normalized_rate, sheet_namespace)
+        if header_positions.get("active"):
+            active_cell = worksheet_find_or_create_cell(new_row, new_row_number, header_positions["active"], sheet_namespace)
+            worksheet_set_cell_number(active_cell, "1", sheet_namespace)
+        if header_positions.get("vat_rate"):
+            vat_cell = worksheet_find_or_create_cell(new_row, new_row_number, header_positions["vat_rate"], sheet_namespace)
+            worksheet_set_cell_number(vat_cell, "20", sheet_namespace)
+        sheet_data.append(new_row)
+        matched_rows = 1
+
+        dimension = first_child_by_local_name(sheet_root, "dimension")
+        if dimension is not None and ":" in dimension.attrib.get("ref", ""):
+            start_ref, end_ref = dimension.attrib["ref"].split(":", 1)
+            end_match = re.match(r"^([A-Z]+)(\d+)$", end_ref)
+            if end_match and int(end_match.group(2)) < new_row_number:
+                dimension.attrib["ref"] = "%s:%s%s" % (start_ref, end_match.group(1), new_row_number)
 
     entries[target] = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
 
