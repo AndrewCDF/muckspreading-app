@@ -3396,7 +3396,11 @@ def save_app_settings(settings):
 
 def invoice_from_email(config):
     settings = load_app_settings()
-    return str(settings.get("invoice_from_email", "") or config.get("from_email", "") or "").strip()
+    configured_sender = str(settings.get("invoice_from_email", "") or config.get("from_email", "") or "").strip()
+    authenticated_sender = str(config.get("smtp_username", "") or "").strip()
+    if authenticated_sender and configured_sender.lower() != authenticated_sender.lower():
+        return authenticated_sender
+    return configured_sender
 
 
 def parse_csv_decimal(value):
