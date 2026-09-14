@@ -2502,6 +2502,12 @@ ADMIN_HTML = """
     <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
     {% endif %}
 
+    <datalist id="admin_customer_move_options">
+      {% for customer in customers %}
+      <option value="{{ customer }}"></option>
+      {% endfor %}
+    </datalist>
+
     <div class="grid">
       <div class="card stack">
         <div>
@@ -2532,6 +2538,37 @@ ADMIN_HTML = """
               <input id="admin_field_name" name="field_name" type="text" required>
             </div>
             <button class="button button-secondary button-full" type="submit">Add Field</button>
+          </form>
+        </div>
+
+        <div>
+          <h2>Move Jobs To Another Customer</h2>
+          <form class="mini-form" method="post" action="{{ url_for('admin_move_jobs') }}">
+            <div class="mini-grid">
+              <div>
+                <label for="admin_move_jobs_from_customer">From Customer</label>
+                <input id="admin_move_jobs_from_customer" name="from_customer" type="text" list="admin_customer_move_options" placeholder="Current customer" required>
+              </div>
+              <div>
+                <label for="admin_move_jobs_to_customer">To Customer</label>
+                <input id="admin_move_jobs_to_customer" name="to_customer" type="text" list="admin_customer_move_options" placeholder="New customer" required>
+              </div>
+            </div>
+            <div class="mini-grid">
+              <div>
+                <label for="admin_move_jobs_from_farm">From Farm (optional)</label>
+                <input id="admin_move_jobs_from_farm" name="from_farm_name" type="text" placeholder="Only this farm">
+              </div>
+              <div>
+                <label for="admin_move_jobs_to_farm">To Farm (optional)</label>
+                <input id="admin_move_jobs_to_farm" name="to_farm_name" type="text" placeholder="Keep same if blank">
+              </div>
+            </div>
+            <div>
+              <label for="admin_move_jobs_field">Field (optional)</label>
+              <input id="admin_move_jobs_field" name="field_name" type="text" placeholder="Only this field">
+            </div>
+            <button class="button button-secondary button-full" type="submit">Move Matching Jobs</button>
           </form>
         </div>
       </div>
@@ -2602,6 +2639,7 @@ ADMIN_HTML = """
                           <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                           <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
                           <input type="hidden" name="field_name" value="{{ field_name }}">
+                          <input class="field-move-input" name="to_customer" type="text" list="admin_customer_move_options" placeholder="New customer" value="{{ customer.customer_name }}">
                           <input class="field-move-input" name="to_farm_name" type="text" list="farm_move_options_{{ customer_index }}" placeholder="Move to farm" required>
                           <button class="button button-secondary button-small" type="submit">Move</button>
                         </form>
@@ -3844,6 +3882,36 @@ def find_customer_master_record(master_rows, customer_name, farm_name=""):
         if not str(row.get("farm_name", "")).strip():
             return row
     return None
+
+
+def apply_customer_master_snapshot(record, master_rows, customer_name, farm_name):
+    if not isinstance(record, dict):
+        return
+    customer_name = clean_name(customer_name)
+    farm_name = clean_name(farm_name)
+    master_record = find_customer_master_record(master_rows, customer_name, farm_name)
+    if isinstance(master_record, dict):
+        record.update({
+            "customer_email": master_record.get("email", ""),
+            "customer_address_line_1": master_record.get("address_line_1", ""),
+            "customer_address_line_2": master_record.get("address_line_2", ""),
+            "customer_town": master_record.get("town", ""),
+            "customer_postcode": master_record.get("postcode", ""),
+            "rate_per_ton": master_record.get("rate_per_ton", ""),
+            "vat_rate": master_record.get("vat_rate", ""),
+            "customer_master_match": True,
+        })
+    else:
+        record.update({
+            "customer_email": "",
+            "customer_address_line_1": "",
+            "customer_address_line_2": "",
+            "customer_town": "",
+            "customer_postcode": "",
+            "rate_per_ton": "",
+            "vat_rate": "",
+            "customer_master_match": False,
+        })
 
 
 def parse_csv_bool(value, default=False):
@@ -6904,17 +6972,13 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
     accounts_message_value = render_invoice_template(invoice_email_body(invoice, "accounts"), invoice)
     from_email_value = invoice_from_email(config)
 
-    customer_msg = EmailMessage()
-    customer_msg["Subject"] = subject_value
-    customer_msg["From"] = from_email_value
-    customer_msg["To"] = customer_email
-    customer_msg.set_content(customer_message_value)
-    customer_msg.add_attachment(
-        pdf_bytes,
-        maintype="application",
-        subtype="pdf",
-        filename=pdf_name,
-    )
+    customer_attachments = [
+        (pdf_bytes, pdf_name, "application", "pdf"),
+    ]
+    accounts_attachments = [
+        (pdf_bytes, pdf_name, "application", "pdf"),
+        (xlsx_bytes, invoice.get("filename", "invoice.xlsx"), "application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ]
 
     with smtplib.SMTP(config["smtp_host"], int(config["smtp_port"]), timeout=30) as server:
         server.ehlo()
@@ -6923,26 +6987,29 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
             server.ehlo()
         if config.get("smtp_username"):
             server.login(config.get("smtp_username", ""), config.get("smtp_password", ""))
-        server.send_message(customer_msg)
+
+        send_invoice_smtp_batch(
+            server,
+            [customer_email],
+            from_email_value,
+            subject_value,
+            customer_message_value,
+            customer_attachments,
+            require_all=True,
+        )
+
         if accounts_emails:
-            accounts_msg = EmailMessage()
-            accounts_msg["Subject"] = subject_value
-            accounts_msg["From"] = from_email_value
-            accounts_msg["To"] = ", ".join(accounts_emails)
-            accounts_msg.set_content(accounts_message_value)
-            accounts_msg.add_attachment(
-                pdf_bytes,
-                maintype="application",
-                subtype="pdf",
-                filename=pdf_name,
+            failed_accounts = send_invoice_smtp_batch(
+                server,
+                accounts_emails,
+                from_email_value,
+                subject_value,
+                accounts_message_value,
+                accounts_attachments,
+                require_all=False,
             )
-            accounts_msg.add_attachment(
-                xlsx_bytes,
-                maintype="application",
-                subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                filename=invoice.get("filename", "invoice.xlsx"),
-            )
-            server.send_message(accounts_msg)
+            if failed_accounts:
+                app.logger.warning("Invoice accounts copy rejected by SMTP for: %s", ", ".join(failed_accounts))
 
     save_invoice_archive(invoice.get("filename", "invoice.xlsx"), xlsx_bytes)
     save_invoice_archive(pdf_name, pdf_bytes)
@@ -7214,6 +7281,58 @@ def normalize_email_list(values):
             seen.add(lowered)
             unique.append(email)
     return unique
+
+
+def build_invoice_email_message(to_email, from_email, subject_value, body_value, attachments):
+    msg = EmailMessage()
+    msg["Subject"] = subject_value
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg.set_content(body_value)
+    for attachment_bytes, attachment_name, maintype, subtype in attachments:
+        msg.add_attachment(
+            attachment_bytes,
+            maintype=maintype,
+            subtype=subtype,
+            filename=attachment_name,
+        )
+    return msg
+
+
+def send_invoice_smtp_batch(server, recipients, from_email, subject_value, body_value, attachments, require_all=True):
+    recipients = normalize_email_list(recipients)
+    if not recipients:
+        return []
+
+    if len(recipients) == 1:
+        msg = build_invoice_email_message(recipients[0], from_email, subject_value, body_value, attachments)
+        try:
+            server.send_message(msg)
+            return []
+        except smtplib.SMTPRecipientsRefused as exc:
+            if require_all:
+                raise
+            failed = getattr(exc, "recipients", {}) or {}
+            return list(failed.keys())
+
+    failed = []
+    for recipient in recipients:
+        msg = build_invoice_email_message(recipient, from_email, subject_value, body_value, attachments)
+        try:
+            server.send_message(msg)
+        except smtplib.SMTPRecipientsRefused as exc:
+            refused = getattr(exc, "recipients", {}) or {}
+            if recipient.lower() in {key.lower() for key in refused}:
+                failed.append(recipient)
+                continue
+            raise
+        except Exception:
+            if require_all:
+                raise
+            failed.append(recipient)
+    if require_all and not failed and len(failed) == 0:
+        return []
+    return failed
 
 
 def default_invoice_form(invoice_recipient_options, values=None):
@@ -8310,29 +8429,7 @@ def save_job():
         "issue_photos": normalize_issue_photo_names(existing_job.get("issue_photos")) if isinstance(existing_job, dict) else [],
     }
 
-    master_record = find_customer_master_record(master_rows, customer, farm_name)
-    if isinstance(master_record, dict):
-        record.update({
-            "customer_email": master_record.get("email", ""),
-            "customer_address_line_1": master_record.get("address_line_1", ""),
-            "customer_address_line_2": master_record.get("address_line_2", ""),
-            "customer_town": master_record.get("town", ""),
-            "customer_postcode": master_record.get("postcode", ""),
-            "rate_per_ton": master_record.get("rate_per_ton", ""),
-            "vat_rate": master_record.get("vat_rate", ""),
-            "customer_master_match": True,
-        })
-    else:
-        record.update({
-            "customer_email": "",
-            "customer_address_line_1": "",
-            "customer_address_line_2": "",
-            "customer_town": "",
-            "customer_postcode": "",
-            "rate_per_ton": "",
-            "vat_rate": "",
-            "customer_master_match": False,
-        })
+    apply_customer_master_snapshot(record, master_rows, customer, farm_name)
 
     uploaded_photos = save_issue_photo_uploads(record["id"], request.files.getlist("issue_photos"))
     if uploaded_photos:
@@ -8394,6 +8491,70 @@ def job_issue_photo(filename):
     response = Response(data, mimetype=mimetype or "application/octet-stream")
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.route("/admin/jobs/move", methods=["POST"])
+def admin_move_jobs():
+    ensure_data_dir()
+    master_rows = load_customer_master_rows()
+    jobs = load_jobs()
+    from_customer = canonical_customer_name(
+        request.form.get("from_customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
+    to_customer = canonical_customer_name(
+        request.form.get("to_customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=load_field_map(),
+        invoice_ledger=load_invoice_ledger(),
+    )
+    from_farm_name = clean_name(request.form.get("from_farm_name"))
+    to_farm_name = clean_name(request.form.get("to_farm_name"))
+    field_name = clean_name(request.form.get("field_name"))
+
+    if not from_customer or not to_customer:
+        return redirect(url_for("admin_home", ok=0, msg="Both customer names are required"))
+    if normalized_name_key(from_customer) == normalized_name_key(to_customer):
+        return redirect(url_for("admin_home", ok=0, msg="The customer would not change"))
+
+    updated_jobs = 0
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        if normalized_name_key(row.get("customer")) != normalized_name_key(from_customer):
+            continue
+        if from_farm_name and normalized_name_key(row.get("farm_name")) != normalized_name_key(from_farm_name):
+            continue
+        if field_name and normalized_name_key(row.get("field_name")) != normalized_name_key(field_name):
+            continue
+
+        row["customer"] = to_customer
+        if to_farm_name:
+            row["farm_name"] = to_farm_name
+        apply_customer_master_snapshot(row, master_rows, to_customer, row.get("farm_name", ""))
+        updated_jobs += 1
+
+    if updated_jobs:
+        save_jobs(jobs)
+
+    customers = load_customers()
+    if to_customer not in customers:
+        customers.append(to_customer)
+        save_customers(customers)
+
+    return redirect(
+        url_for(
+            "admin_home",
+            ok=1,
+            msg="Moved %s jobs from %s to %s." % (updated_jobs, from_customer, to_customer),
+        )
+    )
 
 
 @app.route("/admin/fields/add", methods=["POST"])
@@ -8478,35 +8639,53 @@ def admin_move_field():
         field_map=field_map,
         invoice_ledger=invoice_ledger,
     )
+    to_customer = canonical_customer_name(
+        request.form.get("to_customer") or request.form.get("customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=field_map,
+        invoice_ledger=invoice_ledger,
+    )
     from_farm_name = clean_name(request.form.get("farm_name"))
     to_farm_name = clean_name(request.form.get("to_farm_name"))
     field_name = clean_name(request.form.get("field_name"))
 
     if not customer or not field_name:
         return redirect(url_for("admin_home", ok=0, msg="Customer and field name are required"))
+    if not to_customer:
+        return redirect(url_for("admin_home", ok=0, msg="Destination customer is required"))
     if not to_farm_name:
         return redirect(url_for("admin_home", ok=0, msg="Move to farm name is required"))
-    if normalized_name_key(from_farm_name) == normalized_name_key(to_farm_name):
+    if normalized_name_key(customer) == normalized_name_key(to_customer) and normalized_name_key(from_farm_name) == normalized_name_key(to_farm_name):
         return redirect(url_for("admin_home", ok=0, msg="Field is already on that farm"))
 
-    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
-    from_bucket = customer_bucket.get(from_farm_name, [])
+    source_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    from_bucket = source_bucket.get(from_farm_name, [])
     updated_from_bucket = [name for name in from_bucket if normalized_name_key(name) != normalized_name_key(field_name)]
     if updated_from_bucket:
-        customer_bucket[from_farm_name] = updated_from_bucket
-    elif from_farm_name in customer_bucket:
-        del customer_bucket[from_farm_name]
+        source_bucket[from_farm_name] = updated_from_bucket
+    elif from_farm_name in source_bucket:
+        del source_bucket[from_farm_name]
 
-    to_bucket = customer_bucket.get(to_farm_name, [])
+    if customer in field_map and source_bucket:
+        field_map[customer] = source_bucket
+    elif customer in field_map:
+        del field_map[customer]
+
+    target_bucket = field_map.get(to_customer, {}) if isinstance(field_map.get(to_customer, {}), dict) else {}
+    to_bucket = target_bucket.get(to_farm_name, [])
     if field_name not in to_bucket:
         to_bucket.append(field_name)
         to_bucket.sort(key=lambda item: item.lower())
-    customer_bucket[to_farm_name] = to_bucket
-    if customer_bucket:
-        field_map[customer] = customer_bucket
-    elif customer in field_map:
-        del field_map[customer]
+    target_bucket[to_farm_name] = to_bucket
+    field_map[to_customer] = target_bucket
     save_field_map(field_map)
+
+    customers = load_customers()
+    if to_customer not in customers:
+        customers.append(to_customer)
+        save_customers(customers)
 
     updated_jobs = 0
     for row in jobs:
@@ -8518,19 +8697,9 @@ def admin_move_field():
             continue
         if normalized_name_key(row.get("field_name")) != normalized_name_key(field_name):
             continue
+        row["customer"] = to_customer
         row["farm_name"] = to_farm_name
-        master_record = find_customer_master_record(master_rows, customer, to_farm_name)
-        if isinstance(master_record, dict):
-            row.update({
-                "customer_email": master_record.get("email", ""),
-                "customer_address_line_1": master_record.get("address_line_1", ""),
-                "customer_address_line_2": master_record.get("address_line_2", ""),
-                "customer_town": master_record.get("town", ""),
-                "customer_postcode": master_record.get("postcode", ""),
-                "rate_per_ton": master_record.get("rate_per_ton", ""),
-                "vat_rate": master_record.get("vat_rate", ""),
-                "customer_master_match": True,
-            })
+        apply_customer_master_snapshot(row, master_rows, to_customer, to_farm_name)
         updated_jobs += 1
     if updated_jobs:
         save_jobs(jobs)
@@ -8540,33 +8709,9 @@ def admin_move_field():
         url_for(
             "admin_home",
             ok=1,
-            msg="Moved %s to %s. Updated %s saved jobs." % (field_name, to_farm_name, updated_jobs),
+            msg="Moved %s to %s / %s. Updated %s saved jobs." % (field_name, to_customer, to_farm_name, updated_jobs),
         )
     )
-
-
-@app.route("/admin/fields/clear-farm", methods=["POST"])
-def admin_clear_farm_fields():
-    ensure_data_dir()
-    customer = canonical_customer_name(
-        request.form.get("customer"),
-        master_rows=load_customer_master_rows(),
-        customers=load_customers(),
-        jobs=load_jobs(),
-        field_map=load_field_map(),
-        invoice_ledger=load_invoice_ledger(),
-    )
-    farm_name = clean_name(request.form.get("farm_name"))
-    field_map = load_field_map()
-    customer_bucket = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
-    if farm_name in customer_bucket:
-        del customer_bucket[farm_name]
-    if customer_bucket:
-        field_map[customer] = customer_bucket
-    elif customer in field_map:
-        del field_map[customer]
-    save_field_map(field_map)
-    return redirect(url_for("admin_home", ok=1, msg="Farm fields cleared"))
 
 
 @app.route("/admin/farms/remove", methods=["POST"])
