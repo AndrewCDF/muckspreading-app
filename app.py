@@ -1310,6 +1310,53 @@ HTML = """
           </div>
         </form>
       </div>
+
+            <div class="card">
+                <h2 class="panel-title">Unmark Invoiced Jobs</h2>
+                <p class="copy">Choose a customer and invoice date. That invoice and any later invoice records for the customer will be removed, making those jobs available again.</p>
+                <form method="post" action="{{ url_for('invoice_unmark_from_date') }}" id="invoice_unmark_form">
+                    <div class="form-grid">
+                        <div class="field">
+                            <label for="unmark_customer">Customer</label>
+                            <select id="unmark_customer" name="customer" required>
+                                <option value="">Select customer</option>
+                                {% for customer_name in invoice_unmark_options.keys()|sort %}
+                                <option value="{{ customer_name }}">{{ customer_name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="unmark_invoice_date">Invoice Date</label>
+                            <select id="unmark_invoice_date" name="invoice_date" required disabled>
+                                <option value="">Select customer first</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="hint">This removes invoice history from the selected date onward. Use with care for invoices already emailed.</div>
+                    <div class="actions">
+                        <button class="button button-danger" type="submit">Unmark From Selected Date</button>
+                    </div>
+                </form>
+            </div>
+            <script>
+                (function () {
+                    const choices = {{ invoice_unmark_options_json|safe }};
+                    const customer = document.getElementById("unmark_customer");
+                    const date = document.getElementById("unmark_invoice_date");
+                    if (!customer || !date) return;
+                    customer.addEventListener("change", function () {
+                        const rows = choices[customer.value] || [];
+                        date.innerHTML = "";
+                        rows.forEach(function (row) {
+                            const option = document.createElement("option");
+                            option.value = row.value;
+                            option.textContent = row.label;
+                            date.appendChild(option);
+                        });
+                        date.disabled = rows.length === 0;
+                    });
+                }());
+            </script>
     </section>
     {% else %}
     <section class="hero">
@@ -1538,6 +1585,7 @@ HTML = """
                     <button class="button button-danger button-small" type="submit">Delete</button>
                   </form>
                 </div>
+
               </div>
             </div>
           </div>
@@ -7321,6 +7369,29 @@ def invoice_history_rows():
     return rows
 
 
+def invoice_unmark_options():
+    options = {}
+    for row in load_invoice_ledger():
+        if not isinstance(row, dict):
+            continue
+        customer = clean_name(row.get("customer"))
+        invoice_date = str(row.get("invoice_date", "") or "").strip()
+        if not customer or not invoice_date:
+            continue
+        options.setdefault(customer, {})[invoice_date] = {
+            "value": invoice_date,
+            "label": "%s - Invoice %s%s" % (
+                format_invoice_date(invoice_date),
+                format_invoice_number(row.get("invoice_number", "")) if int(row.get("invoice_number", 0) or 0) else "marked",
+                " (manual mark)" if bool(row.get("manual_only", False)) else "",
+            ),
+        }
+    return {
+        customer: sorted(dates.values(), key=lambda item: item["value"])
+        for customer, dates in options.items()
+    }
+
+
 def manual_mark_jobs_invoiced(customer_name, farm_name="", through_date="", note=""):
     customer_name = clean_name(customer_name)
     farm_name = clean_name(farm_name)
@@ -8434,6 +8505,7 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
     customer_rate_map = build_customer_rate_map(master_rows)
     customer_invoice_from_map = build_customer_invoice_from_map()
     job_invoice_status_map = invoice_status_map()
+    invoice_unmark_choices = invoice_unmark_options()
     try:
         jobs_page = max(1, int(str(request.args.get("jobs_page", "1") or "1")))
     except Exception:
@@ -8605,6 +8677,8 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
         "invoice_preview": invoice_preview,
         "invoice_payment_terms_options": INVOICE_PAYMENT_TERMS_OPTIONS,
         "invoice_recipient_options": invoice_recipient_options,
+        "invoice_unmark_options": invoice_unmark_choices,
+        "invoice_unmark_options_json": json.dumps(invoice_unmark_choices),
         "jobs_page": jobs_page,
         "recent_jobs_limit": recent_jobs_limit,
         "has_more_recent_jobs": len(jobs) > recent_jobs_limit,
@@ -8855,6 +8929,43 @@ def invoice_mark_existing():
     if farm_name:
         scope_label = "%s / %s" % (scope_label, farm_name)
     return redirect(url_for("invoice_home", ok=1, msg="Marked %s jobs as already invoiced for %s." % (count, scope_label)))
+
+
+@app.route("/invoice/unmark-from-date", methods=["POST"])
+def invoice_unmark_from_date():
+    ensure_data_dir()
+    customer = clean_name(request.form.get("customer"))
+    invoice_date = str(request.form.get("invoice_date", "") or "").strip()
+    try:
+        datetime.strptime(invoice_date, "%Y-%m-%d")
+    except ValueError:
+        return redirect(url_for("invoice_home", ok=0, msg="Choose a valid invoice date"))
+    ledger = load_invoice_ledger()
+    kept = []
+    removed = 0
+    restored_jobs = 0
+    for row in ledger:
+        row_customer = clean_name(row.get("customer")) if isinstance(row, dict) else ""
+        row_date = str(row.get("invoice_date", "") or "").strip() if isinstance(row, dict) else ""
+        if row_customer.lower() == customer.lower() and row_date >= invoice_date:
+            removed += 1
+            restored_jobs += len(row.get("job_ids", []))
+            continue
+        kept.append(row)
+    if not removed:
+        return redirect(url_for("invoice_home", ok=0, msg="No invoice records found for that customer from the selected date"))
+    save_invoice_ledger(kept)
+    return redirect(
+        url_for(
+            "invoice_home",
+            ok=1,
+            msg="Unmarked %s invoice records and made %s jobs available again from %s." % (
+                removed,
+                restored_jobs,
+                format_invoice_date(invoice_date),
+            ),
+        )
+    )
 
 
 @app.route("/admin")
