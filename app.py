@@ -2571,6 +2571,24 @@ ADMIN_HTML = """
             <button class="button button-secondary button-full" type="submit">Move Matching Jobs</button>
           </form>
         </div>
+
+        <div>
+          <h2>Merge Customer Into Another Customer</h2>
+          <form class="mini-form" method="post" action="{{ url_for('admin_merge_customers') }}">
+            <div class="mini-grid">
+              <div>
+                <label for="admin_merge_from_customer">Merge From</label>
+                <input id="admin_merge_from_customer" name="from_customer" type="text" list="admin_customer_move_options" placeholder="Old customer" required>
+              </div>
+              <div>
+                <label for="admin_merge_to_customer">Into Customer</label>
+                <input id="admin_merge_to_customer" name="to_customer" type="text" list="admin_customer_move_options" placeholder="Target customer" required>
+              </div>
+            </div>
+            <div class="hint">This moves all jobs, field links, and invoice history for the source customer into the target customer.</div>
+            <button class="button button-secondary button-full" type="submit">Merge Customer</button>
+          </form>
+        </div>
       </div>
 
       <div class="card">
@@ -3912,6 +3930,88 @@ def apply_customer_master_snapshot(record, master_rows, customer_name, farm_name
             "vat_rate": "",
             "customer_master_match": False,
         })
+
+
+def merge_customer_into_customer(from_customer, to_customer, master_rows=None, jobs=None, field_map=None, invoice_ledger=None):
+    from_customer = canonical_customer_name(
+        from_customer,
+        master_rows=master_rows if isinstance(master_rows, list) else load_customer_master_rows(),
+        customers=load_customers(),
+        jobs=jobs if isinstance(jobs, list) else load_jobs(),
+        field_map=field_map if isinstance(field_map, dict) else load_field_map(),
+        invoice_ledger=invoice_ledger if isinstance(invoice_ledger, list) else load_invoice_ledger(),
+    )
+    to_customer = canonical_customer_name(
+        to_customer,
+        master_rows=master_rows if isinstance(master_rows, list) else load_customer_master_rows(),
+        customers=load_customers(),
+        jobs=jobs if isinstance(jobs, list) else load_jobs(),
+        field_map=field_map if isinstance(field_map, dict) else load_field_map(),
+        invoice_ledger=invoice_ledger if isinstance(invoice_ledger, list) else load_invoice_ledger(),
+    )
+    if not from_customer or not to_customer:
+        raise ValueError("Both customer names are required")
+    if normalized_name_key(from_customer) == normalized_name_key(to_customer):
+        raise ValueError("You cannot merge a customer into itself")
+
+    jobs_rows = jobs if isinstance(jobs, list) else load_jobs()
+    invoice_rows = invoice_ledger if isinstance(invoice_ledger, list) else load_invoice_ledger()
+    field_map_data = field_map if isinstance(field_map, dict) else load_field_map()
+
+    updated_jobs = 0
+    for row in jobs_rows:
+        if not isinstance(row, dict):
+            continue
+        if normalized_name_key(row.get("customer")) != normalized_name_key(from_customer):
+            continue
+        row["customer"] = to_customer
+        updated_jobs += 1
+
+    updated_invoices = 0
+    for row in invoice_rows:
+        if not isinstance(row, dict):
+            continue
+        if normalized_name_key(row.get("customer")) != normalized_name_key(from_customer):
+            continue
+        row["customer"] = to_customer
+        updated_invoices += 1
+
+    source_bucket = field_map_data.get(from_customer, {}) if isinstance(field_map_data.get(from_customer, {}), dict) else {}
+    target_bucket = field_map_data.get(to_customer, {}) if isinstance(field_map_data.get(to_customer, {}), dict) else {}
+    for farm_name, fields in source_bucket.items():
+        if not isinstance(fields, list):
+            continue
+        merged_fields = target_bucket.get(farm_name, [])
+        for field_name in fields:
+            cleaned_field = clean_name(field_name)
+            if cleaned_field and normalized_name_key(cleaned_field) not in [normalized_name_key(item) for item in merged_fields]:
+                merged_fields.append(cleaned_field)
+        merged_fields.sort(key=lambda item: item.lower())
+        target_bucket[farm_name] = merged_fields
+    if source_bucket:
+        field_map_data[to_customer] = target_bucket
+    if from_customer in field_map_data:
+        del field_map_data[from_customer]
+
+    customer_names = load_customers()
+    customer_names = [name for name in customer_names if normalized_name_key(name) != normalized_name_key(from_customer)]
+    if to_customer not in customer_names:
+        customer_names.append(to_customer)
+    customer_names.sort(key=lambda item: item.lower())
+    save_customers(customer_names)
+
+    if updated_jobs:
+        save_jobs(jobs_rows)
+    if updated_invoices:
+        save_invoice_ledger(invoice_rows)
+    save_field_map(field_map_data)
+    sync_farms_store(master_rows if isinstance(master_rows, list) else load_customer_master_rows(), jobs_rows, field_map_data)
+
+    return {
+        "updated_jobs": updated_jobs,
+        "updated_invoices": updated_invoices,
+        "to_customer": to_customer,
+    }
 
 
 def parse_csv_bool(value, default=False):
@@ -5861,8 +5961,9 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
     page_setup_pr = first_child_by_local_name(sheet_pr, "pageSetUpPr")
     if page_setup_pr is None:
         page_setup_pr = ET.SubElement(sheet_pr, "{%s}pageSetUpPr" % namespace)
-    page_setup_pr.attrib["fitToPage"] = "1"
-    page_setup_pr.attrib["autoPageBreaks"] = "0"
+    # Allow the export to flow across multiple pages when there are many jobs.
+    page_setup_pr.attrib["fitToPage"] = "0"
+    page_setup_pr.attrib["autoPageBreaks"] = "1"
 
     print_options = ensure_root_child("printOptions", insert_before=["pageMargins", "pageSetup", "headerFooter", "drawing"])
     print_options.attrib["horizontalCentered"] = "1"
@@ -5879,8 +5980,8 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
     page_setup = ensure_root_child("pageSetup", insert_before=["headerFooter", "drawing"])
     page_setup.attrib["paperSize"] = "9"
     page_setup.attrib["orientation"] = "portrait"
-    page_setup.attrib["fitToWidth"] = "1"
-    page_setup.attrib["fitToHeight"] = "1"
+    page_setup.attrib["fitToWidth"] = "0"
+    page_setup.attrib["fitToHeight"] = "0"
     page_setup.attrib["usePrinterDefaults"] = "0"
 
     ET.register_namespace("", namespace)
@@ -8564,6 +8665,53 @@ def admin_move_jobs():
             "admin_home",
             ok=1,
             msg="Moved %s jobs from %s to %s." % (updated_jobs, from_customer, to_customer),
+        )
+    )
+
+
+@app.route("/admin/customers/merge", methods=["POST"])
+def admin_merge_customers():
+    ensure_data_dir()
+    master_rows = load_customer_master_rows()
+    jobs = load_jobs()
+    field_map = load_field_map()
+    invoice_ledger = load_invoice_ledger()
+    from_customer = canonical_customer_name(
+        request.form.get("from_customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=field_map,
+        invoice_ledger=invoice_ledger,
+    )
+    to_customer = canonical_customer_name(
+        request.form.get("to_customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=field_map,
+        invoice_ledger=invoice_ledger,
+    )
+    if not from_customer or not to_customer:
+        return redirect(url_for("admin_home", ok=0, msg="Both customer names are required"))
+    if normalized_name_key(from_customer) == normalized_name_key(to_customer):
+        return redirect(url_for("admin_home", ok=0, msg="Choose a different destination customer"))
+
+    try:
+        summary = merge_customer_into_customer(from_customer, to_customer, master_rows, jobs, field_map, invoice_ledger)
+    except ValueError as exc:
+        return redirect(url_for("admin_home", ok=0, msg=str(exc)))
+
+    return redirect(
+        url_for(
+            "admin_home",
+            ok=1,
+            msg="Merged %s into %s (%s jobs, %s invoice records)." % (
+                from_customer,
+                to_customer,
+                summary.get("updated_jobs", 0),
+                summary.get("updated_invoices", 0),
+            ),
         )
     )
 
