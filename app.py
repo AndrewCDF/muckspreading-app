@@ -1207,6 +1207,10 @@ HTML = """
                 <option value="">All Farms For Customer</option>
               </select>
             </div>
+                        <div class="field">
+                            <label for="invoice_customer_name_override">Invoice Customer Name</label>
+                            <input id="invoice_customer_name_override" name="customer_name_override" type="text" value="{{ invoice_form.customer_name_override }}" placeholder="Uses saved customer name">
+                        </div>
             <div class="field">
               <label for="invoice_number">Invoice Number</label>
               <input id="invoice_number" name="invoice_number" type="number" inputmode="numeric" min="1" step="1" value="{{ invoice_form.invoice_number }}" required>
@@ -1232,6 +1236,13 @@ HTML = """
               <label for="invoice_rate_override">Rate Per Ton</label>
               <input id="invoice_rate_override" name="rate_override" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Uses customer master rate" value="{{ invoice_form.rate_override }}">
             </div>
+                        <div class="field notes-field">
+                            <label for="invoice_address_line_1">Billing Address</label>
+                            <input id="invoice_address_line_1" name="address_line_1_override" type="text" value="{{ invoice_form.address_line_1_override }}" placeholder="Address line 1">
+                            <input name="address_line_2_override" type="text" value="{{ invoice_form.address_line_2_override }}" placeholder="Address line 2">
+                            <input name="town_override" type="text" value="{{ invoice_form.town_override }}" placeholder="Town">
+                            <input name="postcode_override" type="text" value="{{ invoice_form.postcode_override }}" placeholder="Postcode">
+                        </div>
             <div class="field notes-field">
               <label for="invoice_subject">Subject</label>
               <input id="invoice_subject" name="subject" type="text" value="{{ invoice_form.subject }}" placeholder="Invoice email subject">
@@ -4239,9 +4250,9 @@ def render_invoice_template(template_text, invoice):
         template
         .replace("{greeting}", greeting)
         .replace("{invoice_number}", str(invoice.get("invoice_number_label", "")))
-        .replace("{customer}", str(invoice.get("customer", "")))
+        .replace("{customer}", invoice_customer_label(invoice))
         .replace("{farm}", farm_name)
-        .replace("{scope}", ("%s / %s" % (invoice.get("customer", ""), farm_name)) if farm_name else str(invoice.get("customer", "")))
+        .replace("{scope}", ("%s / %s" % (invoice_customer_label(invoice), farm_name)) if farm_name else invoice_customer_label(invoice))
     )
 
 
@@ -6116,7 +6127,7 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
 
 
 def build_invoice_sheet_rows(invoice):
-    scope_label = invoice.get("customer", "")
+    scope_label = invoice_customer_label(invoice)
     if invoice.get("farm_name"):
         scope_label = "%s / %s" % (scope_label, invoice.get("farm_name"))
 
@@ -6608,7 +6619,7 @@ def fill_layout_invoice_template(invoice, template):
 
 
 def invoice_template_rows(invoice):
-    scope_label = invoice.get("customer", "")
+    scope_label = invoice_customer_label(invoice)
     if invoice.get("farm_name"):
         scope_label = "%s / %s" % (scope_label, invoice.get("farm_name"))
 
@@ -6841,7 +6852,7 @@ def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
     def draw_text(x, y, text, font="F1", size=9.2, max_chars=48):
         return pdf_text_command(x, y, truncate_pdf_text(text, max_chars), font, size)
 
-    customer_scope = invoice.get("customer", "")
+    customer_scope = invoice_customer_label(invoice)
     if invoice.get("farm_name"):
         customer_scope = "%s / %s" % (customer_scope, invoice.get("farm_name"))
 
@@ -7063,6 +7074,11 @@ def invoice_history_form_values(history_row, ledger_index):
         "history_ledger_index": str(ledger_index),
         "customer": clean_name(history_row.get("customer")),
         "farm_name": clean_name(history_row.get("farm_name")),
+        "customer_name_override": clean_name(history_row.get("customer_name_override")),
+        "address_line_1_override": clean_name(history_row.get("address_line_1_override")),
+        "address_line_2_override": clean_name(history_row.get("address_line_2_override")),
+        "town_override": clean_name(history_row.get("town_override")),
+        "postcode_override": clean_name(history_row.get("postcode_override")),
         "invoice_number": str(history_row.get("invoice_number", "") or "").strip(),
         "invoice_date": invoice_date_value,
         "job_date_from": str(history_row.get("job_date_from", "") or "").strip(),
@@ -7086,7 +7102,12 @@ def record_invoice(invoice, accounts_emails, subject_text="", customer_message="
     entry = {
         "invoice_number": int(invoice.get("invoice_number", 0) or 0),
         "customer": invoice.get("customer", ""),
+        "customer_name_override": invoice.get("customer_name_override", ""),
         "farm_name": invoice.get("farm_name", ""),
+        "address_line_1_override": invoice.get("address_line_1_override", ""),
+        "address_line_2_override": invoice.get("address_line_2_override", ""),
+        "town_override": invoice.get("town_override", ""),
+        "postcode_override": invoice.get("postcode_override", ""),
         "customer_email": invoice.get("customer_email", ""),
         "accounts_emails": list(accounts_emails or []),
         "invoice_date": invoice.get("invoice_date", ""),
@@ -7687,6 +7708,11 @@ def default_invoice_form(invoice_recipient_options, values=None):
     return {
         "customer": clean_name(values.get("customer", "")),
         "farm_name": clean_name(values.get("farm_name", "")),
+        "customer_name_override": clean_name(values.get("customer_name_override", "")),
+        "address_line_1_override": clean_name(values.get("address_line_1_override", "")),
+        "address_line_2_override": clean_name(values.get("address_line_2_override", "")),
+        "town_override": clean_name(values.get("town_override", "")),
+        "postcode_override": clean_name(values.get("postcode_override", "")),
         "invoice_number": str(values.get("invoice_number", "") or next_invoice_number()).strip(),
         "invoice_date": str(values.get("invoice_date", "") or default_invoice_date).strip(),
         "job_date_from": str(values.get("job_date_from", "") or "").strip(),
@@ -7705,6 +7731,11 @@ def invoice_form_from_request(req):
     return {
         "customer": clean_name(req.form.get("customer")),
         "farm_name": clean_name(req.form.get("farm_name")),
+        "customer_name_override": clean_name(req.form.get("customer_name_override")),
+        "address_line_1_override": clean_name(req.form.get("address_line_1_override")),
+        "address_line_2_override": clean_name(req.form.get("address_line_2_override")),
+        "town_override": clean_name(req.form.get("town_override")),
+        "postcode_override": clean_name(req.form.get("postcode_override")),
         "invoice_number": str(req.form.get("invoice_number", "") or "").strip(),
         "invoice_date": str(req.form.get("invoice_date", "") or "").strip(),
         "job_date_from": str(req.form.get("job_date_from", "") or "").strip(),
@@ -7745,6 +7776,11 @@ def build_invoice_from_form(invoice_form):
         invoice_form.get("payment_terms_days", ""),
         jobs_override=jobs_override,
         existing_invoice_number=existing_invoice_number,
+        customer_name_override=invoice_form.get("customer_name_override", ""),
+        address_line_1_override=invoice_form.get("address_line_1_override", ""),
+        address_line_2_override=invoice_form.get("address_line_2_override", ""),
+        town_override=invoice_form.get("town_override", ""),
+        postcode_override=invoice_form.get("postcode_override", ""),
     )
     if not invoice:
         return None, "No uninvoiced jobs were found for that customer/farm"
@@ -7921,11 +7957,16 @@ def last_invoice_for_scope(customer_name, farm_name=""):
 
 def invoice_address_lines(invoice):
     lines = []
-    for key in ["customer", "customer_address_line_1", "customer_address_line_2", "customer_town", "customer_postcode"]:
+    lines.append(clean_name(invoice.get("display_customer_name") or invoice.get("customer")))
+    for key in ["customer_address_line_1", "customer_address_line_2", "customer_town", "customer_postcode"]:
         text = clean_name(invoice.get(key))
         if text:
             lines.append(text)
     return lines
+
+
+def invoice_customer_label(invoice):
+    return clean_name(invoice.get("display_customer_name") or invoice.get("customer"))
 
 
 def invoice_line_field_label(line):
@@ -8014,7 +8055,7 @@ def job_matches_invoice_scope(job_row, customer_name, farm_name="", master_rows=
     return any(row_customer.lower() == alias.lower() for alias in farm_aliases)
 
 
-def build_invoice_payload(customer_name, farm_name="", rate_override="", additional_fee_descriptions=None, additional_fee_amounts=None, invoice_number_override="", invoice_date_override="", job_date_from="", payment_terms_days="", jobs_override=None, existing_invoice_number=None):
+def build_invoice_payload(customer_name, farm_name="", rate_override="", additional_fee_descriptions=None, additional_fee_amounts=None, invoice_number_override="", invoice_date_override="", job_date_from="", payment_terms_days="", jobs_override=None, existing_invoice_number=None, customer_name_override="", address_line_1_override="", address_line_2_override="", town_override="", postcode_override=""):
     customer_name = clean_name(customer_name)
     farm_name = clean_name(farm_name)
     job_date_from_text = str(job_date_from or "").strip()
@@ -8155,6 +8196,20 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     if not customer_email:
         return {"error": "Customer email is missing for this customer/farm scope."}
 
+    customer_name_override = clean_name(customer_name_override)
+    address_line_1_override = clean_name(address_line_1_override)
+    address_line_2_override = clean_name(address_line_2_override)
+    town_override = clean_name(town_override)
+    postcode_override = clean_name(postcode_override)
+    if customer_name_override:
+        display_customer_name = customer_name_override
+    else:
+        display_customer_name = customer_name
+    customer_address_line_1 = address_line_1_override or customer_address_line_1
+    customer_address_line_2 = address_line_2_override or customer_address_line_2
+    customer_town = town_override or customer_town
+    customer_postcode = postcode_override or customer_postcode
+
     try:
         extra_lines = parse_additional_fee_lines(additional_fee_descriptions, additional_fee_amounts)
     except ValueError as exc:
@@ -8198,12 +8253,18 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         "job_date_from": job_date_from_text,
         "job_date_from_label": format_job_date(job_date_from_text) if job_date_from_text else "",
         "customer": customer_name,
+        "customer_name_override": customer_name_override,
+        "display_customer_name": display_customer_name,
         "farm_name": farm_name,
         "customer_email": customer_email,
         "customer_address_line_1": customer_address_line_1,
         "customer_address_line_2": customer_address_line_2,
         "customer_town": customer_town,
         "customer_postcode": customer_postcode,
+        "address_line_1_override": address_line_1_override,
+        "address_line_2_override": address_line_2_override,
+        "town_override": town_override,
+        "postcode_override": postcode_override,
         "start_date": start_date,
         "end_date": end_date,
         "start_date_label": format_job_date(start_date),
@@ -8501,6 +8562,11 @@ def build_invoice_form_from_history_entry(history_row, ledger_index):
         "history_ledger_index": values.get("history_ledger_index", ""),
         "customer": values.get("customer", ""),
         "farm_name": values.get("farm_name", ""),
+        "customer_name_override": values.get("customer_name_override", ""),
+        "address_line_1_override": values.get("address_line_1_override", ""),
+        "address_line_2_override": values.get("address_line_2_override", ""),
+        "town_override": values.get("town_override", ""),
+        "postcode_override": values.get("postcode_override", ""),
         "invoice_number": values.get("invoice_number", ""),
         "invoice_date": values.get("invoice_date", ""),
         "job_date_from": values.get("job_date_from", ""),
