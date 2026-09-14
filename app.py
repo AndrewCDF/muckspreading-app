@@ -2648,6 +2648,20 @@ ADMIN_HTML = """
                                 </div>
                                 <button class="button button-secondary button-small" type="submit">Merge Farms</button>
                             </form>
+                            <form class="mini-form customer-meta-form" method="post" action="{{ url_for('admin_consolidate_farm_name') }}">
+                                <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                                <div class="mini-grid">
+                                    <div>
+                                        <label>Farm Name To Consolidate</label>
+                                        <input name="farm_name" type="text" list="farm_move_options_{{ loop.index }}" placeholder="Same farm, different spelling" required>
+                                    </div>
+                                    <div>
+                                        <label>Keep This Spelling</label>
+                                        <input name="canonical_farm_name" type="text" placeholder="One final farm name" required>
+                                    </div>
+                                </div>
+                                <button class="button button-secondary button-small" type="submit">Consolidate Same-Name Farm</button>
+                            </form>
                             {% if customer.master_records %}
                             <details class="customer-meta-form">
                                 <summary>Edit Customer Spreadsheet Rows ({{ customer.master_records|length }})</summary>
@@ -9142,6 +9156,99 @@ def admin_merge_farms():
             msg="Merged %s into %s: %s jobs, %s invoice records, %s spreadsheet rows." % (
                 from_farm_name,
                 to_farm_name,
+                updated_jobs,
+                updated_invoices,
+                updated_master,
+            ),
+        )
+    )
+
+
+@app.route("/admin/farms/consolidate-name", methods=["POST"])
+def admin_consolidate_farm_name():
+    ensure_data_dir()
+    master_rows = load_customer_master_rows()
+    jobs = load_jobs()
+    field_map = load_field_map()
+    invoice_ledger = load_invoice_ledger()
+    customer = canonical_customer_name(
+        request.form.get("customer"),
+        master_rows=master_rows,
+        customers=load_customers(),
+        jobs=jobs,
+        field_map=field_map,
+        invoice_ledger=invoice_ledger,
+    )
+    farm_name = clean_name(request.form.get("farm_name"))
+    canonical_farm_name = clean_name(request.form.get("canonical_farm_name"))
+    if not customer or not farm_name or not canonical_farm_name:
+        return redirect(url_for("admin_home", ok=0, msg="Customer and both farm names are required"))
+
+    customer_fields = field_map.get(customer, {}) if isinstance(field_map.get(customer, {}), dict) else {}
+    matching_field_names = [
+        name for name in customer_fields
+        if normalized_name_key(name) == normalized_name_key(farm_name)
+    ]
+    merged_fields = []
+    for name in matching_field_names:
+        for field_name in customer_fields.get(name, []) if isinstance(customer_fields.get(name), list) else []:
+            if normalized_name_key(field_name) not in [normalized_name_key(item) for item in merged_fields]:
+                merged_fields.append(field_name)
+    for row in jobs:
+        if isinstance(row, dict) and normalized_name_key(row.get("customer")) == normalized_name_key(customer) and normalized_name_key(row.get("farm_name")) == normalized_name_key(farm_name):
+            field_name = clean_name(row.get("field_name"))
+            if field_name and normalized_name_key(field_name) not in [normalized_name_key(item) for item in merged_fields]:
+                merged_fields.append(field_name)
+    merged_fields.sort(key=lambda item: item.lower())
+    for name in matching_field_names:
+        customer_fields.pop(name, None)
+    customer_fields[canonical_farm_name] = merged_fields
+    field_map[customer] = customer_fields
+    save_field_map(field_map)
+
+    updated_jobs = 0
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        if normalized_name_key(row.get("customer")) == normalized_name_key(customer) and normalized_name_key(row.get("farm_name")) == normalized_name_key(farm_name):
+            row["farm_name"] = canonical_farm_name
+            apply_customer_master_snapshot(row, master_rows, customer, canonical_farm_name)
+            updated_jobs += 1
+    if updated_jobs:
+        save_jobs(jobs)
+
+    updated_invoices = 0
+    for row in invoice_ledger:
+        if isinstance(row, dict) and normalized_name_key(row.get("customer")) == normalized_name_key(customer) and normalized_name_key(row.get("farm_name")) == normalized_name_key(farm_name):
+            row["farm_name"] = canonical_farm_name
+            updated_invoices += 1
+    if updated_invoices:
+        save_invoice_ledger(invoice_ledger)
+
+    updated_master = 0
+    for record in master_rows:
+        if normalized_name_key(record.get("customer_name")) != normalized_name_key(customer):
+            continue
+        if normalized_name_key(record.get("farm_name")) != normalized_name_key(farm_name):
+            continue
+        record["farm_name"] = canonical_farm_name
+        ok, _ = save_customer_master_customer_details(
+            customer,
+            record.get("email", ""),
+            record.get("rate_per_ton", ""),
+            row_number=record.get("_row_number"),
+            field_values=record,
+        )
+        if ok:
+            updated_master += 1
+
+    sync_farms_store(master_rows, jobs, field_map)
+    return redirect(
+        url_for(
+            "admin_home",
+            ok=1,
+            msg="Consolidated farm name to %s: %s jobs, %s invoice records, %s spreadsheet rows." % (
+                canonical_farm_name,
                 updated_jobs,
                 updated_invoices,
                 updated_master,
