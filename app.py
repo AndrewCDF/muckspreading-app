@@ -19,6 +19,7 @@ import zlib
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from xml.sax.saxutils import escape as xml_escape
+from email.utils import parseaddr
 
 
 app = Flask(__name__)
@@ -7488,6 +7489,16 @@ def normalize_email_list(values):
     return unique
 
 
+def first_valid_email(values):
+    for email in normalize_email_list(values):
+        parsed_name, parsed_address = parseaddr(email)
+        if parsed_address == email and "@" in email:
+            local_part, domain = email.rsplit("@", 1)
+            if local_part.strip() and domain.strip():
+                return email
+    return ""
+
+
 def build_invoice_email_message(to_email, from_email, subject_value, body_value, attachments):
     msg = EmailMessage()
     msg["Subject"] = subject_value
@@ -7978,10 +7989,10 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         if rate <= 0:
             return {"error": "Rate per ton is missing for one or more uninvoiced jobs in this scope."}
 
-        if not customer_email:
-            customer_email = str(job.get("customer_email", "") or "").strip()
         if not customer_email and isinstance(job_master_record, dict):
-            customer_email = str(job_master_record.get("email", "") or "").strip()
+            customer_email = first_valid_email([job_master_record.get("email", "")])
+        if not customer_email:
+            customer_email = first_valid_email([job.get("customer_email", "")])
         if not customer_address_line_1:
             customer_address_line_1 = clean_name(job.get("customer_address_line_1"))
         if not customer_address_line_1 and isinstance(job_master_record, dict):
@@ -8023,7 +8034,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     if not customer_email:
         master_record = scope_master_record
         if isinstance(master_record, dict):
-            customer_email = str(master_record.get("email", "") or "").strip()
+            customer_email = first_valid_email([master_record.get("email", "")])
             customer_address_line_1 = customer_address_line_1 or clean_name(master_record.get("address_line_1"))
             customer_address_line_2 = customer_address_line_2 or clean_name(master_record.get("address_line_2"))
             customer_town = customer_town or clean_name(master_record.get("town"))
