@@ -5981,10 +5981,42 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
     page_setup.attrib["orientation"] = "portrait"
     page_setup.attrib["fitToWidth"] = "1"
     page_setup.attrib["fitToHeight"] = "0"
+    page_setup.attrib.pop("scale", None)
     page_setup.attrib["usePrinterDefaults"] = "0"
 
     ET.register_namespace("", namespace)
     entries[sheet_path] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    workbook_path = "xl/workbook.xml"
+    workbook_bytes = entries.get(workbook_path)
+    if workbook_bytes:
+        try:
+            workbook_root = ET.fromstring(workbook_bytes)
+            sheets_node = first_child_by_local_name(workbook_root, "sheets")
+            sheet_nodes = children_by_local_name(sheets_node, "sheet") if sheets_node is not None else []
+            first_sheet = sheet_nodes[0] if sheet_nodes else None
+            sheet_name = first_sheet.attrib.get("name", "Invoice") if first_sheet is not None else "Invoice"
+            max_row = 1
+            dimension = first_child_by_local_name(root, "dimension")
+            if dimension is not None:
+                dimension_ref = dimension.attrib.get("ref", "")
+                max_ref = dimension_ref.split(":", 1)[-1]
+                row_match = re.search(r"(\d+)$", max_ref)
+                if row_match:
+                    max_row = max(1, int(row_match.group(1)))
+            defined_names = first_child_by_local_name(workbook_root, "definedNames")
+            if defined_names is not None:
+                print_area = None
+                for defined_name in children_by_local_name(defined_names, "definedName"):
+                    if defined_name.attrib.get("name") == "_xlnm.Print_Area":
+                        print_area = defined_name
+                        break
+                if print_area is not None:
+                    print_area.text = "%s!$A$1:$G$%s" % (sheet_name, max_row)
+            ET.register_namespace("", XLSX_NS)
+            entries[workbook_path] = ET.tostring(workbook_root, encoding="utf-8", xml_declaration=True)
+        except Exception:
+            pass
 
     output = io.BytesIO()
     try:
