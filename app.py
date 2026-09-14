@@ -7212,10 +7212,21 @@ def app_version_label():
 
 
 def restart_app_process(delay_seconds=1.5):
+    app_script = os.path.join(APP_ROOT, "app.py")
+
     def _restart():
         time.sleep(delay_seconds)
-        os.chdir(APP_ROOT)
-        os.execv(sys.executable, [sys.executable, os.path.join(APP_ROOT, "app.py")])
+        try:
+            subprocess.Popen(
+                [sys.executable, app_script],
+                cwd=APP_ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        finally:
+            os._exit(0)
 
     threading.Thread(target=_restart, daemon=True).start()
 
