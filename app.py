@@ -6469,7 +6469,7 @@ def fill_layout_invoice_template(invoice, template):
     set_template_cell_value(row(13), "A13", address_lines[4])
 
     invoice_date_serial = excel_date_serial(invoice.get("invoice_date"))
-    set_template_cell_value(row(10), "G10", invoice_date_serial if invoice_date_serial is not None else invoice.get("invoice_date_label", ""))
+    set_template_cell_value(row(10), "G10", invoice.get("invoice_date_label", ""))
     set_template_cell_value(row(11), "G11", invoice.get("invoice_number_label", ""))
     set_template_cell_value(row(12), "G12", invoice.get("payment_terms_days", "14"))
 
@@ -8170,7 +8170,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         line_rows.append({
             "job_id": int(job.get("id", 0) or 0),
             "job_date": str(job.get("job_date", "") or ""),
-            "job_date_label": format_job_date(job.get("job_date")),
+            "job_date_label": format_invoice_date(job.get("job_date")),
             "farm_name": clean_name(job.get("farm_name")),
             "field_name": clean_name(job.get("field_name")),
             "muck_type": clean_name(job.get("muck_type")),
@@ -8248,7 +8248,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         "invoice_number_label": format_invoice_number(invoice_number),
         "payment_terms_days": payment_terms_value,
         "invoice_date": invoice_date_text,
-        "invoice_date_label": format_job_date(invoice_date_text),
+        "invoice_date_label": format_invoice_date(invoice_date_text),
         "job_date_from": job_date_from_text,
         "job_date_from_label": format_job_date(job_date_from_text) if job_date_from_text else "",
         "customer": customer_name,
@@ -8266,9 +8266,9 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         "postcode_override": postcode_override,
         "start_date": start_date,
         "end_date": end_date,
-        "start_date_label": format_job_date(start_date),
-        "end_date_label": format_job_date(end_date),
-        "last_invoiced_end_date_label": format_job_date(last_invoice.get("end_date")) if isinstance(last_invoice, dict) and last_invoice.get("end_date") else "First invoice for this scope",
+        "start_date_label": format_invoice_date(start_date),
+        "end_date_label": format_invoice_date(end_date),
+        "last_invoiced_end_date_label": format_invoice_date(last_invoice.get("end_date")) if isinstance(last_invoice, dict) and last_invoice.get("end_date") else "First invoice for this scope",
         "line_rows": line_rows,
         "job_ids": [row["job_id"] for row in line_rows if row.get("job_id")],
         "job_count": len([row for row in line_rows if not row.get("is_extra_line")]),
@@ -8295,6 +8295,13 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
 def format_job_date(value):
     try:
         return datetime.strptime(str(value), "%Y-%m-%d").strftime("%d %b %Y")
+    except Exception:
+        return str(value or "--")
+
+
+def format_invoice_date(value):
+    try:
+        return datetime.strptime(str(value or ""), "%Y-%m-%d").strftime("%d/%m/%Y")
     except Exception:
         return str(value or "--")
 
