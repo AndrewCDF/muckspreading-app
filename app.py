@@ -3218,6 +3218,37 @@ SETTINGS_HTML = """
       <p class="copy">Change the default invoice wording and payment terms used when you open the invoice page.</p>
       <form method="post" action="{{ url_for('settings_save') }}">
         <div class="form-grid">
+                    <div class="field full">
+                        <h2>Email Sending Account</h2>
+                        <div class="hint">These settings control the SMTP account used for invoice and summary emails. Leave the password blank to keep the current password.</div>
+                    </div>
+                    <div class="field">
+                        <label for="settings_smtp_host">SMTP Host</label>
+                        <input id="settings_smtp_host" name="smtp_host" type="text" value="{{ email_config.smtp_host }}">
+                    </div>
+                    <div class="field">
+                        <label for="settings_smtp_port">SMTP Port</label>
+                        <input id="settings_smtp_port" name="smtp_port" type="number" min="1" max="65535" value="{{ email_config.smtp_port }}">
+                    </div>
+                    <div class="field">
+                        <label for="settings_smtp_username">SMTP Username</label>
+                        <input id="settings_smtp_username" name="smtp_username" type="email" value="{{ email_config.smtp_username }}">
+                    </div>
+                    <div class="field">
+                        <label for="settings_smtp_password">SMTP Password</label>
+                        <input id="settings_smtp_password" name="smtp_password" type="password" placeholder="Leave blank to keep current password" autocomplete="new-password">
+                    </div>
+                    <div class="field">
+                        <label for="settings_smtp_from_email">SMTP Account From</label>
+                        <input id="settings_smtp_from_email" name="smtp_from_email" type="email" value="{{ email_config.from_email }}">
+                    </div>
+                    <div class="field">
+                        <label for="settings_smtp_use_tls">Use TLS</label>
+                        <select id="settings_smtp_use_tls" name="smtp_use_tls">
+                            <option value="1" {% if email_config.use_tls %}selected{% endif %}>Yes</option>
+                            <option value="0" {% if not email_config.use_tls %}selected{% endif %}>No</option>
+                        </select>
+                    </div>
           <div class="field">
             <label for="settings_invoice_from_email">Invoice From Email</label>
             <input id="settings_invoice_from_email" name="invoice_from_email" type="email" value="{{ settings.invoice_from_email }}">
@@ -4217,6 +4248,52 @@ def load_email_settings_csv():
             parsed.setdefault("to_emails", []).append(email)
 
     return parsed
+
+
+def update_email_settings_csv(values):
+    if not os.path.exists(EMAIL_SETTINGS_CSV_PATH):
+        return False
+    try:
+        with open(EMAIL_SETTINGS_CSV_PATH, "r", newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = list(reader.fieldnames or [])
+            rows = [dict(row) for row in reader]
+    except Exception:
+        return False
+    if not fieldnames:
+        return False
+
+    settings_row = None
+    for row in rows:
+        record_type = str(row.get("record_type", "") or "").strip().lower()
+        if record_type != "recipient":
+            settings_row = row
+            break
+    if settings_row is None:
+        return False
+
+    for key in ["smtp_host", "smtp_port", "smtp_username", "from_email", "use_tls"]:
+        settings_row[key] = str(values.get(key, "") or "")
+    new_password = str(values.get("smtp_password", "") or "")
+    if new_password:
+        settings_row["smtp_password"] = new_password
+
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir=APP_ROOT, mode="w", newline="", encoding="utf-8") as handle:
+            temp_path = handle.name
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(temp_path, EMAIL_SETTINGS_CSV_PATH)
+        return True
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        return False
 
 
 def load_email_recipient_options():
@@ -8707,6 +8784,7 @@ def settings_home():
     return render_template_string(
         SETTINGS_HTML,
         settings=load_app_settings(),
+        email_config=load_email_config(),
         invoice_payment_terms_options=INVOICE_PAYMENT_TERMS_OPTIONS,
         status_msg=str(request.args.get("msg", "") or "").strip(),
         status_ok=str(request.args.get("ok", "1")) == "1",
@@ -8716,6 +8794,12 @@ def settings_home():
 @app.route("/settings/save", methods=["POST"])
 def settings_save():
     ensure_data_dir()
+    smtp_host = str(request.form.get("smtp_host", "") or "").strip()
+    smtp_port = str(request.form.get("smtp_port", "") or "").strip()
+    smtp_username = str(request.form.get("smtp_username", "") or "").strip()
+    smtp_password = str(request.form.get("smtp_password", "") or "")
+    smtp_from_email = str(request.form.get("smtp_from_email", "") or "").strip()
+    smtp_use_tls = "1" if request.form.get("smtp_use_tls") == "1" else "0"
     invoice_from_email_value = str(request.form.get("invoice_from_email", "") or "").strip()
     invoice_subject_template = str(request.form.get("invoice_subject_template", "") or "").strip()
     invoice_customer_message_template = str(request.form.get("invoice_customer_message_template", "") or "").strip()
@@ -8732,6 +8816,11 @@ def settings_save():
         return redirect(url_for("settings_home", ok=0, msg="Accounts message template is required"))
     if invoice_default_payment_terms_days not in INVOICE_PAYMENT_TERMS_OPTIONS:
         return redirect(url_for("settings_home", ok=0, msg="Default payment terms are invalid"))
+    try:
+        if not smtp_host or not smtp_username or not smtp_from_email or not (1 <= int(smtp_port) <= 65535):
+            raise ValueError
+    except ValueError:
+        return redirect(url_for("settings_home", ok=0, msg="SMTP host, port, username, and from email are required"))
 
     save_app_settings({
         "invoice_from_email": invoice_from_email_value,
@@ -8740,6 +8829,15 @@ def settings_save():
         "invoice_accounts_message_template": invoice_accounts_message_template,
         "invoice_default_payment_terms_days": invoice_default_payment_terms_days,
     })
+    if not update_email_settings_csv({
+        "smtp_host": smtp_host,
+        "smtp_port": smtp_port,
+        "smtp_username": smtp_username,
+        "smtp_password": smtp_password,
+        "from_email": smtp_from_email,
+        "use_tls": smtp_use_tls,
+    }):
+        return redirect(url_for("settings_home", ok=0, msg="Could not save email sending settings"))
     return redirect(url_for("settings_home", ok=1, msg="Settings saved"))
 
 
