@@ -5961,9 +5961,8 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
     page_setup_pr = first_child_by_local_name(sheet_pr, "pageSetUpPr")
     if page_setup_pr is None:
         page_setup_pr = ET.SubElement(sheet_pr, "{%s}pageSetUpPr" % namespace)
-    # Allow the export to flow across multiple pages when there are many jobs.
-    page_setup_pr.attrib["fitToPage"] = "0"
-    page_setup_pr.attrib["autoPageBreaks"] = "1"
+    page_setup_pr.attrib["fitToPage"] = "1"
+    page_setup_pr.attrib["autoPageBreaks"] = "0"
 
     print_options = ensure_root_child("printOptions", insert_before=["pageMargins", "pageSetup", "headerFooter", "drawing"])
     print_options.attrib["horizontalCentered"] = "1"
@@ -5980,7 +5979,7 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
     page_setup = ensure_root_child("pageSetup", insert_before=["headerFooter", "drawing"])
     page_setup.attrib["paperSize"] = "9"
     page_setup.attrib["orientation"] = "portrait"
-    page_setup.attrib["fitToWidth"] = "0"
+    page_setup.attrib["fitToWidth"] = "1"
     page_setup.attrib["fitToHeight"] = "0"
     page_setup.attrib["usePrinterDefaults"] = "0"
 
@@ -6354,8 +6353,69 @@ def fill_layout_invoice_template(invoice, template):
     detail_rows = invoice.get("line_rows", []) or []
     detail_start_row = 18
     detail_end_row = 41
+
+    def shift_row_reference(value, offset):
+        match = re.match(r"^([A-Z]+)(\d+)$", str(value or ""))
+        if not match:
+            return value
+        return "%s%s" % (match.group(1), int(match.group(2)) + offset)
+
+    def shift_row_element(row_element, offset):
+        row_element.attrib["r"] = str(int(row_element.attrib.get("r", "0")) + offset)
+        for cell in row_element.findall("{%s}c" % XLSX_NS):
+            cell_ref = cell.attrib.get("r")
+            if cell_ref:
+                cell.attrib["r"] = shift_row_reference(cell_ref, offset)
+
     available_detail_rows = max(0, (detail_end_row - detail_start_row) + 1)
-    detail_rows = detail_rows[:available_detail_rows]
+    extra_detail_rows = max(0, len(detail_rows) - available_detail_rows)
+    if extra_detail_rows:
+        for existing_row in list(sheet_data.findall("{%s}row" % XLSX_NS)):
+            try:
+                existing_row_number = int(existing_row.attrib.get("r", "0") or "0")
+            except Exception:
+                continue
+            if existing_row_number >= detail_end_row + 1:
+                shift_row_element(existing_row, extra_detail_rows)
+
+        template_row = rows_by_number[detail_end_row]
+        for offset in range(1, extra_detail_rows + 1):
+            new_row = ET.fromstring(ET.tostring(template_row, encoding="utf-8"))
+            new_row.attrib["r"] = str(detail_end_row + offset)
+            for cell in new_row.findall("{%s}c" % XLSX_NS):
+                cell_ref = cell.attrib.get("r")
+                if cell_ref:
+                    cell.attrib["r"] = shift_row_reference(cell_ref, offset)
+            sheet_data.insert(list(sheet_data).index(template_row) + offset, new_row)
+
+        merge_cells = first_child_by_local_name(root, "mergeCells")
+        if merge_cells is not None:
+            for merge_cell in children_by_local_name(merge_cells, "mergeCell"):
+                ref = merge_cell.attrib.get("ref", "")
+                parts = ref.split(":")
+                try:
+                    first_row = int(re.search(r"\d+$", parts[0]).group(0))
+                except (AttributeError, ValueError):
+                    continue
+                if first_row >= detail_end_row + 1:
+                    merge_cell.attrib["ref"] = ":".join(
+                        shift_row_reference(part, extra_detail_rows) for part in parts
+                    )
+            for row_number in range(detail_end_row + 1, detail_end_row + extra_detail_rows + 1):
+                ET.SubElement(merge_cells, "{%s}mergeCell" % XLSX_NS, {"ref": "A%s:D%s" % (row_number, row_number)})
+
+        dimension = first_child_by_local_name(root, "dimension")
+        if dimension is not None and ":" in dimension.attrib.get("ref", ""):
+            start_ref, end_ref = dimension.attrib["ref"].split(":", 1)
+            dimension.attrib["ref"] = "%s:%s" % (start_ref, shift_row_reference(end_ref, extra_detail_rows))
+
+        rows_by_number = {}
+        for existing_row in sheet_data.findall("{%s}row" % XLSX_NS):
+            try:
+                rows_by_number[int(existing_row.attrib.get("r", "0") or "0")] = existing_row
+            except Exception:
+                continue
+        detail_end_row += extra_detail_rows
 
     current_row_number = detail_start_row
     for detail in detail_rows:
@@ -6383,13 +6443,14 @@ def fill_layout_invoice_template(invoice, template):
         sort_template_row_cells(detail_row)
         current_row_number += 1
 
-    set_template_cell_value(row(42), "F42", invoice.get("total_tons", ""))
-    set_template_cell_value(row(43), "G43", format_money(invoice.get("subtotal", "")))
-    set_template_cell_value(row(44), "F44", "VAT 20%")
-    set_template_cell_value(row(44), "G44", format_money(invoice.get("vat_total", "")))
-    set_template_cell_value(row(45), "G45", format_money(invoice.get("grand_total", "")))
+    totals_start_row = detail_end_row + 1
+    set_template_cell_value(row(totals_start_row), "F%s" % totals_start_row, invoice.get("total_tons", ""))
+    set_template_cell_value(row(totals_start_row + 1), "G%s" % (totals_start_row + 1), format_money(invoice.get("subtotal", "")))
+    set_template_cell_value(row(totals_start_row + 2), "F%s" % (totals_start_row + 2), "VAT 20%")
+    set_template_cell_value(row(totals_start_row + 2), "G%s" % (totals_start_row + 2), format_money(invoice.get("vat_total", "")))
+    set_template_cell_value(row(totals_start_row + 3), "G%s" % (totals_start_row + 3), format_money(invoice.get("grand_total", "")))
 
-    for target_row in [9, 10, 11, 12, 13, 17, 42, 43, 44, 45]:
+    for target_row in [9, 10, 11, 12, 13, 17, totals_start_row, totals_start_row + 1, totals_start_row + 2, totals_start_row + 3]:
         sort_template_row_cells(row(target_row))
 
     ET.register_namespace("", XLSX_NS)
