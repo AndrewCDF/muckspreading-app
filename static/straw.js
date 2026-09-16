@@ -1,6 +1,9 @@
 const STORAGE_KEY = 'straw-bale-recorder-v1';
 const state = { fields: [], stocktakes: [], loads: [], stockMovements: [], customers: [] };
 let map = null;
+let markerLayer = null;
+let mapOpened = false;
+let pendingFieldLocation = null;
 let serverStateAvailable = false;
 
 const els = {};
@@ -17,7 +20,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 function collectElements() {
   [
     'seasonYear', 'seasonTotal', 'cropTotals', 'customerTotals', 'dailyFieldsTotal', 'dailyBalesTotal', 'dailyMoistureAverage',
-    'recentFields', 'fieldList', 'estimatedStock', 'latestStocktakeTotal', 'removedSinceStocktake',
+    'recentFields', 'fieldList', 'estimatedStock', 'latestStocktakeTotal', 'removedSinceStocktake', 'mapFallback',
     'boughtInSinceStocktake', 'pendingLoads', 'fieldSearch', 'addFieldButtonFields', 'fieldDialog',
     'fieldForm', 'fieldDialogTitle', 'closeFieldDialogButton', 'fieldId', 'fieldCustomer', 'fieldFarm',
     'fieldName', 'fieldHectares', 'fieldBales', 'fieldMoisture', 'fieldCrop', 'fieldPhoto', 'photoPreview',
@@ -40,6 +43,7 @@ function bindEvents() {
   els.partCompleteButton.addEventListener('click', () => saveFieldWithStatus('part-complete'));
   els.completeFieldButton.addEventListener('click', () => saveFieldWithStatus('complete'));
   els.fieldPhoto.addEventListener('change', handlePhotoSelection);
+  els.fieldDialog.addEventListener('close', () => { pendingFieldLocation = null; });
   els.addDeliveryButton.addEventListener('click', () => openDeliveryDialog());
   els.deliveryForm.addEventListener('submit', saveDeliveryFromForm);
   els.closeDeliveryDialogButton.addEventListener('click', () => els.deliveryDialog.close());
@@ -48,6 +52,14 @@ function bindEvents() {
 function showView(viewName) {
   document.querySelectorAll('.view').forEach((view) => view.classList.toggle('active', view.id === `${viewName}View`));
   document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.nav === viewName));
+  if (viewName === 'map' && map) {
+    setTimeout(() => {
+      map.invalidateSize();
+      renderMapMarkers();
+      if (!mapOpened) fitMapToFields();
+      mapOpened = true;
+    }, 80);
+  }
 }
 
 function loadLocalState() {
@@ -126,6 +138,7 @@ function render() {
   renderDeliveries();
   renderStock();
   renderStrawCustomers();
+  renderMapMarkers();
 }
 
 function escapeHtml(value) {
@@ -336,13 +349,16 @@ function openFieldDialog(fieldId = null) {
 }
 
 function closeFieldDialog() {
+  pendingFieldLocation = null;
   els.fieldDialog.close();
 }
 
 function saveFieldFromForm(event) {
   event.preventDefault();
   const id = els.fieldId.value || crypto.randomUUID();
+  const existing = state.fields.find((item) => item.id === id);
   const payload = {
+    ...(existing || {}),
     id,
     customer: els.fieldCustomer.value.trim(),
     farm: els.fieldFarm.value.trim(),
@@ -352,7 +368,9 @@ function saveFieldFromForm(event) {
     moisture: Number(els.fieldMoisture.value || 0),
     crop: els.fieldCrop.value,
     photo: els.photoPreview.src || '',
-    status: 'active',
+    status: existing ? existing.status || 'active' : 'active',
+    lat: existing && existing.lat !== undefined ? existing.lat : pendingFieldLocation?.lat,
+    lng: existing && existing.lng !== undefined ? existing.lng : pendingFieldLocation?.lng,
     updatedAt: new Date().toISOString()
   };
   const existingIndex = state.fields.findIndex((item) => item.id === id);
@@ -365,7 +383,9 @@ function saveFieldFromForm(event) {
 
 function saveFieldWithStatus(status) {
   const id = els.fieldId.value || crypto.randomUUID();
+  const existing = state.fields.find((item) => item.id === id);
   const payload = {
+    ...(existing || {}),
     id,
     customer: els.fieldCustomer.value.trim(),
     farm: els.fieldFarm.value.trim(),
@@ -376,6 +396,8 @@ function saveFieldWithStatus(status) {
     crop: els.fieldCrop.value,
     photo: els.photoPreview.src || '',
     status,
+    lat: existing && existing.lat !== undefined ? existing.lat : pendingFieldLocation?.lat,
+    lng: existing && existing.lng !== undefined ? existing.lng : pendingFieldLocation?.lng,
     updatedAt: new Date().toISOString()
   };
   const existingIndex = state.fields.findIndex((item) => item.id === id);
@@ -407,11 +429,74 @@ function handlePhotoSelection(event) {
 }
 
 function initMap() {
-  if (!window.L) return;
-  map = L.map('map', { zoomControl: true });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  if (!window.L) {
+    els.mapFallback.classList.add('active');
+    return;
+  }
+  map = L.map('map', { zoomControl: true }).setView([52.569259, 1.406654], 11);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors'
+    attribution: 'Tiles &copy; Esri'
   }).addTo(map);
-  map.setView([52.569259, 1.406654], 9);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Labels &copy; Esri'
+  }).addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+  map.on('click', (event) => {
+    pendingFieldLocation = {
+      lat: Math.round(event.latlng.lat * 1000000) / 1000000,
+      lng: Math.round(event.latlng.lng * 1000000) / 1000000
+    };
+    openFieldDialog();
+  });
+  renderMapMarkers();
+}
+
+function fieldHasLocation(field) {
+  return field && Number.isFinite(Number(field.lat)) && Number.isFinite(Number(field.lng));
+}
+
+function fieldPinColour(field) {
+  if (field.status === 'complete' || field.completed === true) return '#2f8f46';
+  if (field.status === 'part-complete' || field.status === 'in-progress') return '#d99a2b';
+  return '#c64232';
+}
+
+function fieldCropCode(crop) {
+  return { Wheat: 'W', Barley: 'B', 'Spring Barley': 'SB', Oats: 'O', Hay: 'H' }[crop] || 'Oth';
+}
+
+function makeFieldIcon(field) {
+  const bales = Math.round(Number(field.bales || 0));
+  const baleLabel = bales >= 10000 ? `${Math.round(bales / 1000)}k` : String(bales);
+  return L.divIcon({
+    className: 'crop-marker',
+    html: `<span style="background:${fieldPinColour(field)}"><b>${escapeHtml(`${baleLabel}-${fieldCropCode(field.crop)}`)}</b></span>`,
+    iconSize: [44, 44],
+    iconAnchor: [22, 44],
+    popupAnchor: [0, -42]
+  });
+}
+
+function renderMapMarkers() {
+  if (!markerLayer) return;
+  markerLayer.clearLayers();
+  state.fields.filter(fieldHasLocation).forEach((field) => {
+    const marker = L.marker([Number(field.lat), Number(field.lng)], { icon: makeFieldIcon(field) }).addTo(markerLayer);
+    marker.bindPopup(`<strong>${escapeHtml(field.name || 'Unnamed field')}</strong><br>${escapeHtml(field.customer || 'No customer')} · ${escapeHtml(field.farm || 'No farm')}<br>${escapeHtml(field.crop || 'Other')} · ${Number(field.bales || 0)} bales<br><button class="map-edit-field" type="button">Edit field</button>`);
+    marker.on('popupopen', () => {
+      marker.getPopup().getElement()?.querySelector('.map-edit-field')?.addEventListener('click', () => openFieldDialog(field.id));
+    });
+  });
+}
+
+function fitMapToFields() {
+  if (!map) return;
+  const locations = state.fields.filter(fieldHasLocation).map((field) => [Number(field.lat), Number(field.lng)]);
+  if (locations.length) {
+    map.fitBounds(L.latLngBounds(locations), { padding: [36, 36], maxZoom: 15 });
+  } else {
+    map.setView([52.569259, 1.406654], 11);
+  }
 }
