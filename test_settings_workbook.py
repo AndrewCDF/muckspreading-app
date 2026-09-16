@@ -108,6 +108,15 @@ class SettingsWorkbookTests(unittest.TestCase):
         self.assertEqual(app.load_field_map(), {"New Customer": {"Second Farm": ["West Field"]}})
         self.assertEqual(self.book.rows("Staff"), staff)
 
+    def test_update_app_control_is_on_settings_page(self):
+        self.assertNotIn(">Update App<", app.HTML)
+        with patch.object(app, "app_version_label", return_value="abc123"):
+            with app.app.test_client() as client:
+                html = client.get("/settings").get_data(as_text=True)
+        self.assertIn('action="/app/update"', html)
+        self.assertIn(">Update App<", html)
+        self.assertIn("Current version: abc123", html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1661,16 +1661,12 @@ HTML = """
 
       <div class="card">
         <h2 class="panel-title">Tools</h2>
-        <p class="copy">Use these for admin, backups, and updates.</p>
+        <p class="copy">Use these for admin and backups.</p>
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
           <a class="button button-secondary button-full" href="{{ url_for('settings_home') }}">Open Settings</a>
           <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
-          <form method="post" action="{{ url_for('update_app') }}" class="button-full" id="update_app_form">
-            <button class="button button-secondary button-full" type="submit">Update App</button>
-          </form>
         </div>
-        <div class="hint hint-centered">Current version: {{ app_version }}</div>
       </div>
     </section>
 
@@ -2993,7 +2989,7 @@ INVOICE_HISTORY_HTML = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#334d38">
-  <title>Invoice History</title>
+<title>Invoice History</title>
   <style>
     @import url('/static/af_brand.css');
     .page {
@@ -3180,7 +3176,7 @@ SETTINGS_HTML = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#334d38">
-  <title>Settings</title>
+<title>Settings</title>
   <style>
     @import url('/static/af_brand.css');
     :root {
@@ -3220,6 +3216,9 @@ SETTINGS_HTML = """
       border-radius: 24px;
       box-shadow: var(--shadow);
       padding: 24px;
+    }
+    .card + .card {
+      margin-top: 18px;
     }
     .button {
       min-height: 48px;
@@ -3405,6 +3404,15 @@ SETTINGS_HTML = """
           <button class="button button-primary" type="submit">Save Settings</button>
         </div>
       </form>
+    </div>
+
+    <div class="card">
+      <h2>App Update</h2>
+      <p class="copy">Install the latest version of the app from GitHub.</p>
+      <form method="post" action="{{ url_for('update_app') }}" id="update_app_form">
+        <button class="button button-primary" type="submit">Update App</button>
+      </form>
+      <div class="hint">Current version: {{ app_version }}</div>
     </div>
   </div>
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
@@ -10097,6 +10105,7 @@ def settings_home():
         settings=load_app_settings(),
         email_config=load_email_config(),
         invoice_payment_terms_options=INVOICE_PAYMENT_TERMS_OPTIONS,
+        app_version=app_version_label(),
         status_msg=str(request.args.get("msg", "") or "").strip(),
         status_ok=str(request.args.get("ok", "1")) == "1",
     )
