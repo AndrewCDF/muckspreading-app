@@ -44,6 +44,8 @@ class InvoiceHistoryTests(unittest.TestCase):
         self.assertIn("Save PDF", html)
         self.assertIn("Save Excel", html)
         self.assertIn("/invoice/history/0/download.pdf", html)
+        self.assertIn('data-invoice-download="1"', html)
+        self.assertIn("navigator.share", html)
         self.assertIn("Previous Invoices", app.HTML)
 
     def test_missing_history_files_are_rebuilt_and_archived(self):

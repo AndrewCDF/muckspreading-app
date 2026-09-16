@@ -3094,6 +3094,21 @@ INVOICE_HISTORY_HTML = """
       color: var(--muted);
       text-align: center;
     }
+    .download-notice {
+      position: fixed;
+      left: 50%;
+      bottom: calc(82px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: min(92vw, 420px);
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(39, 45, 33, 0.94);
+      color: #f5efe2;
+      text-align: center;
+      box-shadow: 0 18px 44px rgba(60, 49, 25, 0.28);
+    }
+    .download-notice[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -3144,8 +3159,8 @@ INVOICE_HISTORY_HTML = """
                 <div class="actions-inline">
                   <a class="button button-small" href="{{ url_for('invoice_history_edit', ledger_index=row.ledger_index) }}">Edit / Re-send</a>
                   <a class="button button-small" href="{{ url_for('invoice_history_show_pdf', ledger_index=row.ledger_index) }}" target="_blank" rel="noopener">View PDF</a>
-                  <a class="button button-small" href="{{ url_for('invoice_history_download_pdf', ledger_index=row.ledger_index) }}">Save PDF</a>
-                  <a class="button button-small" href="{{ url_for('invoice_history_download_xlsx', ledger_index=row.ledger_index) }}">Save Excel</a>
+                  <a class="button button-small" data-invoice-download="1" data-fallback-name="invoice.pdf" href="{{ url_for('invoice_history_download_pdf', ledger_index=row.ledger_index) }}">Save PDF</a>
+                  <a class="button button-small" data-invoice-download="1" data-fallback-name="invoice.xlsx" href="{{ url_for('invoice_history_download_xlsx', ledger_index=row.ledger_index) }}">Save Excel</a>
                 </div>
                 {% else %}
                 --
@@ -3162,11 +3177,85 @@ INVOICE_HISTORY_HTML = """
     </div>
   </div>
 
+  <div id="download_notice" class="download-notice" hidden>Preparing file...</div>
+
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
     <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
     <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
     <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
   </nav>
+  <script>
+    const downloadNotice = document.getElementById("download_notice");
+    let downloadNoticeTimer = null;
+
+    function showDownloadNotice(message) {
+      downloadNotice.textContent = message;
+      downloadNotice.hidden = false;
+      if (downloadNoticeTimer) window.clearTimeout(downloadNoticeTimer);
+      downloadNoticeTimer = window.setTimeout(function () {
+        downloadNotice.hidden = true;
+      }, 3200);
+    }
+
+    function downloadFilename(response, fallbackName) {
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      return match && match[1] ? match[1].trim() : fallbackName;
+    }
+
+    async function openInvoiceDownload(link) {
+      const targetUrl = new URL(link.href, window.location.href);
+      targetUrl.searchParams.set("_dl", Date.now().toString());
+      showDownloadNotice("Preparing file...");
+      const response = await fetch(targetUrl.toString(), {credentials: "same-origin"});
+      const contentType = response.headers.get("Content-Type") || "";
+      if (!response.ok) throw new Error("Download failed");
+      if (response.redirected && contentType.includes("text/html")) {
+        window.location.href = response.url;
+        return;
+      }
+
+      const blob = await response.blob();
+      const filename = downloadFilename(response, link.dataset.fallbackName || "invoice");
+      if (navigator.share && window.File) {
+        try {
+          const file = new File([blob], filename, {type: blob.type || contentType || "application/octet-stream"});
+          if (!navigator.canShare || navigator.canShare({files: [file]})) {
+            showDownloadNotice("Choose Excel, Files or another app");
+            await navigator.share({files: [file], title: filename});
+            return;
+          }
+        } catch (error) {
+          if (error && error.name === "AbortError") {
+            showDownloadNotice("File closed");
+            return;
+          }
+        }
+      }
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      anchor.rel = "noopener";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
+      showDownloadNotice("File downloaded");
+    }
+
+    for (const link of document.querySelectorAll("[data-invoice-download]")) {
+      link.addEventListener("click", async function (event) {
+        event.preventDefault();
+        try {
+          await openInvoiceDownload(link);
+        } catch (error) {
+          showDownloadNotice("File could not be opened");
+        }
+      });
+    }
+  </script>
 </body>
 </html>
 """
