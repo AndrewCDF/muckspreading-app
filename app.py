@@ -6684,6 +6684,28 @@ def build_basic_xlsx_bytes(sheet_name, title, sheet_rows, column_widths=None):
     return output.getvalue()
 
 
+def strip_invoice_office_extension_metadata(root):
+    allowed_attribute_namespaces = {
+        XLSX_NS,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "http://www.w3.org/XML/1998/namespace",
+    }
+    removable_children = {"AlternateContent", "revisionPtr", "extLst"}
+    for element in root.iter():
+        for attribute_name in list(element.attrib):
+            if not str(attribute_name).startswith("{"):
+                continue
+            namespace = str(attribute_name)[1:].split("}", 1)[0]
+            if namespace not in allowed_attribute_namespaces:
+                element.attrib.pop(attribute_name, None)
+        for child in list(element):
+            local_name = str(child.tag).rsplit("}", 1)[-1]
+            child_namespace = str(child.tag)[1:].split("}", 1)[0] if str(child.tag).startswith("{") else ""
+            if local_name in removable_children or (child_namespace and child_namespace != XLSX_NS):
+                element.remove(child)
+    return root
+
+
 def enforce_invoice_single_page_print_settings(xlsx_bytes):
     if not xlsx_bytes:
         return xlsx_bytes
@@ -6779,7 +6801,9 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
     page_setup.attrib.pop("scale", None)
     page_setup.attrib["usePrinterDefaults"] = "0"
 
+    strip_invoice_office_extension_metadata(root)
     ET.register_namespace("", namespace)
+    ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
     entries[sheet_path] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
     workbook_path = "xl/workbook.xml"
@@ -6815,8 +6839,21 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
             external_references = first_child_by_local_name(workbook_root, "externalReferences")
             if external_references is not None:
                 workbook_root.remove(external_references)
+            strip_invoice_office_extension_metadata(workbook_root)
             ET.register_namespace("", XLSX_NS)
+            ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
             entries[workbook_path] = ET.tostring(workbook_root, encoding="utf-8", xml_declaration=True)
+        except Exception:
+            pass
+
+    styles_path = "xl/styles.xml"
+    styles_bytes = entries.get(styles_path)
+    if styles_bytes:
+        try:
+            styles_root = ET.fromstring(styles_bytes)
+            strip_invoice_office_extension_metadata(styles_root)
+            ET.register_namespace("", XLSX_NS)
+            entries[styles_path] = ET.tostring(styles_root, encoding="utf-8", xml_declaration=True)
         except Exception:
             pass
 
@@ -7468,9 +7505,7 @@ def build_invoice_layout_xlsx_bytes(invoice):
 
 
 def build_invoice_xlsx_bytes(invoice):
-    # Downloads use a clean workbook built from scratch. The branded source
-    # template contains legacy Office metadata that makes Excel request a repair.
-    return enforce_invoice_single_page_print_settings(build_plain_invoice_xlsx_bytes(invoice))
+    return build_invoice_layout_xlsx_bytes(invoice)
 
 
 def invoice_pdf_filename(invoice):
