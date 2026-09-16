@@ -4113,7 +4113,7 @@ def load_customer_master_rows():
             "customer_name": customer_name,
             "farm_name": farm_name,
             "muck_type": clean_name(row_dict.get("muck_type")),
-            "email": str(row_dict.get("email", "") or "").strip(),
+            "email": normalize_email_address(row_dict.get("email", "")),
             "address_line_1": clean_name(row_dict.get("address_line_1")),
             "address_line_2": clean_name(row_dict.get("address_line_2")),
             "town": clean_name(row_dict.get("town")),
@@ -4228,12 +4228,18 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
     customer_name = clean_name(customer_name)
     if not customer_name:
         return False, "Customer is required"
+    raw_email = str(customer_email or "").strip()
+    normalized_email = normalize_email_address(raw_email) if raw_email else ""
+    if raw_email and not normalized_email:
+        return False, "Customer email is not valid"
+    normalized_field_values = dict(field_values) if isinstance(field_values, dict) else field_values
+    if isinstance(normalized_field_values, dict) and "email" in normalized_field_values:
+        normalized_field_values["email"] = normalized_email
     if settings_workbook_exists():
-        return save_workbook_customer(customer_name, customer_email, rate_per_ton_text, row_number, field_values)
+        return save_workbook_customer(customer_name, normalized_email, rate_per_ton_text, row_number, normalized_field_values)
     if not os.path.exists(CUSTOMER_MASTER_XLSX_PATH):
         return False, "customer_master.xlsx could not be found"
 
-    normalized_email = str(customer_email or "").strip()
     normalized_rate = str(rate_per_ton_text or "").strip()
     if normalized_rate:
         try:
@@ -4317,8 +4323,8 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
         rate_cell = worksheet_find_or_create_cell(row_node, row_number_value, rate_col, sheet_namespace)
         worksheet_set_cell_inline_text(email_cell, normalized_email, sheet_namespace)
         worksheet_set_cell_number(rate_cell, normalized_rate, sheet_namespace)
-        if isinstance(field_values, dict):
-            for header, value in field_values.items():
+        if isinstance(normalized_field_values, dict):
+            for header, value in normalized_field_values.items():
                 col_index = headers.index(header) + 1 if header in headers else 0
                 if not col_index:
                     continue
@@ -8035,7 +8041,7 @@ def manual_mark_jobs_invoiced(customer_name, farm_name="", through_date="", note
 
 
 def send_invoice_email(invoice, config, accounts_emails, subject_text="", customer_message="", history_ledger_index=""):
-    customer_email = str(invoice.get("customer_email", "") or "").strip()
+    customer_email = first_valid_email([invoice.get("customer_email", "")])
     if not customer_email:
         raise RuntimeError("Customer email is missing for this invoice.")
 
@@ -8356,12 +8362,26 @@ def format_money(value):
         return str(value or "")
 
 
+def normalize_email_address(value):
+    text = str(value or "").strip().replace("\\@", "@").replace("＠", "@")
+    if text.lower().startswith("mailto:"):
+        text = text[7:].strip()
+    _, parsed_address = parseaddr(text)
+    candidate = str(parsed_address or text).strip()
+    if candidate.count("@") != 1 or "\\" in candidate or any(char.isspace() for char in candidate):
+        return ""
+    local_part, domain = candidate.rsplit("@", 1)
+    if not local_part or not domain or domain.startswith(".") or domain.endswith("."):
+        return ""
+    return candidate
+
+
 def normalize_email_list(values):
     unique = []
     seen = set()
     for value in values:
         for part in str(value or "").replace(";", ",").split(","):
-            email = part.strip()
+            email = normalize_email_address(part)
             if not email:
                 continue
             lowered = email.lower()
@@ -8374,11 +8394,7 @@ def normalize_email_list(values):
 
 def first_valid_email(values):
     for email in normalize_email_list(values):
-        parsed_name, parsed_address = parseaddr(email)
-        if parsed_address == email and "@" in email:
-            local_part, domain = email.rsplit("@", 1)
-            if local_part.strip() and domain.strip():
-                return email
+        return email
     return ""
 
 

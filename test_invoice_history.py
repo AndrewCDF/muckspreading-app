@@ -151,6 +151,13 @@ class InvoiceHistoryTests(unittest.TestCase):
                 app.resolve_invoice_number("5432")
             self.assertEqual(app.resolve_invoice_number("5432", existing_invoice_number=5432), 5432)
 
+    def test_escaped_email_address_is_cleaned_before_sending(self):
+        escaped = r"chris\@randrfarmswrentham.co.uk"
+        expected = "chris@randrfarmswrentham.co.uk"
+        self.assertEqual(app.normalize_email_address(escaped), expected)
+        self.assertEqual(app.normalize_email_list([escaped]), [expected])
+        self.assertEqual(app.first_valid_email([escaped]), expected)
+
 
 if __name__ == "__main__":
     unittest.main()
