@@ -21,13 +21,18 @@ function collectElements() {
   [
     'seasonYear', 'seasonTotal', 'cropTotals', 'customerTotals', 'dailyFieldsTotal', 'dailyBalesTotal', 'dailyMoistureAverage',
     'recentFields', 'fieldList', 'estimatedStock', 'latestStocktakeTotal', 'removedSinceStocktake', 'mapFallback',
-    'boughtInSinceStocktake', 'pendingLoads', 'fieldSearch', 'addFieldButtonFields', 'fieldDialog',
+    'boughtInSinceStocktake', 'pendingLoads', 'completedLoads', 'stocktakeHistory', 'stockMovementsList',
+    'fieldSearch', 'addFieldButtonFields', 'addStocktakeButton', 'addStockMovementButton', 'fieldDialog',
     'fieldForm', 'fieldDialogTitle', 'closeFieldDialogButton', 'fieldId', 'fieldCustomer', 'fieldFarm',
     'fieldName', 'fieldHectares', 'fieldBales', 'fieldMoisture', 'fieldCrop', 'fieldPhoto', 'photoPreview',
     'deleteFieldButton', 'partCompleteButton', 'completeFieldButton', 'addDeliveryButton', 'recentDeliveries',
     'deliveryDialog', 'deliveryForm', 'deliveryDialogTitle', 'closeDeliveryDialogButton', 'deliveryId',
     'deliveryCustomer', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight',
-    'deliveryStatus', 'saveDeliveryButton', 'straw-customers'
+    'deliveryStatus', 'saveDeliveryButton', 'stocktakeDialog', 'stocktakeForm', 'closeStocktakeButton',
+    'stocktakeDate', 'stocktakeBales', 'stocktakeNotes', 'stockMovementDialog', 'stockMovementForm',
+    'stockMovementDialogTitle', 'closeStockMovementButton', 'stockMovementId', 'stockMovementType',
+    'stockMovementDate', 'stockMovementCustomer', 'stockMovementBales', 'stockMovementNotes',
+    'deleteStockMovementButton', 'straw-customers'
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -47,6 +52,14 @@ function bindEvents() {
   els.addDeliveryButton.addEventListener('click', () => openDeliveryDialog());
   els.deliveryForm.addEventListener('submit', saveDeliveryFromForm);
   els.closeDeliveryDialogButton.addEventListener('click', () => els.deliveryDialog.close());
+  els.addStocktakeButton.addEventListener('click', openStocktakeDialog);
+  els.stocktakeForm.addEventListener('submit', saveStocktake);
+  els.closeStocktakeButton.addEventListener('click', () => els.stocktakeDialog.close());
+  els.addStockMovementButton.addEventListener('click', () => openStockMovementDialog());
+  els.stockMovementForm.addEventListener('submit', saveStockMovement);
+  els.closeStockMovementButton.addEventListener('click', () => els.stockMovementDialog.close());
+  els.stockMovementType.addEventListener('change', updateStockMovementDefaults);
+  els.deleteStockMovementButton.addEventListener('click', deleteCurrentStockMovement);
 }
 
 function showView(viewName) {
@@ -65,7 +78,15 @@ function showView(viewName) {
 function loadLocalState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved && Array.isArray(saved.fields)) return saved;
+    if (saved && typeof saved === 'object') {
+      return {
+        fields: Array.isArray(saved.fields) ? saved.fields : [],
+        stocktakes: Array.isArray(saved.stocktakes) ? saved.stocktakes : [],
+        loads: Array.isArray(saved.loads) ? saved.loads : [],
+        stockMovements: Array.isArray(saved.stockMovements) ? saved.stockMovements : [],
+        customers: Array.isArray(saved.customers) ? saved.customers : []
+      };
+    }
   } catch (error) {
     console.warn('Unable to load saved straw records', error);
   }
@@ -260,12 +281,131 @@ function renderFieldList() {
 }
 
 function renderStock() {
-  const total = state.fields.reduce((sum, field) => sum + Number(field.bales || 0), 0);
-  els.estimatedStock.textContent = String(total);
-  els.latestStocktakeTotal.textContent = String(state.stocktakes.reduce((sum, item) => sum + Number(item.bales || 0), 0));
-  els.removedSinceStocktake.textContent = String(state.loads.reduce((sum, load) => sum + Number(load.bale_total || 0), 0));
-  els.pendingLoads.innerHTML = state.loads.length ? deliveryCards(state.loads) : '<div class="field-card">No delivered loads recorded.</div>';
+  const latest = [...state.stocktakes].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0] || null;
+  const afterLatest = (value) => !latest || new Date(value) >= new Date(latest.date);
+  const loadsAfterCount = state.loads.filter((load) => afterLatest(`${load.delivery_date}T${load.delivery_time}`));
+  const movementsAfterCount = state.stockMovements.filter((movement) => afterLatest(movement.date));
+  const removedLoads = loadsAfterCount.reduce((sum, load) => sum + Number(load.bale_total || 0), 0);
+  const ducksAllocated = movementsAfterCount.filter((movement) => movement.type === 'ducks').reduce((sum, movement) => sum + Number(movement.bales || 0), 0);
+  const boughtIn = movementsAfterCount.filter((movement) => movement.type === 'bought-in').reduce((sum, movement) => sum + Number(movement.bales || 0), 0);
+  els.latestStocktakeTotal.textContent = latest ? String(Number(latest.bales || 0)) : 'No count';
+  els.removedSinceStocktake.textContent = String(removedLoads + ducksAllocated);
+  els.boughtInSinceStocktake.textContent = String(boughtIn);
+  els.estimatedStock.textContent = latest ? String(Number(latest.bales || 0) + boughtIn - removedLoads - ducksAllocated) : 'No count';
+
+  const pendingLoads = state.loads.filter((load) => !load.weight_total);
+  const completedLoads = state.loads.filter((load) => load.weight_total);
+  els.pendingLoads.innerHTML = pendingLoads.length ? deliveryCards(pendingLoads) : '<div class="empty-state">No pending loads out.</div>';
+  els.completedLoads.innerHTML = completedLoads.length ? deliveryCards(completedLoads) : '<div class="empty-state">No completed loads out.</div>';
   bindDeliveryEditButtons(els.pendingLoads);
+  bindDeliveryEditButtons(els.completedLoads);
+
+  const stocktakes = [...state.stocktakes].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  els.stocktakeHistory.innerHTML = stocktakes.length ? stocktakes.map((stocktake) => `
+    <div class="stock-card">
+      <span><strong>${escapeHtml(formatDateTime(stocktake.date))}</strong><span class="field-meta">${escapeHtml(stocktake.notes || 'Stocktake')}</span></span>
+      <span><span class="bale-count">${Number(stocktake.bales || 0)}</span><button class="text-button" type="button" data-delete-stocktake="${escapeHtml(stocktake.id)}">Delete</button></span>
+    </div>
+  `).join('') : '<div class="empty-state">No stocktakes yet.</div>';
+  els.stocktakeHistory.querySelectorAll('[data-delete-stocktake]').forEach((button) => {
+    button.addEventListener('click', () => deleteStocktake(button.dataset.deleteStocktake));
+  });
+
+  const movements = [...state.stockMovements].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  els.stockMovementsList.innerHTML = movements.length ? movements.map((movement) => `
+    <button class="stock-card" type="button" data-edit-stock-movement="${escapeHtml(movement.id)}">
+      <span><strong>${movement.type === 'bought-in' ? 'Bought in' : 'Ducks at home'} · ${escapeHtml(formatDateTime(movement.date))}</strong><span class="field-meta">${escapeHtml([movement.customer, movement.notes].filter(Boolean).join(' · ') || 'Stock movement')}</span></span>
+      <span class="bale-count">${movement.type === 'bought-in' ? '+' : '-'}${Number(movement.bales || 0)}</span>
+    </button>
+  `).join('') : '<div class="empty-state">No bought in or ducks records.</div>';
+  els.stockMovementsList.querySelectorAll('[data-edit-stock-movement]').forEach((button) => {
+    button.addEventListener('click', () => openStockMovementDialog(state.stockMovements.find((movement) => movement.id === button.dataset.editStockMovement)));
+  });
+}
+
+function dateTimeInputValue(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'No date' : date.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function makeRecordId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function openStocktakeDialog() {
+  els.stocktakeForm.reset();
+  els.stocktakeDate.value = dateTimeInputValue();
+  els.stocktakeDialog.showModal();
+}
+
+function saveStocktake(event) {
+  event.preventDefault();
+  if (!els.stocktakeForm.reportValidity()) return;
+  const now = new Date().toISOString();
+  state.stocktakes.push({ id: makeRecordId(), date: new Date(els.stocktakeDate.value).toISOString(), bales: Math.round(Number(els.stocktakeBales.value || 0)), notes: els.stocktakeNotes.value.trim(), createdAt: now, updatedAt: now });
+  saveState();
+  renderStock();
+  els.stocktakeDialog.close();
+}
+
+function deleteStocktake(id) {
+  if (!window.confirm('Delete this stocktake?')) return;
+  state.stocktakes = state.stocktakes.filter((stocktake) => stocktake.id !== id);
+  saveState();
+  renderStock();
+}
+
+function openStockMovementDialog(movement = null) {
+  els.stockMovementForm.reset();
+  els.stockMovementId.value = movement ? movement.id : '';
+  els.stockMovementType.value = movement ? movement.type : 'ducks';
+  els.stockMovementDate.value = dateTimeInputValue(movement ? movement.date : new Date());
+  els.stockMovementCustomer.value = movement ? movement.customer || '' : '';
+  els.stockMovementBales.value = movement ? movement.bales : '';
+  els.stockMovementNotes.value = movement ? movement.notes || '' : '';
+  els.stockMovementDialogTitle.textContent = movement ? 'Edit Stock Movement' : 'Stock Movement';
+  els.deleteStockMovementButton.hidden = !movement;
+  updateStockMovementDefaults();
+  els.stockMovementDialog.showModal();
+}
+
+function updateStockMovementDefaults() {
+  if (els.stockMovementType.value === 'ducks' && !els.stockMovementCustomer.value.trim()) els.stockMovementCustomer.value = 'Ducks at home';
+  if (els.stockMovementType.value === 'bought-in' && els.stockMovementCustomer.value.trim() === 'Ducks at home') els.stockMovementCustomer.value = '';
+}
+
+function saveStockMovement(event) {
+  event.preventDefault();
+  if (!els.stockMovementForm.reportValidity()) return;
+  const existing = state.stockMovements.find((movement) => movement.id === els.stockMovementId.value);
+  const now = new Date().toISOString();
+  const record = {
+    id: existing ? existing.id : makeRecordId(), type: els.stockMovementType.value,
+    date: new Date(els.stockMovementDate.value).toISOString(),
+    customer: els.stockMovementCustomer.value.trim() || (els.stockMovementType.value === 'ducks' ? 'Ducks at home' : ''),
+    bales: Math.round(Number(els.stockMovementBales.value || 0)), notes: els.stockMovementNotes.value.trim(),
+    createdAt: existing ? existing.createdAt : now, updatedAt: now
+  };
+  if (existing) Object.assign(existing, record); else state.stockMovements.push(record);
+  if (record.type === 'bought-in') rememberStrawCustomer(record.customer);
+  saveState();
+  renderStock();
+  els.stockMovementDialog.close();
+}
+
+function deleteCurrentStockMovement() {
+  const id = els.stockMovementId.value;
+  if (!id || !window.confirm('Delete this stock movement?')) return;
+  state.stockMovements = state.stockMovements.filter((movement) => movement.id !== id);
+  saveState();
+  renderStock();
+  els.stockMovementDialog.close();
 }
 
 function localDateTimeValue(date = new Date()) {

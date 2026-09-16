@@ -74,6 +74,8 @@ class StrawDeliveryTests(unittest.TestCase):
         self.assertNotIn(b'id="settings-customers"', page.data)
         self.assertNotIn(b'id="delivery-customers"', page.data)
         self.assertNotIn(b'Add load removed', page.data)
+        for element_id in (b'addStocktakeButton', b'stocktakeDialog', b'stocktakeHistory', b'completedLoads', b'addStockMovementButton', b'stockMovementsList'):
+            self.assertIn(b'id="' + element_id + b'"', page.data)
 
     def test_straw_customer_list_starts_separate_and_remembers_names(self):
         self.assertEqual(self.client.get("/api/straw/customers").get_json()["customers"], [])
