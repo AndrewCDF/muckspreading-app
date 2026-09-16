@@ -6695,15 +6695,19 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
         return xlsx_bytes
 
     # The invoice sheet is rebuilt from scratch, so the template's cached
-    # calculation chain no longer matches the generated cells.
+    # calculation chain and links to the old invoice workbook are not needed.
     entries.pop("xl/calcChain.xml", None)
+    for entry_name in list(entries):
+        if entry_name.startswith("xl/externalLinks/"):
+            entries.pop(entry_name, None)
     workbook_rels_path = "xl/_rels/workbook.xml.rels"
     workbook_rels_bytes = entries.get(workbook_rels_path)
     if workbook_rels_bytes:
         try:
             rels_root = ET.fromstring(workbook_rels_bytes)
             for relationship in list(rels_root):
-                if str(relationship.attrib.get("Type", "")).endswith("/calcChain"):
+                relationship_type = str(relationship.attrib.get("Type", ""))
+                if relationship_type.endswith("/calcChain") or relationship_type.endswith("/externalLink"):
                     rels_root.remove(relationship)
             entries[workbook_rels_path] = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
         except Exception:
@@ -6714,7 +6718,8 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
         try:
             content_types_root = ET.fromstring(content_types_bytes)
             for override in list(content_types_root):
-                if override.attrib.get("PartName") == "/xl/calcChain.xml":
+                part_name = str(override.attrib.get("PartName", ""))
+                if part_name == "/xl/calcChain.xml" or part_name.startswith("/xl/externalLinks/"):
                     content_types_root.remove(override)
             entries[content_types_path] = ET.tostring(content_types_root, encoding="utf-8", xml_declaration=True)
         except Exception:
@@ -6798,11 +6803,18 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
             if defined_names is not None:
                 print_area = None
                 for defined_name in children_by_local_name(defined_names, "definedName"):
+                    if "[" in str(defined_name.text or ""):
+                        defined_names.remove(defined_name)
+                        continue
                     if defined_name.attrib.get("name") == "_xlnm.Print_Area":
                         print_area = defined_name
-                        break
                 if print_area is not None:
                     print_area.text = "%s!$A$1:$G$%s" % (sheet_name, max_row)
+                if not list(defined_names):
+                    workbook_root.remove(defined_names)
+            external_references = first_child_by_local_name(workbook_root, "externalReferences")
+            if external_references is not None:
+                workbook_root.remove(external_references)
             ET.register_namespace("", XLSX_NS)
             entries[workbook_path] = ET.tostring(workbook_root, encoding="utf-8", xml_declaration=True)
         except Exception:
@@ -10120,6 +10132,11 @@ def invoice_archive_response(filename, mimetype, download=False):
             payload = handle.read()
     except OSError:
         return None
+    if mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        repaired_payload = enforce_invoice_single_page_print_settings(payload)
+        if repaired_payload != payload:
+            payload = repaired_payload
+            save_invoice_archive(filename, payload)
     response = Response(payload, mimetype=mimetype)
     disposition = "attachment" if download else "inline"
     response.headers["Content-Disposition"] = '%s; filename="%s"' % (disposition, str(filename))

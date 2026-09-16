@@ -1,7 +1,9 @@
 import json
+import io
 import os
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 import app
@@ -85,6 +87,36 @@ class InvoiceHistoryTests(unittest.TestCase):
         self.assertEqual(response.data, b"%PDF-test")
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
+
+    def test_generated_invoice_removes_template_external_links(self):
+        template_path = app.resolve_invoice_template_path()
+        self.assertTrue(template_path)
+        with open(template_path, "rb") as handle:
+            cleaned = app.enforce_invoice_single_page_print_settings(handle.read())
+        with zipfile.ZipFile(io.BytesIO(cleaned)) as archive:
+            names = archive.namelist()
+            workbook_xml = archive.read("xl/workbook.xml")
+            workbook_rels = archive.read("xl/_rels/workbook.xml.rels")
+        self.assertFalse(any(name.startswith("xl/externalLinks/") for name in names))
+        self.assertNotIn(b"externalReferences", workbook_xml)
+        self.assertNotIn(b"externalLink", workbook_rels)
+        self.assertNotIn(b"[1]!Customers", workbook_xml)
+
+    def test_saved_workbook_is_repaired_when_downloaded(self):
+        os.makedirs(self.archive_dir)
+        template_path = app.resolve_invoice_template_path()
+        archived_path = os.path.join(self.archive_dir, "invoice_12.xlsx")
+        with open(template_path, "rb") as source, open(archived_path, "wb") as target:
+            target.write(source.read())
+        response = app.invoice_archive_response(
+            "invoice_12.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            download=True,
+        )
+        with zipfile.ZipFile(io.BytesIO(response.get_data())) as archive:
+            self.assertFalse(any(name.startswith("xl/externalLinks/") for name in archive.namelist()))
+        with zipfile.ZipFile(archived_path) as archive:
+            self.assertFalse(any(name.startswith("xl/externalLinks/") for name in archive.namelist()))
 
 
 if __name__ == "__main__":
