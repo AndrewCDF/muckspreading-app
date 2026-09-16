@@ -102,6 +102,22 @@ class InvoiceHistoryTests(unittest.TestCase):
         self.assertNotIn(b"externalLink", workbook_rels)
         self.assertNotIn(b"[1]!Customers", workbook_xml)
 
+    def test_download_workbook_is_built_without_template_metadata(self):
+        invoice = {
+            "invoice_number_label": "5432",
+            "customer": "Kidner Farming Ltd",
+            "display_customer_name": "Kidner Farming Ltd",
+            "line_rows": [],
+            "filename": "5432 - Kidner Farming Ltd.xlsx",
+        }
+        payload = app.build_invoice_xlsx_bytes(invoice)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = archive.namelist()
+            worksheet = archive.read("xl/worksheets/sheet1.xml")
+        self.assertNotIn("xl/styles.xml", names)
+        self.assertFalse(any(name.startswith("xl/externalLinks/") for name in names))
+        self.assertIn(b"Kidner Farming Ltd", worksheet)
+
     def test_saved_workbook_is_repaired_when_downloaded(self):
         os.makedirs(self.archive_dir)
         template_path = app.resolve_invoice_template_path()

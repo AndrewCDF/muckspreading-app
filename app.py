@@ -7457,13 +7457,19 @@ def build_template_based_invoice_xlsx(invoice, template):
     return output.getvalue()
 
 
-def build_invoice_xlsx_bytes(invoice):
+def build_invoice_layout_xlsx_bytes(invoice):
     template = load_invoice_template()
     if template:
         try:
             return enforce_invoice_single_page_print_settings(build_template_based_invoice_xlsx(invoice, template))
         except Exception:
             pass
+    return enforce_invoice_single_page_print_settings(build_plain_invoice_xlsx_bytes(invoice))
+
+
+def build_invoice_xlsx_bytes(invoice):
+    # Downloads use a clean workbook built from scratch. The branded source
+    # template contains legacy Office metadata that makes Excel request a repair.
     return enforce_invoice_single_page_print_settings(build_plain_invoice_xlsx_bytes(invoice))
 
 
@@ -7536,8 +7542,8 @@ def convert_xlsx_bytes_to_pdf_bytes(xlsx_bytes, xlsx_name="invoice.xlsx"):
 
 
 def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
-    xlsx_bytes = xlsx_bytes if xlsx_bytes not in [None, b""] else build_invoice_xlsx_bytes(invoice)
-    converted_pdf = convert_xlsx_bytes_to_pdf_bytes(xlsx_bytes, invoice.get("filename", "invoice.xlsx"))
+    layout_xlsx_bytes = build_invoice_layout_xlsx_bytes(invoice)
+    converted_pdf = convert_xlsx_bytes_to_pdf_bytes(layout_xlsx_bytes, invoice.get("filename", "invoice.xlsx"))
     if converted_pdf:
         return converted_pdf
 
@@ -10220,15 +10226,15 @@ def invoice_history_download_xlsx(ledger_index):
     history_row, actual_index, _ = invoice_history_row_at(ledger_index)
     if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
         return redirect(url_for("invoice_history", ok=0, msg="That invoice workbook is not available"))
-    archived = invoice_archive_response(
-        history_row.get("xlsx_filename", ""),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        download=True,
-    )
-    if archived is not None:
-        return archived
     invoice, xlsx_bytes, _, error_message = rebuild_and_archive_history_invoice(history_row, actual_index)
     if error_message:
+        archived = invoice_archive_response(
+            history_row.get("xlsx_filename", ""),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            download=True,
+        )
+        if archived is not None:
+            return archived
         return redirect(url_for("invoice_history", ok=0, msg=error_message))
     response = Response(
         xlsx_bytes,
