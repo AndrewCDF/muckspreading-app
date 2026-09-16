@@ -1,0 +1,229 @@
+:root {
+  --bg: #eef2ea;
+  --panel: rgba(255, 255, 255, 0.92);
+  --panel-strong: #ffffff;
+  --ink: #1f2c21;
+  --muted: #586a5d;
+  --line: rgba(31, 52, 38, 0.12);
+  --green: #24442f;
+  --green-soft: #edf5ee;
+  --gold: #c79e4f;
+  --gold-soft: #f9f1df;
+  --shadow: 0 18px 36px rgba(29, 48, 35, 0.08);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font-family: Inter, "Segoe UI", sans-serif;
+  background: linear-gradient(180deg, #eef2ea 0%, #e7ece3 100%);
+  color: var(--ink);
+}
+
+a { color: inherit; text-decoration: none; }
+
+h1, h2, h3, p { margin: 0; }
+
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 36px 20px 56px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.brand-block {
+  width: 100%;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+h1 {
+  font-size: clamp(2.2rem, 4vw, 3.4rem);
+  letter-spacing: -0.06em;
+  color: var(--green);
+}
+
+.layout {
+  display: grid;
+  gap: 24px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.hero {
+  padding: 28px 28px 20px;
+  background: linear-gradient(135deg, rgba(36, 68, 47, 0.06), rgba(199, 158, 79, 0.08));
+}
+
+.kicker {
+  margin-bottom: 10px;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero h2 {
+  font-size: clamp(2rem, 3vw, 3rem);
+  letter-spacing: -0.05em;
+  margin-bottom: 8px;
+}
+
+.lead {
+  max-width: 52rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.branch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.branch-grid .primary {
+  min-height: 140px;
+  font-size: 1.2rem;
+}
+
+.branch-card {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  min-height: 330px;
+}
+
+.muck-card {
+  background: linear-gradient(180deg, rgba(36,68,47,0.04), rgba(255,255,255,0.96));
+}
+
+.straw-card {
+  background: linear-gradient(180deg, rgba(199,158,79,0.10), rgba(255,255,255,0.96));
+}
+
+.branch-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(36,68,47,0.08);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.branch-card h3 {
+  font-size: clamp(1.7rem, 2vw, 2.2rem);
+  letter-spacing: -0.05em;
+}
+
+.branch-card p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.mini-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mini-stat {
+  display: grid;
+  gap: 6px;
+  padding: 14px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--line);
+}
+
+.mini-stat span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mini-stat strong {
+  font-size: 1.5rem;
+  letter-spacing: -0.05em;
+  color: var(--green);
+}
+
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  border-radius: 14px;
+  background: var(--green);
+  color: white;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.straw-button,
+.maintenance-button {
+  background: linear-gradient(135deg, var(--gold), #b78932);
+}
+
+.quick-links {
+  display: grid;
+}
+
+.quick-card {
+  padding: 22px 24px;
+}
+
+.quick-card h3 {
+  margin-bottom: 14px;
+  font-size: 1.2rem;
+}
+
+.link-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.link-stack a {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--green-soft);
+  border: 1px solid rgba(36,68,47,0.06);
+  color: var(--green);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .branch-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 520px) {
+  .shell { padding-left: 14px; padding-right: 14px; }
+  .hero, .branch-card, .quick-card { padding-left: 18px; padding-right: 18px; }
+  .mini-stats { grid-template-columns: 1fr; }
+}

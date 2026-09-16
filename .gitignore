@@ -8,5 +8,6 @@ data/*
 
 customer_master.xlsx
 email_settings.csv
+settings.xlsx
 email_config.json
 data/email_config.json

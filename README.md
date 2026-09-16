@@ -21,6 +21,7 @@ Standalone web app for the office Raspberry Pi.
 - Invoice creation and email for uninvoiced customer or farm jobs
 - Optional weekly summary email
 - Customer master spreadsheet import for address, email, and pricing
+- Machinery maintenance records with service dates, work completed, parts, costs and next-service dates
 
 ## Data files
 
@@ -36,40 +37,44 @@ The app keeps its own data in:
 - `data/invoice_ledger.json`
 - `data/invoice_state.json`
 - `data/invoices/`
+- `data/straw_deliveries.sqlite3`
 
-The app reads a master spreadsheet file in the app folder:
+The app reads its settings from `settings.xlsx`. The customer/farm/field and email JSON files listed above are retained for legacy migration; after migration those settings are read and written in the workbook.
 
-- `customer_master.xlsx`
+## One settings workbook
 
-## Customer Master Spreadsheet
+Edit **`settings.xlsx`** in the app folder. The app creates it once from the existing settings when it starts. It is the settings source after migration; the old CSV, JSON configuration files and `customer_master.xlsx` remain as backups.
 
-- create `customer_master.xlsx` in the app folder
-- keep the first sheet as the customer master sheet
-- keep these columns on the header row:
+| Tab | Controls |
+| --- | --- |
+| Customers | Customer/farm names, email, addresses, rate per ton, VAT and active status |
+| Staff | Timesheet names, active status and a separate 4–8 digit PIN for each person; a blank PIN is created by the person on first use |
+| Companies | Companies available on timesheets |
+| Email Settings | SMTP credentials, weekly/monthly schedules and enable switches |
+| Email Recipients | Recipient names and addresses; summary, invoice-option and monthly-timesheet switches |
+| Invoice Settings | Sender, wording and payment terms |
+| Farms / Fields | Farm suggestions and customer/farm/field links |
+| Muck Types / Straw Crops | Material and crop options |
+| Machinery | Machinery names offered in maintenance records; new names entered in the app are added automatically |
+| Read Me | Editing instructions |
 
-- `customer_name`
-- `farm_name`
-- `email`
-- `address_line_1`
-- `address_line_2`
-- `town`
-- `postcode`
-- `rate_per_ton`
-- `vat_rate`
-- `active`
-- `muck_type`
+Keep tab names and column headings unchanged. Add rows to add names or recipients. Set `active` to `1` to show a row or `0` to hide it. Save and close Excel, then refresh the app. Workbook edits take effect without an app restart. Settings and customer edits made in the app save back to this workbook.
 
-What it does:
+Email Settings uses `setting` and `value` columns. Boolean values are `1` or `0`; `send_weekday` uses Monday `0` through Sunday `6`; hours use `0`–`23`. On Email Recipients, `summary=1` includes an active recipient in summary emails, `invoice_option=1` makes them available for invoice copies, and `timesheet=1` sends them completed monthly timesheets. Existing invoice-copy selection rules continue to apply.
 
-- customer names from the spreadsheet appear in the customer suggestions
-- farm names from the spreadsheet appear in the farm suggestions
-- muck types from the spreadsheet appear in the muck type suggestions
-- when a job matches a customer and farm from the spreadsheet, the app snapshots:
-  - email
-  - address
-  - rate per ton
-  - VAT rate
-- those values are then stored with the saved job and included in the full CSV export
+The Timesheet button opens a staff selector. If a staff member has no PIN, the app asks them to choose one the first time they open their name. They can later use Change PIN inside their timesheet. The app limits entries, exports, print reports and completed-month emails to the unlocked person. The calendar has controls below each month to export a complete Excel workbook, open a printable report that can be saved as PDF, and complete and email the month. Overnight hours are assigned to the calendar date on which they were worked, including shifts crossing month-end.
+
+The Hay & Straw home screen has a **+** button for recording delivered lorry or trailer loads. The weight can be left blank initially, and saved deliveries can be reopened later to add or correct it.
+
+### Moving data from the old Straw app
+
+The old standalone app stores all field, crop, customer, stocktake, load, stock-movement, map and embedded photo data in `/home/pi/StrawApp/data/straw-records.json`. Copy that file to `/home/pi/muckspreading-app/data/straw-records.json` after pulling this app. The integrated app reads the file directly and migrates legacy loads into its editable Loads Out records. Old loads did not contain a customer field, so they appear as **Customer not recorded** until edited. The old app folder, mock spreadsheet and browser cache do not need to be copied when this JSON file exists.
+
+```bash
+cp /home/pi/StrawApp/data/straw-records.json /home/pi/muckspreading-app/data/straw-records.json
+```
+
+The workbook contains email credentials, so it is excluded from Git. App backups include it. Jobs, timesheets, invoices and saved straw records remain in their existing data stores.
 
 ## Run
 
@@ -104,50 +109,10 @@ How it works:
 
 Setup:
 
-1. Edit `email_settings.csv`
-2. Put one `settings` row in it for the SMTP and schedule details
-3. Add as many `recipient` rows as you need underneath
-5. Set `enabled` to `1`
-6. Set `monthly_enabled` to `1` if you want month-end email switched on
-7. Keep the app running on the Pi service so the background worker can send it
-
-Email settings CSV columns:
-
-- `record_type`
-- `email`
-- `name`
-- `enabled`
-- `smtp_host`
-- `smtp_port`
-- `use_tls`
-- `smtp_username`
-- `smtp_password`
-- `from_email`
-- `to_emails`
-- `send_weekday`
-- `send_hour`
-- `send_minute`
-- `monthly_enabled`
-- `monthly_send_hour`
-- `monthly_send_minute`
-- `subject_prefix`
-- `active`
-
-Use:
-
-- `record_type`: `settings` for the main config row, `recipient` for recipient rows
-- `email`: use this on recipient rows
-- `name`: optional label for recipient rows
-- `enabled`: `1` or `0`
-- `use_tls`: `1` or `0`
-- `send_weekday`: `0` for Monday through `6` for Sunday
-- `monthly_enabled`: `1` or `0`
-- `to_emails`: optional comma-separated emails on the `settings` row if you want to keep some addresses there too
-- `active`: `1` or `0`
-
-If you leave the monthly columns out, the app falls back to the weekly time settings.
-
-If you already have `data/email_config.json`, the app will still accept it, but `email_settings.csv` is now the easiest way to manage the full email setup.
+1. Open `settings.xlsx`.
+2. Configure the **Email Settings** and **Email Recipients** tabs.
+3. Set `enabled` to `1` for weekly summaries and `monthly_enabled` to `1` for month-end summaries.
+4. Save and close the workbook, and keep the app running for scheduled delivery.
 
 Useful endpoints:
 

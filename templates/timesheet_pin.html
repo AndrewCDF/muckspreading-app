@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#24442f">
+  <title>{{ staff_name }} - {{ 'Change' if pin_mode == 'change' else 'Set' if pin_mode == 'setup' else 'Enter' }} Timesheet PIN</title>
+  <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='af_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='combined.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='timesheet.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar"><div class="brand-block"><p class="eyebrow">A. Farrell Contracting</p><h1>{{ 'Change PIN' if pin_mode == 'change' else 'Set Your PIN' if pin_mode == 'setup' else 'Timesheet PIN' }}</h1></div></header>
+    <main class="layout">
+      <section class="panel quick-card pin-card" aria-labelledby="pin-heading">
+        <h2 id="pin-heading">{{ staff_name }}</h2>
+        <p class="lead">{% if pin_mode == 'setup' %}Choose a private 4–8 digit PIN. You will use it whenever you open your timesheet.{% elif pin_mode == 'change' %}Enter your current PIN, then choose a new 4–8 digit PIN.{% else %}Enter your PIN to open your timesheet.{% endif %}</p>
+        {% if status_msg %}<div class="status error" role="alert">{{ status_msg }}</div>{% endif %}
+        <form method="post" action="{{ url_for('timesheet_setup_pin') if pin_mode == 'setup' else url_for('timesheet_change_pin') if pin_mode == 'change' else url_for('timesheet_unlock') }}">
+          <input name="staff_name" type="hidden" value="{{ staff_name }}">
+          {% if pin_mode == 'change' %}
+          <label for="current-pin">Current PIN</label>
+          <input id="current-pin" name="current_pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="current-password" required autofocus>
+          {% endif %}
+          {% if pin_mode in ('setup', 'change') %}
+          <label for="new-pin">{{ 'New PIN' if pin_mode == 'change' else 'Choose PIN' }}</label>
+          <input id="new-pin" name="new_pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" required{% if pin_mode == 'setup' %} autofocus{% endif %}>
+          <label for="confirm-pin">Confirm {{ 'new ' if pin_mode == 'change' else '' }}PIN</label>
+          <input id="confirm-pin" name="confirm_pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" required>
+          <button class="primary" type="submit">{{ 'Change PIN' if pin_mode == 'change' else 'Save PIN & Open Timesheet' }}</button>
+          {% else %}
+          <label for="staff-pin">PIN</label>
+          <input id="staff-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="current-password" required autofocus>
+          <button class="primary" type="submit">Open Timesheet</button>
+          {% endif %}
+        </form>
+      </section>
+    </main>
+  </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <a class="bottom-nav-btn" href="{{ url_for('timesheet_calendar') if pin_mode == 'change' else url_for('timesheet_home') }}"><strong aria-hidden="true">←</strong>Back</a>
+    <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">⌂</strong>Home</a>
+    <a class="bottom-nav-btn" href="{{ url_for('settings_home') }}"><strong aria-hidden="true">⚙</strong>Settings</a>
+  </nav>
+</body>
+</html>

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#24442f">
+    <title>Straw Bale Records</title>
+    <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='straw.css') }}">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Harvest <span id="seasonYear"></span></p>
+          <h1>Straw Bales</h1>
+        </div>
+        <button class="add-delivery-button" id="addDeliveryButton" type="button" aria-label="Log Load Out">+</button>
+      </header>
+
+      <main>
+        <section class="view active" id="dashboardView" aria-label="Dashboard">
+          <div class="hero-total">
+            <span>Total bales</span>
+            <strong id="seasonTotal">0</strong>
+          </div>
+          <h2 class="dashboard-section-title">Crop totals</h2>
+          <div class="crop-grid" id="cropTotals"></div>
+          <h2 class="dashboard-section-title">Customer totals</h2>
+          <div class="customer-total-list" id="customerTotals"></div>
+          <div class="daily-totals">
+            <article>
+              <span>Fields today</span>
+              <strong id="dailyFieldsTotal">0</strong>
+            </article>
+            <article>
+              <span>Bales today</span>
+              <strong id="dailyBalesTotal">0</strong>
+            </article>
+            <article>
+              <span>Avg moisture</span>
+              <strong id="dailyMoistureAverage">-</strong>
+            </article>
+          </div>
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Recent fields</h2>
+              <button class="text-button" data-nav="fields" type="button">View all</button>
+            </div>
+            <div class="field-list compact" id="recentFields"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Recent Loads Out</h2>
+            </div>
+            <div class="field-list" id="recentDeliveries"></div>
+          </section>
+        </section>
+
+        <section class="view" id="mapView" aria-label="Map">
+          <div class="map-wrap">
+            <div id="map"></div>
+            <div class="map-prompt" id="mapPrompt">Tap the field location to drop a pin</div>
+            <div class="map-fallback" id="mapFallback">
+              <strong>Map unavailable</strong>
+              <span>Field records still work without the map.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="fieldsView" aria-label="Fields">
+          <div class="toolbar">
+            <input id="fieldSearch" type="search" placeholder="Search fields">
+            <button class="primary-action small" id="addFieldButtonFields" type="button">Add</button>
+          </div>
+          <div class="field-list" id="fieldList"></div>
+        </section>
+
+        <section class="view" id="stockView" aria-label="Stock">
+          <div class="stock-summary">
+            <article class="stock-primary">
+              <span>Estimated stock</span>
+              <strong id="estimatedStock">0</strong>
+            </article>
+            <article>
+              <span>Latest stocktake</span>
+              <strong id="latestStocktakeTotal">0</strong>
+            </article>
+            <article>
+              <span>Removed since count</span>
+              <strong id="removedSinceStocktake">0</strong>
+            </article>
+            <article>
+              <span>Bought in since count</span>
+              <strong id="boughtInSinceStocktake">0</strong>
+            </article>
+          </div>
+          <div class="quick-actions">
+            <button class="primary-action" id="addStocktakeButton" type="button">New stocktake</button>
+            <button class="secondary-action" id="addStockMovementButton" type="button">Bought in / ducks</button>
+          </div>
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Loads Out</h2>
+            </div>
+            <div class="field-list" id="pendingLoads"></div>
+          </section>
+        </section>
+      </main>
+
+      <nav class="straw-app-nav" aria-label="Straw sections">
+        <button class="nav-button" data-nav="map" type="button">
+          <span aria-hidden="true">⌖</span>
+          <small>Map</small>
+        </button>
+        <button class="nav-button" data-nav="fields" type="button">
+          <span aria-hidden="true">▤</span>
+          <small>Fields</small>
+        </button>
+        <button class="nav-button" data-nav="stock" type="button">
+          <span aria-hidden="true">▥</span>
+          <small>Stock</small>
+        </button>
+      </nav>
+
+      <nav class="bottom-nav" aria-label="Navigation">
+        <button class="nav-button" type="button" onclick="window.history.back()">
+          <span aria-hidden="true">←</span>
+          <small>Back</small>
+        </button>
+        <button class="nav-button active" type="button" onclick="window.location.href='/'">
+          <span aria-hidden="true">⌂</span>
+          <small>Home</small>
+        </button>
+        <button class="nav-button" type="button" onclick="window.location.href='/settings'">
+          <span aria-hidden="true">⚙</span>
+          <small>Settings</small>
+        </button>
+      </nav>
+    </div>
+
+    <dialog id="fieldDialog">
+      <form method="dialog" id="fieldForm">
+        <div class="dialog-heading">
+          <h2 id="fieldDialogTitle">Field record</h2>
+          <button class="icon-button" id="closeFieldDialogButton" type="button" aria-label="Close">×</button>
+        </div>
+        <input type="hidden" id="fieldId">
+        <label>
+          Customer name
+          <input id="fieldCustomer" autocomplete="off" list="straw-customers">
+        </label>
+        <label>
+          Farm name
+          <input id="fieldFarm" autocomplete="off" list="settings-farms">
+          <datalist id="settings-farms">{% for farm in farms %}<option value="{{ farm }}"></option>{% endfor %}</datalist>
+        </label>
+        <label>
+          Field name
+          <input id="fieldName" required autocomplete="off">
+        </label>
+        <div class="form-grid">
+          <label>
+            Hectares
+            <input id="fieldHectares" type="number" min="0" step="0.01">
+          </label>
+          <label>
+            Total bales
+            <input id="fieldBales" type="number" min="0" step="1">
+          </label>
+          <label>
+            Avg moisture %
+            <input id="fieldMoisture" type="number" min="0" max="100" step="0.1">
+          </label>
+        </div>
+        <label>
+          Crop
+          <select id="fieldCrop">
+            {% for crop in crops %}<option>{{ crop }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>
+          Photo
+          <input id="fieldPhoto" type="file" accept="image/*" capture="environment">
+        </label>
+        <img id="photoPreview" class="photo-preview" alt="Preview">
+        <div class="dialog-actions">
+          <button class="danger-button" id="deleteFieldButton" type="button">Delete</button>
+          <button class="secondary-button" id="partCompleteButton" type="button">Part complete</button>
+          <button class="primary-button" type="submit">Save</button>
+          <button class="primary-button" id="completeFieldButton" type="button">Complete</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="deliveryDialog">
+      <form method="dialog" id="deliveryForm">
+        <div class="dialog-heading">
+          <h2 id="deliveryDialogTitle">Log Load Out</h2>
+          <button class="icon-button" id="closeDeliveryDialogButton" type="button" aria-label="Close">×</button>
+        </div>
+        <input type="hidden" id="deliveryId">
+        <label>
+          Customer
+          <input id="deliveryCustomer" autocomplete="off" list="straw-customers" maxlength="160" required>
+        </label>
+        <label>
+          Lorry or trailer registration
+          <input id="deliveryRegistration" autocomplete="off" maxlength="30" required autocapitalize="characters">
+        </label>
+        <label>
+          Date and time
+          <input id="deliveryDateTime" type="datetime-local" required>
+        </label>
+        <div class="form-grid delivery-totals">
+          <label>
+            Bale total
+            <input id="deliveryBales" type="number" min="0" step="1" inputmode="numeric" required>
+          </label>
+          <label>
+            Weight total
+            <input id="deliveryWeight" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Can be added later">
+          </label>
+        </div>
+        <p class="form-status" id="deliveryStatus" role="status" aria-live="polite">Weight can be left blank and added later.</p>
+        <div class="dialog-actions">
+          <button class="primary-button" id="saveDeliveryButton" type="submit">Save Load Out</button>
+        </div>
+      </form>
+    </dialog>
+
+    <datalist id="straw-customers"></datalist>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="{{ url_for('static', filename='straw.js') }}"></script>
+  </body>
+</html>

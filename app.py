@@ -1,12 +1,15 @@
-from flask import Flask, Response, jsonify, redirect, render_template_string, request, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, render_template_string, request, session, url_for
 import csv
 import io
+import hmac
 import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import smtplib
+import sqlite3
 import struct
 import subprocess
 import tempfile
@@ -20,10 +23,14 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 from xml.sax.saxutils import escape as xml_escape
 from email.utils import parseaddr
+from settings_workbook import Workbook, active as settings_row_active
 
 
 app = Flask(__name__)
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+app.secret_key = os.environ.get("MUCKSPREADING_SESSION_SECRET") or secrets.token_hex(32)
+SETTINGS_WORKBOOK_PATH = os.path.join(APP_ROOT, "settings.xlsx")
+TIMESHEET_COMPANIES = ["Cherry Dene Farm Ltd.", "A. Farrell Contracting Ltd."]
 DATA_DIR = os.path.join(APP_ROOT, "data")
 JOBS_PATH = os.path.join(DATA_DIR, "jobs.ndjson")
 CUSTOMERS_PATH = os.path.join(DATA_DIR, "customers.json")
@@ -35,6 +42,8 @@ EMAIL_STATE_PATH = os.path.join(DATA_DIR, "weekly_email_state.json")
 APP_SETTINGS_PATH = os.path.join(DATA_DIR, "app_settings.json")
 INVOICE_LEDGER_PATH = os.path.join(DATA_DIR, "invoice_ledger.json")
 INVOICE_STATE_PATH = os.path.join(DATA_DIR, "invoice_state.json")
+TIMESHEET_MONTH_STATE_PATH = os.path.join(DATA_DIR, "timesheet_month_state.json")
+STRAW_STATE_PATH = os.path.join(DATA_DIR, "straw-records.json")
 INVOICE_ARCHIVE_DIR = os.path.join(DATA_DIR, "invoices")
 ISSUE_PHOTOS_DIR = os.path.join(DATA_DIR, "job_issue_photos")
 CUSTOMER_MASTER_XLSX_PATH = os.path.join(APP_ROOT, "customer_master.xlsx")
@@ -110,6 +119,46 @@ DEFAULT_APP_SETTINGS = {
     "invoice_accounts_message_template": DEFAULT_INVOICE_ACCOUNTS_MESSAGE_TEMPLATE,
     "invoice_default_payment_terms_days": "14",
 }
+
+DASHBOARD_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#24442f">
+  <title>A. Farrell Contracting</title>
+  <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='af_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='combined.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Operations</p>
+        <h1>A. Farrell Contracting</h1>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="branch-grid">
+                <a class="primary" href="/muck">Muck Spreading</a>
+                <a class="primary straw-button" href="/straw">Hay &amp; Straw</a>
+                <a class="primary" href="{{ url_for('timesheet_home') }}">Timesheet</a>
+                <a class="primary maintenance-button" href="{{ url_for('maintenance_home') }}">Maintenance</a>
+      </section>
+    </main>
+  </div>
+    <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+        <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
+        <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
+        <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+    </nav>
+  <script src="{{ url_for('static', filename='combined.js') }}"></script>
+</body>
+</html>
+"""
 
 
 def discover_custom_app_icon_path():
@@ -291,17 +340,18 @@ HTML = """
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('app_icon_png', size=180) }}">
   <link rel="manifest" href="{{ url_for('web_manifest') }}">
   <style>
+    @import url('/static/af_brand.css');
     :root {
-      --bg: #e7decd;
-      --panel: rgba(250, 247, 240, 0.96);
-      --ink: #272d21;
-      --muted: #666653;
-      --line: #cabd9f;
-      --green: #3c5f46;
-      --gold: #ba9450;
+      --bg: #edf1ea;
+      --panel: rgba(255, 255, 255, 0.94);
+      --ink: #1d2b1f;
+      --muted: #5b6b60;
+      --line: rgba(36, 68, 47, 0.12);
+      --green: #24442f;
+      --gold: #c79e4f;
       --red: #8b4738;
-      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
-      --font-main: Georgia, "Times New Roman", serif;
+      --shadow: 0 18px 36px rgba(29, 48, 35, 0.08);
+      --font-main: Inter, "Segoe UI", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
     body {
@@ -309,9 +359,7 @@ HTML = """
       min-height: 100vh;
       font-family: var(--font-main);
       color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
-        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+      background: linear-gradient(180deg, #edf1ea 0%, #e7ece3 100%);
     }
     input, select, button, table, th, td {
       font-family: var(--font-main);
@@ -1640,6 +1688,11 @@ HTML = """
     </section>
     {% endif %}
   </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+  </nav>
   <div id="download_notice" class="download-notice" hidden>Preparing download...</div>
 
   <script>
@@ -2241,17 +2294,18 @@ ADMIN_HTML = """
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('app_icon_png', size=180) }}">
   <link rel="manifest" href="{{ url_for('web_manifest') }}">
   <style>
+    @import url('/static/af_brand.css');
     :root {
-      --bg: #e7decd;
-      --panel: rgba(250, 247, 240, 0.96);
-      --ink: #272d21;
-      --muted: #666653;
-      --line: #cabd9f;
-      --green: #3c5f46;
-      --gold: #ba9450;
+      --bg: #edf1ea;
+      --panel: rgba(255, 255, 255, 0.94);
+      --ink: #1d2b1f;
+      --muted: #5b6b60;
+      --line: rgba(36, 68, 47, 0.12);
+      --green: #24442f;
+      --gold: #c79e4f;
       --red: #8b4738;
-      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
-      --font-main: Georgia, "Times New Roman", serif;
+      --shadow: 0 18px 36px rgba(29, 48, 35, 0.08);
+      --font-main: Inter, "Segoe UI", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
     body {
@@ -2259,9 +2313,7 @@ ADMIN_HTML = """
       min-height: 100vh;
       font-family: var(--font-main);
       color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
-        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+      background: linear-gradient(180deg, #edf1ea 0%, #e7ece3 100%);
     }
     .page {
       max-width: 1180px;
@@ -2380,19 +2432,21 @@ ADMIN_HTML = """
     .button {
       min-height: 46px;
       padding: 0 18px;
-      border-radius: 999px;
+      border-radius: 14px;
       border: none;
       cursor: pointer;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-weight: bold;
+      font-weight: 700;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
+    .button:hover { transform: translateY(-1px); }
     .button-secondary {
-      background: rgba(60,95,70,0.1);
+      background: #edf5ee;
       color: var(--green);
-      border: 1px solid rgba(60,95,70,0.12);
+      border: 1px solid rgba(36, 68, 47, 0.08);
     }
     .button-danger {
       background: rgba(139,71,56,0.1);
@@ -2513,6 +2567,17 @@ ADMIN_HTML = """
       flex-wrap: wrap;
       gap: 6px;
     }
+        .field-move-details {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .field-move-details > summary {
+            cursor: pointer;
+            color: var(--green);
+            font-size: 13px;
+            font-weight: bold;
+        }
     .field-move-input {
       min-width: 160px;
       max-width: 220px;
@@ -2543,6 +2608,19 @@ ADMIN_HTML = """
       color: var(--muted);
       font-size: 14px;
     }
+        .admin-action-group {
+            border-top: 1px solid rgba(82, 69, 42, 0.12);
+            padding-top: 12px;
+        }
+        .admin-action-group > summary {
+            cursor: pointer;
+            color: var(--green);
+            font-weight: bold;
+            padding: 6px 0 12px;
+        }
+        .admin-action-group > summary::marker {
+            color: var(--gold);
+        }
     @media (max-width: 860px) {
       .grid, .mini-grid {
         grid-template-columns: 1fr;
@@ -2600,8 +2678,8 @@ ADMIN_HTML = """
           </form>
         </div>
 
-        <div>
-          <h2>Move Jobs To Another Customer</h2>
+                <details class="admin-action-group">
+                    <summary>Move jobs</summary>
           <form class="mini-form" method="post" action="{{ url_for('admin_move_jobs') }}">
             <div class="mini-grid">
               <div>
@@ -2629,10 +2707,10 @@ ADMIN_HTML = """
             </div>
             <button class="button button-secondary button-full" type="submit">Move Matching Jobs</button>
           </form>
-        </div>
+                </details>
 
-        <div>
-          <h2>Merge Customer Into Another Customer</h2>
+                <details class="admin-action-group">
+                    <summary>Merge customers</summary>
           <form class="mini-form" method="post" action="{{ url_for('admin_merge_customers') }}">
             <div class="mini-grid">
               <div>
@@ -2647,7 +2725,7 @@ ADMIN_HTML = """
             <div class="hint">This moves all jobs, field links, and invoice history for the source customer into the target customer.</div>
             <button class="button button-secondary button-full" type="submit">Merge Customer</button>
           </form>
-        </div>
+                </details>
       </div>
 
       <div class="card">
@@ -2682,7 +2760,9 @@ ADMIN_HTML = """
                   <div>Rate: {{ customer.rate_per_ton_label or 'Not set' }}</div>
                 </div>
               </form>
-                            <form class="mini-form customer-meta-form" method="post" action="{{ url_for('admin_merge_farms') }}">
+                            <details class="customer-meta-form admin-action-group">
+                                <summary>Move or merge farms</summary>
+                            <form class="mini-form" method="post" action="{{ url_for('admin_merge_farms') }}">
                                 <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                                 <div class="mini-grid">
                                     <div>
@@ -2696,7 +2776,7 @@ ADMIN_HTML = """
                                 </div>
                                 <button class="button button-secondary button-small" type="submit">Merge Farms</button>
                             </form>
-                            <form class="mini-form customer-meta-form" method="post" action="{{ url_for('admin_consolidate_farm_name') }}">
+                            <form class="mini-form" method="post" action="{{ url_for('admin_consolidate_farm_name') }}">
                                 <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                                 <div class="mini-grid">
                                     <div>
@@ -2710,6 +2790,7 @@ ADMIN_HTML = """
                                 </div>
                                 <button class="button button-secondary button-small" type="submit">Consolidate Same-Name Farm</button>
                             </form>
+                            </details>
                             {% if customer.master_records %}
                             <details class="customer-meta-form">
                                 <summary>Edit Customer Spreadsheet Rows ({{ customer.master_records|length }})</summary>
@@ -2766,14 +2847,17 @@ ADMIN_HTML = """
                       {% for field_name in farm.fields %}
                       <div class="field-tag">
                         <span>{{ field_name }}</span>
-                        <form class="field-move-form" method="post" action="{{ url_for('admin_move_field') }}">
-                          <input type="hidden" name="customer" value="{{ customer.customer_name }}">
-                          <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
-                          <input type="hidden" name="field_name" value="{{ field_name }}">
-                          <input class="field-move-input" name="to_customer" type="text" list="admin_customer_move_options" placeholder="New customer" value="{{ customer.customer_name }}">
-                          <input class="field-move-input" name="to_farm_name" type="text" list="farm_move_options_{{ customer_index }}" placeholder="Move to farm" required>
-                          <button class="button button-secondary button-small" type="submit">Move</button>
-                        </form>
+                                                <details class="field-move-details">
+                                                    <summary>Move</summary>
+                                                    <form class="field-move-form" method="post" action="{{ url_for('admin_move_field') }}">
+                                                        <input type="hidden" name="customer" value="{{ customer.customer_name }}">
+                                                        <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
+                                                        <input type="hidden" name="field_name" value="{{ field_name }}">
+                                                        <input class="field-move-input" name="to_customer" type="text" list="admin_customer_move_options" placeholder="New customer" value="{{ customer.customer_name }}">
+                                                        <input class="field-move-input" name="to_farm_name" type="text" list="farm_move_options_{{ customer_index }}" placeholder="Move to farm" required>
+                                                        <button class="button button-secondary button-small" type="submit">Move</button>
+                                                    </form>
+                                                </details>
                         <form method="post" action="{{ url_for('admin_delete_field') }}">
                           <input type="hidden" name="customer" value="{{ customer.customer_name }}">
                           <input type="hidden" name="farm_name" value="{{ farm.farm_name }}">
@@ -2828,6 +2912,11 @@ ADMIN_HTML = """
       </div>
     </div>
   </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+  </nav>
   <script>
     const adminCustomers = {{ customers_json|safe }};
     const adminCustomerInput = document.getElementById("admin_customer_select");
@@ -2906,27 +2995,7 @@ INVOICE_HISTORY_HTML = """
   <meta name="theme-color" content="#334d38">
   <title>Invoice History</title>
   <style>
-    :root {
-      --bg: #e7decd;
-      --panel: rgba(250, 247, 240, 0.96);
-      --ink: #272d21;
-      --muted: #666653;
-      --line: #cabd9f;
-      --green: #3c5f46;
-      --gold: #ba9450;
-      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
-      --font-main: Georgia, "Times New Roman", serif;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: var(--font-main);
-      color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
-        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
-    }
+    @import url('/static/af_brand.css');
     .page {
       max-width: 1180px;
       margin: 0 auto;
@@ -2948,18 +3017,20 @@ INVOICE_HISTORY_HTML = """
     .button {
       min-height: 48px;
       padding: 0 18px;
-      border-radius: 999px;
+      border-radius: 14px;
       border: none;
       cursor: pointer;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-weight: bold;
-      background: rgba(60,95,70,0.1);
+      font-weight: 700;
+      background: #edf5ee;
       color: var(--green);
-      border: 1px solid rgba(60,95,70,0.12);
+      border: 1px solid rgba(36, 68, 47, 0.08);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
+    .button:hover { transform: translateY(-1px); }
     .button-small {
       min-height: 40px;
       padding: 0 14px;
@@ -3092,6 +3163,12 @@ INVOICE_HISTORY_HTML = """
       {% endif %}
     </div>
   </div>
+
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+  </nav>
 </body>
 </html>
 """
@@ -3105,17 +3182,18 @@ SETTINGS_HTML = """
   <meta name="theme-color" content="#334d38">
   <title>Settings</title>
   <style>
+    @import url('/static/af_brand.css');
     :root {
-      --bg: #e7decd;
-      --panel: rgba(250, 247, 240, 0.96);
-      --ink: #272d21;
-      --muted: #666653;
-      --line: #cabd9f;
-      --green: #3c5f46;
-      --gold: #ba9450;
+      --bg: #edf1ea;
+      --panel: rgba(255, 255, 255, 0.94);
+      --ink: #1d2b1f;
+      --muted: #5b6b60;
+      --line: rgba(36, 68, 47, 0.12);
+      --green: #24442f;
+      --gold: #c79e4f;
       --red: #8b4738;
-      --shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
-      --font-main: Georgia, "Times New Roman", serif;
+      --shadow: 0 18px 36px rgba(29, 48, 35, 0.08);
+      --font-main: Inter, "Segoe UI", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
     body {
@@ -3123,9 +3201,7 @@ SETTINGS_HTML = """
       min-height: 100vh;
       font-family: var(--font-main);
       color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(186,148,80,0.18), transparent 24%),
-        linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
+      background: linear-gradient(180deg, #edf1ea 0%, #e7ece3 100%);
     }
     .page {
       max-width: 980px;
@@ -3162,9 +3238,9 @@ SETTINGS_HTML = """
       font-family: var(--font-main);
     }
     .button-primary {
-      background: linear-gradient(135deg, var(--gold), #cda961);
-      color: #2b2212;
-      box-shadow: 0 14px 28px rgba(186,148,80,0.24);
+      background: linear-gradient(135deg, var(--green), #2c5641);
+      color: #fff;
+      box-shadow: 0 12px 22px rgba(36, 68, 47, 0.16);
       border: none;
     }
     .status {
@@ -3263,6 +3339,7 @@ SETTINGS_HTML = """
 
     <div class="card">
       <h1>Settings</h1>
+      <p class="copy">All settings are stored in <strong>settings.xlsx</strong> in the app folder. Use its tabs to edit staff names, companies, customers, email settings and recipients, invoice settings, farms, fields and muck types. Save and close Excel, then refresh the app. Changes saved here update the same workbook.</p>
       <p class="copy">Change the default invoice wording and payment terms used when you open the invoice page.</p>
       <form method="post" action="{{ url_for('settings_save') }}">
         <div class="form-grid">
@@ -3330,6 +3407,11 @@ SETTINGS_HTML = """
       </form>
     </div>
   </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+  </nav>
 </body>
 </html>
 """
@@ -3451,8 +3533,278 @@ def issue_photo_items(values):
     return items
 
 
+def settings_workbook_exists():
+    return os.path.isfile(SETTINGS_WORKBOOK_PATH)
+
+
+def settings_key_values(sheet):
+    return {row["setting"]: row.get("value", "") for row in Workbook(SETTINGS_WORKBOOK_PATH).records(sheet) if row.get("setting")}
+
+
+def update_settings_key_values(sheet, values):
+    def update(rows):
+        result = [list(row) for row in rows]
+        seen = set()
+        for row in result[1:]:
+            if row and row[0] in values:
+                while len(row) < 2:
+                    row.append("")
+                row[1] = str(values[row[0]])
+                seen.add(row[0])
+        result.extend([[key, str(value)] for key, value in values.items() if key not in seen])
+        return result
+    Workbook(SETTINGS_WORKBOOK_PATH).update(sheet, update)
+
+
+def settings_names(sheet, default):
+    if not settings_workbook_exists():
+        return list(default)
+    return list(dict.fromkeys(row.get("name", "").strip() for row in Workbook(SETTINGS_WORKBOOK_PATH).records(sheet) if settings_row_active(row) and row.get("name", "").strip()))
+
+
+def timesheet_staff_records():
+    if not settings_workbook_exists():
+        return [{"name": "Owen Curl", "pin": "", "active": "1"}]
+    records = []
+    seen = set()
+    for row in Workbook(SETTINGS_WORKBOOK_PATH).records("Staff"):
+        name = clean_name(row.get("name"))
+        key = name.casefold()
+        if not name or key in seen or not settings_row_active(row):
+            continue
+        seen.add(key)
+        records.append({"name": name, "pin": str(row.get("pin", "") or "").strip(), "active": "1"})
+    return records
+
+
+def save_timesheet_staff_pin(staff_name, pin):
+    ensure_settings_workbook()
+    matched = {"value": False}
+
+    def update(rows):
+        result = [list(row) for row in rows]
+        if not result:
+            raise ValueError("The Staff tab is missing from settings.xlsx.")
+        headers = [str(value).strip().lower() for value in result[0]]
+        if "name" not in headers:
+            raise ValueError("The Staff tab must contain a name column.")
+        if "pin" not in headers:
+            result[0].append("pin")
+            headers.append("pin")
+        name_index = headers.index("name")
+        pin_index = headers.index("pin")
+        for row in result[1:]:
+            row.extend([""] * max(0, len(headers) - len(row)))
+            if clean_name(row[name_index]).casefold() == staff_name.casefold():
+                row[pin_index] = pin
+                matched["value"] = True
+                break
+        if not matched["value"]:
+            raise ValueError("That staff member is no longer available.")
+        return result
+
+    Workbook(SETTINGS_WORKBOOK_PATH).update("Staff", update)
+
+
+def current_timesheet_staff():
+    selected = clean_name(session.get("timesheet_staff"))
+    for row in timesheet_staff_records():
+        if row["name"].casefold() == selected.casefold():
+            return row["name"]
+    session.pop("timesheet_staff", None)
+    return ""
+
+
+def save_settings_names(sheet, names):
+    def update(rows):
+        inactive = [row for row in rows[1:] if len(row) > 1 and not settings_row_active({"active": row[1]}) and row[0] not in names]
+        return [["name", "active"]] + [[name, "1"] for name in names] + inactive
+    Workbook(SETTINGS_WORKBOOK_PATH).update(sheet, update)
+
+
+def sync_workbook_customers(names):
+    def update(rows):
+        headers = rows[0]
+        name_index = headers.index("customer_name")
+        active_index = headers.index("active") if "active" in headers else None
+        requested = {name.casefold(): name for name in names}
+        result = [list(headers)]
+        seen = set()
+        for previous in rows[1:]:
+            row = list(previous) + [""] * max(0, len(headers) - len(previous))
+            key = row[name_index].casefold()
+            if key in requested:
+                row[name_index] = requested[key]
+                result.append(row)
+                seen.add(key)
+            elif active_index is not None and not settings_row_active({"active": row[active_index]}):
+                result.append(row)
+        for key, name in requested.items():
+            if key not in seen:
+                row = [""] * len(headers)
+                row[name_index] = name
+                if active_index is not None:
+                    row[active_index] = "1"
+                result.append(row)
+        return result
+    Workbook(SETTINGS_WORKBOOK_PATH).update("Customers", update)
+
+
+def save_workbook_customer(name, email, rate, row_number, field_values):
+    rate = str(rate or "").strip()
+    if rate:
+        try:
+            rate = ("%.2f" % float(rate)).rstrip("0").rstrip(".")
+        except ValueError:
+            return False, "Rate per ton must be a number"
+    def update(rows):
+        result = [list(row) for row in rows]
+        headers = result[0]
+        name_index = headers.index("customer_name")
+        matches = [index for index, row in enumerate(result[1:], 1) if (index + 1 == int(row_number) if row_number is not None else len(row) > name_index and clean_name(row[name_index]).casefold() == name.casefold())]
+        if not matches:
+            if row_number is not None:
+                raise ValueError("Customer row no longer exists. Reload the page.")
+            result.append([""] * len(headers))
+            matches = [len(result) - 1]
+            for key, value in {"customer_name": name, "active": "1", "vat_rate": "20"}.items():
+                if key in headers:
+                    result[-1][headers.index(key)] = value
+        values = {"email": str(email or "").strip(), "rate_per_ton": rate}
+        values.update(field_values or {})
+        for index in matches:
+            result[index].extend([""] * max(0, len(headers) - len(result[index])))
+            for key, value in values.items():
+                if key in headers:
+                    result[index][headers.index(key)] = str(value or "")
+        return result
+    try:
+        Workbook(SETTINGS_WORKBOOK_PATH).update("Customers", update)
+        return True, "%s updated" % name
+    except (OSError, ValueError, zipfile.BadZipFile):
+        return False, "Could not update Customers in settings.xlsx. Close Excel and try again."
+
+
+def ensure_settings_workbook():
+    if settings_workbook_exists():
+        ensure_timesheet_recipient_column()
+        ensure_staff_pin_column()
+        ensure_settings_name_sheet("Machinery")
+        return
+    # Read the legacy files only for the initial migration, before creating the workbook.
+    config = load_email_config()
+    invoice_settings = load_app_settings()
+    raw_customers = load_customer_master_raw_rows()
+    header_index = next((index for index, row in enumerate(raw_customers) if "customer_name" in [clean_name(cell).lower() for cell in row]), None)
+    if header_index is None:
+        customers = [list(CUSTOMER_MASTER_HEADERS)]
+    else:
+        customers = [[clean_name(cell).lower() for cell in raw_customers[header_index]]] + raw_customers[header_index + 1:]
+    name_index = customers[0].index("customer_name")
+    existing_names = {row[name_index].casefold() for row in customers[1:] if len(row) > name_index}
+    for name in load_customers():
+        if name.casefold() not in existing_names:
+            row = [""] * len(customers[0])
+            row[name_index] = name
+            if "active" in customers[0]:
+                row[customers[0].index("active")] = "1"
+            customers.append(row)
+            existing_names.add(name.casefold())
+    recipient_options = load_email_recipient_options()
+    recipients = [["name", "email", "active", "summary", "invoice_option", "timesheet"]]
+    known_emails = set()
+    if os.path.exists(EMAIL_SETTINGS_CSV_PATH):
+        with open(EMAIL_SETTINGS_CSV_PATH, newline="", encoding="utf-8-sig") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("record_type", "").strip().lower() == "recipient" and row.get("email", "").strip():
+                    email = row["email"].strip()
+                    summary = "1" if email in config.get("to_emails", []) or not settings_row_active(row) else "0"
+                    recipients.append([row.get("name", ""), email, row.get("active", "1"), summary, "1", summary])
+                    known_emails.add(email.lower())
+    for email in config.get("to_emails", []):
+        if email.lower() not in known_emails:
+            option = next((row for row in recipient_options if row["email"].lower() == email.lower()), None)
+            recipients.append([option["name"] if option else "", email, "1", "1", "1" if option else "0", "1"])
+            known_emails.add(email.lower())
+    summary_order = {email.lower(): index for index, email in enumerate(config.get("to_emails", []))}
+    recipients[1:] = sorted(recipients[1:], key=lambda row: summary_order.get(row[1].lower(), len(summary_order)))
+    staff = ["Owen Curl"]
+    timesheets_path = os.path.join(DATA_DIR, "timesheets.sqlite3")
+    if os.path.exists(timesheets_path):
+        connection = sqlite3.connect(timesheets_path)
+        try:
+            for row in connection.execute("SELECT DISTINCT name FROM timesheets"):
+                if row[0] and row[0] not in staff:
+                    staff.append(row[0])
+        finally:
+            connection.close()
+    field_map = load_field_map()
+    Workbook(SETTINGS_WORKBOOK_PATH).create({
+        "Customers": customers,
+        "Staff": [["name", "active", "pin"]] + [[name, "1", ""] for name in staff],
+        "Companies": [["name", "active"]] + [[name, "1"] for name in TIMESHEET_COMPANIES],
+        "Email Settings": [["setting", "value"]] + [[key, value] for key, value in config.items() if key != "to_emails"],
+        "Email Recipients": recipients,
+        "Invoice Settings": [["setting", "value"]] + [[key, value] for key, value in invoice_settings.items()],
+        "Farms": [["name", "active"]] + [[name, "1"] for name in load_farms()],
+        "Fields": [["customer_name", "farm_name", "field_name", "active"]] + [[customer, farm, field, "1"] for customer, farms in field_map.items() for farm, fields in farms.items() for field in fields],
+        "Muck Types": [["name", "active"]] + [[name, "1"] for name in load_muck_types()],
+        "Straw Crops": [["name", "active"]] + [[name, "1"] for name in ["Wheat", "Barley", "Spring Barley", "Oats", "Hay"]],
+        "Machinery": [["name", "active"]],
+        "Read Me": [["topic", "instructions"],
+                    ["Editing", "Edit values under the existing headings. Save and close Excel, then refresh the app. Keep tab names and column headings unchanged."],
+                    ["Staff", "Each active staff name appears as a Timesheet button. A person with a blank PIN sets one the first time they choose their name. active 1 = available, 0 = hidden."],
+                    ["Companies", "Company names used by the timesheet dropdown."],
+                    ["Machinery", "Machinery names offered when adding maintenance records. New names entered in the app are added here."],
+                    ["Email Recipients", "summary 1 = receives scheduled summaries; invoice_option 1 = available for invoice copies; timesheet 1 = receives completed monthly timesheets. active 0 disables the row."],
+                    ["Email Settings", "enabled controls weekly email; monthly_enabled controls month-end email. 1 = enabled, 0 = disabled. send_weekday: Monday 0 through Sunday 6. Hours use 0–23."],
+                    ["Customers", "Customer and farm addresses, email, price per ton and VAT. One row per customer/farm. active 0 hides the row."],
+                    ["Saved work", "Timesheets, jobs, invoices and straw records remain in their existing data stores."],
+                    ["Original files", "Existing CSV, JSON and customer_master.xlsx files are retained as migration backups; settings.xlsx is now the settings source."]],
+    })
+
+
+def ensure_timesheet_recipient_column():
+    try:
+        rows = Workbook(SETTINGS_WORKBOOK_PATH).rows("Email Recipients")
+    except Exception:
+        return
+    if not rows or "timesheet" in [str(value).strip().lower() for value in rows[0]]:
+        return
+    updated = [list(rows[0]) + ["timesheet"]]
+    headers = [str(value).strip().lower() for value in rows[0]]
+    summary_index = headers.index("summary") if "summary" in headers else None
+    for row in rows[1:]:
+        value = row[summary_index] if summary_index is not None and summary_index < len(row) else "0"
+        updated.append(list(row) + [value])
+    Workbook(SETTINGS_WORKBOOK_PATH).set_rows("Email Recipients", updated)
+
+
+def ensure_staff_pin_column():
+    try:
+        rows = Workbook(SETTINGS_WORKBOOK_PATH).rows("Staff")
+    except Exception:
+        return
+    headers = [str(value).strip().lower() for value in rows[0]] if rows else []
+    if "pin" in headers:
+        return
+    updated = [list(rows[0]) + ["pin"]]
+    for row in rows[1:]:
+        updated.append(list(row) + [""])
+    Workbook(SETTINGS_WORKBOOK_PATH).set_rows("Staff", updated)
+
+
+def ensure_settings_name_sheet(sheet):
+    try:
+        Workbook(SETTINGS_WORKBOOK_PATH).rows(sheet)
+        return
+    except Exception:
+        pass
+    Workbook(SETTINGS_WORKBOOK_PATH).add_sheet(sheet, [["name", "active"]])
+
+
 def load_app_settings():
-    data = read_json_file(APP_SETTINGS_PATH, {})
+    data = settings_key_values("Invoice Settings") if settings_workbook_exists() else read_json_file(APP_SETTINGS_PATH, {})
     merged = dict(DEFAULT_APP_SETTINGS)
     if isinstance(data, dict):
         merged.update(data)
@@ -3470,7 +3822,10 @@ def load_app_settings():
 def save_app_settings(settings):
     current = load_app_settings()
     current.update(settings if isinstance(settings, dict) else {})
-    write_json_atomic(APP_SETTINGS_PATH, current)
+    if settings_workbook_exists():
+        update_settings_key_values("Invoice Settings", current)
+    else:
+        write_json_atomic(APP_SETTINGS_PATH, current)
 
 
 def invoice_from_email(config):
@@ -3600,6 +3955,8 @@ def xlsx_first_sheet_rows(path):
 
 
 def load_customer_master_raw_rows():
+    if settings_workbook_exists():
+        return Workbook(SETTINGS_WORKBOOK_PATH).rows("Customers")
     if os.path.exists(CUSTOMER_MASTER_XLSX_PATH):
         rows = xlsx_first_sheet_rows(CUSTOMER_MASTER_XLSX_PATH)
         if rows:
@@ -3771,6 +4128,8 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
     customer_name = clean_name(customer_name)
     if not customer_name:
         return False, "Customer is required"
+    if settings_workbook_exists():
+        return save_workbook_customer(customer_name, customer_email, rate_per_ton_text, row_number, field_values)
     if not os.path.exists(CUSTOMER_MASTER_XLSX_PATH):
         return False, "customer_master.xlsx could not be found"
 
@@ -4230,7 +4589,7 @@ def parse_csv_bool(value, default=False):
 
 
 def parse_csv_int(value, default):
-    text = str(value or "").strip()
+    text = str(value if value is not None else "").strip()
     if not text:
         return int(default)
     try:
@@ -4240,6 +4599,19 @@ def parse_csv_int(value, default):
 
 
 def load_email_settings_csv():
+    if settings_workbook_exists():
+        values = settings_key_values("Email Settings")
+        parsed = dict(DEFAULT_EMAIL_CONFIG)
+        for key, default in DEFAULT_EMAIL_CONFIG.items():
+            value = values.get(key, default)
+            if isinstance(default, bool):
+                parsed[key] = parse_csv_bool(value, default)
+            elif isinstance(default, int):
+                parsed[key] = parse_csv_int(value, default)
+            elif key != "to_emails":
+                parsed[key] = str(value or "")
+        parsed["to_emails"] = [row["email"].strip() for row in Workbook(SETTINGS_WORKBOOK_PATH).records("Email Recipients") if settings_row_active(row) and parse_csv_bool(row.get("summary", "1"), True) and row.get("email", "").strip()]
+        return parsed
     if not os.path.exists(EMAIL_SETTINGS_CSV_PATH):
         return {}
 
@@ -4299,6 +4671,12 @@ def load_email_settings_csv():
 
 
 def update_email_settings_csv(values):
+    if settings_workbook_exists():
+        updates = {key: values.get(key, "") for key in ["smtp_host", "smtp_port", "smtp_username", "from_email", "use_tls"]}
+        if values.get("smtp_password"):
+            updates["smtp_password"] = values["smtp_password"]
+        update_settings_key_values("Email Settings", updates)
+        return True
     if not os.path.exists(EMAIL_SETTINGS_CSV_PATH):
         return False
     try:
@@ -4345,6 +4723,9 @@ def update_email_settings_csv(values):
 
 
 def load_email_recipient_options():
+    if settings_workbook_exists():
+        options = [{"email": row["email"].strip(), "name": row.get("name", "").strip() or row["email"].strip()} for row in Workbook(SETTINGS_WORKBOOK_PATH).records("Email Recipients") if settings_row_active(row) and parse_csv_bool(row.get("invoice_option", "1"), True) and row.get("email", "").strip()]
+        return sorted(options, key=lambda row: (row["name"].lower(), row["email"].lower()))
     if not os.path.exists(EMAIL_SETTINGS_CSV_PATH):
         return []
 
@@ -4373,6 +4754,18 @@ def load_email_recipient_options():
         })
     options.sort(key=lambda item: (item["name"].lower(), item["email"].lower()))
     return options
+
+
+def load_timesheet_email_recipients():
+    if settings_workbook_exists():
+        recipients = []
+        for row in Workbook(SETTINGS_WORKBOOK_PATH).records("Email Recipients"):
+            enabled = row.get("timesheet", row.get("summary", "0"))
+            email = str(row.get("email", "") or "").strip()
+            if settings_row_active(row) and parse_csv_bool(enabled, False) and email:
+                recipients.append(email)
+        return normalize_email_list(recipients)
+    return normalize_email_list(load_email_config().get("to_emails", []))
 
 
 def invoice_accounts_copy_emails(invoice_recipient_options):
@@ -4409,7 +4802,7 @@ def render_invoice_template(template_text, invoice):
 
 
 def load_email_config():
-    data = read_json_file(EMAIL_CONFIG_PATH, {})
+    data = {} if settings_workbook_exists() else read_json_file(EMAIL_CONFIG_PATH, {})
     merged = dict(DEFAULT_EMAIL_CONFIG)
     if isinstance(data, dict):
         merged.update(data)
@@ -4433,11 +4826,11 @@ def load_email_config():
             to_emails.append(email)
     merged["to_emails"] = to_emails
     merged["send_weekday"] = max(0, min(6, int(merged.get("send_weekday", 0) or 0)))
-    merged["send_hour"] = max(0, min(23, int(merged.get("send_hour", 7) or 7)))
+    merged["send_hour"] = max(0, min(23, parse_csv_int(merged.get("send_hour"), 7)))
     merged["send_minute"] = max(0, min(59, int(merged.get("send_minute", 0) or 0)))
     merged["monthly_enabled"] = bool(merged.get("monthly_enabled", merged.get("enabled", False)))
-    merged["monthly_send_hour"] = max(0, min(23, int(merged.get("monthly_send_hour", merged.get("send_hour", 7)) or merged.get("send_hour", 7))))
-    merged["monthly_send_minute"] = max(0, min(59, int(merged.get("monthly_send_minute", merged.get("send_minute", 0)) or merged.get("send_minute", 0))))
+    merged["monthly_send_hour"] = max(0, min(23, parse_csv_int(merged.get("monthly_send_hour"), merged["send_hour"])))
+    merged["monthly_send_minute"] = max(0, min(59, parse_csv_int(merged.get("monthly_send_minute"), merged["send_minute"])))
     merged["subject_prefix"] = str(merged.get("subject_prefix", "A. Farrell Contracting") or "A. Farrell Contracting").strip()
     return merged
 
@@ -4569,8 +4962,8 @@ def normalize_customer_case_storage():
         return
 
     master_rows = load_customer_master_rows()
-    customers_data = read_json_file(CUSTOMERS_PATH, [])
-    field_map_data = read_json_file(FIELD_MAP_PATH, {})
+    customers_data = load_customers()
+    field_map_data = load_field_map()
     invoice_ledger_data = read_json_file(INVOICE_LEDGER_PATH, [])
 
     jobs_rows = []
@@ -4679,8 +5072,8 @@ def normalize_customer_case_storage():
             normalized_invoice_ledger.append(updated)
 
     if changed:
-        write_json_atomic(CUSTOMERS_PATH, normalized_customers)
-        write_json_atomic(FIELD_MAP_PATH, normalized_field_map)
+        save_customers(normalized_customers)
+        save_field_map(normalized_field_map)
         write_json_atomic(INVOICE_LEDGER_PATH, normalized_invoice_ledger)
         write_json_lines_atomic(JOBS_PATH, normalized_jobs)
 
@@ -4688,7 +5081,7 @@ def normalize_customer_case_storage():
 
 
 def load_customers():
-    data = read_json_file(CUSTOMERS_PATH, [])
+    data = [row.get("customer_name", "") for row in Workbook(SETTINGS_WORKBOOK_PATH).records("Customers") if settings_row_active(row)] if settings_workbook_exists() else read_json_file(CUSTOMERS_PATH, [])
     if not isinstance(data, list):
         return []
     names = []
@@ -4713,11 +5106,14 @@ def save_customers(customers):
             seen.add(key)
             cleaned.append(name)
     cleaned.sort(key=lambda item: item.lower())
-    write_json_atomic(CUSTOMERS_PATH, cleaned)
+    if settings_workbook_exists():
+        sync_workbook_customers(cleaned)
+    else:
+        write_json_atomic(CUSTOMERS_PATH, cleaned)
 
 
 def load_farms():
-    data = read_json_file(FARMS_PATH, [])
+    data = settings_names("Farms", []) if settings_workbook_exists() else read_json_file(FARMS_PATH, [])
     if not isinstance(data, list):
         return []
     names = []
@@ -4736,7 +5132,10 @@ def save_farms(farms):
         if name and name not in cleaned:
             cleaned.append(name)
     cleaned.sort(key=lambda item: item.lower())
-    write_json_atomic(FARMS_PATH, cleaned)
+    if settings_workbook_exists():
+        save_settings_names("Farms", cleaned)
+    else:
+        write_json_atomic(FARMS_PATH, cleaned)
 
 
 def sync_farms_store(master_rows=None, jobs=None, field_map=None):
@@ -4753,6 +5152,10 @@ def sync_farms_store(master_rows=None, jobs=None, field_map=None):
             return
         seen.add(key)
         farms.append(name)
+
+    if settings_workbook_exists():
+        for name in load_farms():
+            add_farm(name)
 
     for row in master_rows:
         if isinstance(row, dict):
@@ -4784,7 +5187,7 @@ def load_muck_types(master_rows=None):
         if name and name not in names:
             names.append(name)
 
-    data = read_json_file(MUCK_TYPES_PATH, [])
+    data = settings_names("Muck Types", []) if settings_workbook_exists() else read_json_file(MUCK_TYPES_PATH, [])
     if isinstance(data, list):
         for item in data:
             name = clean_name(item)
@@ -4802,11 +5205,20 @@ def save_muck_types(muck_types):
         if name and name not in cleaned:
             cleaned.append(name)
     cleaned.sort(key=lambda item: item.lower())
-    write_json_atomic(MUCK_TYPES_PATH, cleaned)
+    if settings_workbook_exists():
+        save_settings_names("Muck Types", cleaned)
+    else:
+        write_json_atomic(MUCK_TYPES_PATH, cleaned)
 
 
 def load_field_map():
-    data = read_json_file(FIELD_MAP_PATH, {})
+    if settings_workbook_exists():
+        data = {}
+        for row in Workbook(SETTINGS_WORKBOOK_PATH).records("Fields"):
+            if settings_row_active(row) and row.get("customer_name") and row.get("field_name"):
+                data.setdefault(row["customer_name"], {}).setdefault(row.get("farm_name", ""), []).append(row["field_name"])
+    else:
+        data = read_json_file(FIELD_MAP_PATH, {})
     if not isinstance(data, dict):
         return {}
     cleaned = {}
@@ -4862,7 +5274,10 @@ def save_field_map(field_map):
                     customer_bucket[farm_key] = bucket
         if customer_bucket:
             out[customer_name] = customer_bucket
-    write_json_atomic(FIELD_MAP_PATH, out)
+    if settings_workbook_exists():
+        Workbook(SETTINGS_WORKBOOK_PATH).set_rows("Fields", [["customer_name", "farm_name", "field_name", "active"]] + [[customer, farm, field, "1"] for customer, farms in out.items() for farm, fields in farms.items() for field in fields])
+    else:
+        write_json_atomic(FIELD_MAP_PATH, out)
 
 
 def load_jobs():
@@ -6179,6 +6594,32 @@ def enforce_invoice_single_page_print_settings(xlsx_bytes):
             entries = {name: archive.read(name) for name in archive.namelist()}
     except Exception:
         return xlsx_bytes
+
+    # The invoice sheet is rebuilt from scratch, so the template's cached
+    # calculation chain no longer matches the generated cells.
+    entries.pop("xl/calcChain.xml", None)
+    workbook_rels_path = "xl/_rels/workbook.xml.rels"
+    workbook_rels_bytes = entries.get(workbook_rels_path)
+    if workbook_rels_bytes:
+        try:
+            rels_root = ET.fromstring(workbook_rels_bytes)
+            for relationship in list(rels_root):
+                if str(relationship.attrib.get("Type", "")).endswith("/calcChain"):
+                    rels_root.remove(relationship)
+            entries[workbook_rels_path] = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
+        except Exception:
+            pass
+    content_types_path = "[Content_Types].xml"
+    content_types_bytes = entries.get(content_types_path)
+    if content_types_bytes:
+        try:
+            content_types_root = ET.fromstring(content_types_bytes)
+            for override in list(content_types_root):
+                if override.attrib.get("PartName") == "/xl/calcChain.xml":
+                    content_types_root.remove(override)
+            entries[content_types_path] = ET.tostring(content_types_root, encoding="utf-8", xml_declaration=True)
+        except Exception:
+            pass
 
     sheet_path = "xl/worksheets/sheet1.xml"
     sheet_bytes = entries.get(sheet_path)
@@ -8725,7 +9166,799 @@ def web_manifest():
 @app.route("/")
 def home():
     ensure_data_dir()
-    return render_template_string(HTML, **build_context())
+    return render_template_string(DASHBOARD_HTML)
+
+
+@app.route("/muck")
+def muck_home():
+    ensure_data_dir()
+    return render_template_string(HTML, **build_context(invoice_page=False))
+
+
+@app.route("/straw")
+def straw_home():
+    ensure_data_dir()
+    return render_template("straw_app.html", farms=load_farms(), crops=settings_names("Straw Crops", ["Wheat", "Barley", "Spring Barley", "Oats", "Hay"]))
+
+
+def normalize_straw_state(value):
+    value = value if isinstance(value, dict) else {}
+    return {
+        "fields": value.get("fields") if isinstance(value.get("fields"), list) else [],
+        "stocktakes": value.get("stocktakes") if isinstance(value.get("stocktakes"), list) else [],
+        "loads": value.get("loads") if isinstance(value.get("loads"), list) else [],
+        "stockMovements": value.get("stockMovements") if isinstance(value.get("stockMovements"), list) else [],
+    }
+
+
+@app.route("/api/straw/state", methods=["GET", "PUT"])
+def straw_state():
+    if request.method in ("GET", "HEAD"):
+        response = jsonify(normalize_straw_state(read_json_file(STRAW_STATE_PATH, {})))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Please submit valid Straw app data."), 400
+    current = normalize_straw_state(read_json_file(STRAW_STATE_PATH, {}))
+    updated = normalize_straw_state(payload)
+    updated["loads"] = current["loads"]
+    write_json_atomic(STRAW_STATE_PATH, updated)
+    return jsonify(ok=True)
+
+
+def migrate_legacy_straw_loads(connection):
+    state = normalize_straw_state(read_json_file(STRAW_STATE_PATH, {}))
+    for index, load in enumerate(state["loads"]):
+        if not isinstance(load, dict):
+            continue
+        migration_key = "legacy-load:%s" % clean_name(load.get("id") or index)
+        if connection.execute("SELECT 1 FROM straw_migrations WHERE migration_key=?", (migration_key,)).fetchone():
+            continue
+        date_text = str(load.get("date", "") or "").strip()
+        try:
+            parsed = datetime.fromisoformat(date_text.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = datetime.now()
+        try:
+            bale_total = max(0, int(round(float(load.get("bales", 0) or 0))))
+        except (TypeError, ValueError):
+            bale_total = 0
+        weight_total = str(load.get("weight", "") or "").strip()
+        try:
+            weight_total = ("%.2f" % float(weight_total)).rstrip("0").rstrip(".") if weight_total else ""
+        except ValueError:
+            weight_total = ""
+        registration = clean_name(load.get("vehicleReg")).upper() or "NOT RECORDED"
+        customer = clean_name(load.get("customer")) or "Customer not recorded"
+        updated_at = str(load.get("updatedAt", "") or datetime.now().isoformat(timespec="seconds"))
+        connection.execute(
+            "INSERT INTO straw_deliveries (customer, registration, delivery_date, delivery_time, bale_total, weight_total, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (customer, registration, parsed.strftime("%Y-%m-%d"), parsed.strftime("%H:%M"), bale_total, weight_total, updated_at),
+        )
+        connection.execute("INSERT INTO straw_migrations (migration_key, migrated_at) VALUES (?, ?)", (migration_key, datetime.now().isoformat(timespec="seconds")))
+
+
+def straw_delivery_connection():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    connection = sqlite3.connect(os.path.join(DATA_DIR, "straw_deliveries.sqlite3"), timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("""CREATE TABLE IF NOT EXISTS straw_deliveries (
+        id INTEGER PRIMARY KEY,
+        customer TEXT NOT NULL COLLATE NOCASE,
+        registration TEXT NOT NULL COLLATE NOCASE,
+        delivery_date TEXT NOT NULL,
+        delivery_time TEXT NOT NULL,
+        bale_total INTEGER NOT NULL,
+        weight_total TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    connection.execute("""CREATE TABLE IF NOT EXISTS straw_customers (
+        name TEXT PRIMARY KEY COLLATE NOCASE,
+        updated_at TEXT NOT NULL
+    )""")
+    connection.execute("""CREATE TABLE IF NOT EXISTS straw_migrations (
+        migration_key TEXT PRIMARY KEY,
+        migrated_at TEXT NOT NULL
+    )""")
+    with connection:
+        migrate_legacy_straw_loads(connection)
+    connection.execute(
+        "INSERT OR IGNORE INTO straw_customers (name, updated_at) SELECT DISTINCT customer, updated_at FROM straw_deliveries WHERE TRIM(customer) <> '' AND customer <> 'Customer not recorded' COLLATE NOCASE"
+    )
+    return connection
+
+
+def save_straw_customer(connection, customer):
+    customer = clean_name(customer)
+    if not customer:
+        return
+    connection.execute(
+        "INSERT INTO straw_customers (name, updated_at) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
+        (customer, datetime.now().isoformat(timespec="seconds")),
+    )
+
+
+@app.route("/api/straw/customers", methods=["GET", "POST"])
+def straw_customers():
+    connection = straw_delivery_connection()
+    try:
+        if request.method in ("GET", "HEAD"):
+            rows = connection.execute("SELECT name FROM straw_customers ORDER BY name COLLATE NOCASE").fetchall()
+            response = jsonify(customers=[row["name"] for row in rows])
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        payload = request.get_json(silent=True)
+        customer = clean_name(payload.get("customer")) if isinstance(payload, dict) else ""
+        if not customer or len(customer) > 160:
+            return jsonify(error="Enter a customer name."), 400
+        with connection:
+            save_straw_customer(connection, customer)
+        return jsonify(customer=customer), 201
+    finally:
+        connection.close()
+
+
+@app.route("/api/straw/deliveries", methods=["GET", "POST"])
+@app.route("/api/straw/deliveries/<int:delivery_id>", methods=["PUT"])
+def straw_deliveries(delivery_id=None):
+    if request.method == "GET":
+        connection = straw_delivery_connection()
+        try:
+            rows = connection.execute("SELECT * FROM straw_deliveries ORDER BY delivery_date DESC, delivery_time DESC, id DESC").fetchall()
+            response = jsonify(deliveries=[dict(row) for row in rows])
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Please submit a valid delivered load."), 400
+    customer = clean_name(payload.get("customer"))
+    registration = clean_name(payload.get("registration")).upper()
+    delivery_date = str(payload.get("delivery_date", "") or "").strip()
+    delivery_time = str(payload.get("delivery_time", "") or "").strip()
+    weight_total = str(payload.get("weight_total", "") or "").strip()
+    try:
+        bale_total = int(str(payload.get("bale_total", "") or "").strip())
+    except ValueError:
+        return jsonify(error="Enter the bale total as a whole number."), 400
+    if not customer or len(customer) > 160:
+        return jsonify(error="Enter a customer name."), 400
+    if not registration or len(registration) > 30:
+        return jsonify(error="Enter the lorry or trailer registration."), 400
+    try:
+        if datetime.strptime(delivery_date, "%Y-%m-%d").strftime("%Y-%m-%d") != delivery_date:
+            raise ValueError()
+    except ValueError:
+        return jsonify(error="Choose a valid delivery date."), 400
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", delivery_time):
+        return jsonify(error="Choose a valid delivery time."), 400
+    if bale_total < 0:
+        return jsonify(error="Bale total cannot be negative."), 400
+    if weight_total:
+        try:
+            weight_number = float(weight_total)
+            if weight_number < 0:
+                raise ValueError()
+            weight_total = ("%.2f" % weight_number).rstrip("0").rstrip(".")
+        except ValueError:
+            return jsonify(error="Weight total must be a positive number."), 400
+    if delivery_id is not None and type(payload.get("version")) is not int:
+        return jsonify(error="Reopen this delivered load before saving it again."), 400
+
+    values = (customer, registration, delivery_date, delivery_time, bale_total, weight_total)
+    connection = straw_delivery_connection()
+    try:
+        with connection:
+            updated_at = datetime.now().isoformat(timespec="seconds")
+            save_straw_customer(connection, customer)
+            if delivery_id is None:
+                cursor = connection.execute(
+                    "INSERT INTO straw_deliveries (customer, registration, delivery_date, delivery_time, bale_total, weight_total, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                    values + (updated_at,),
+                )
+                delivery_id = cursor.lastrowid
+            else:
+                cursor = connection.execute(
+                    "UPDATE straw_deliveries SET customer=?, registration=?, delivery_date=?, delivery_time=?, bale_total=?, weight_total=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    values + (updated_at, delivery_id, payload["version"]),
+                )
+                if cursor.rowcount != 1:
+                    return jsonify(error="This delivered load changed elsewhere. Reopen it before saving again."), 409
+            row = connection.execute("SELECT * FROM straw_deliveries WHERE id=?", (delivery_id,)).fetchone()
+        return jsonify(delivery=dict(row)), 201 if request.method == "POST" else 200
+    finally:
+        connection.close()
+
+
+def maintenance_connection():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    connection = sqlite3.connect(os.path.join(DATA_DIR, "maintenance.sqlite3"), timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("""CREATE TABLE IF NOT EXISTS maintenance (
+        id INTEGER PRIMARY KEY,
+        maintenance_date TEXT NOT NULL,
+        machinery TEXT NOT NULL COLLATE NOCASE,
+        company TEXT NOT NULL,
+        machine_hours TEXT NOT NULL,
+        work_completed TEXT NOT NULL,
+        parts_used TEXT NOT NULL,
+        cost TEXT NOT NULL,
+        completed_by TEXT NOT NULL,
+        next_service_date TEXT NOT NULL,
+        notes TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    return connection
+
+
+def load_maintenance_entries():
+    connection = maintenance_connection()
+    try:
+        return [dict(row) for row in connection.execute("SELECT * FROM maintenance ORDER BY maintenance_date DESC, id DESC").fetchall()]
+    finally:
+        connection.close()
+
+
+@app.route("/maintenance")
+def maintenance_home():
+    machinery = settings_names("Machinery", [])
+    for row in load_maintenance_entries():
+        name = clean_name(row.get("machinery"))
+        if name and name not in machinery:
+            machinery.append(name)
+    machinery.sort(key=lambda value: value.lower())
+    return render_template(
+        "maintenance.html",
+        machinery=machinery,
+    )
+
+
+@app.route("/api/maintenance", methods=["GET", "POST"])
+@app.route("/api/maintenance/<int:entry_id>", methods=["PUT"])
+def maintenance_entries(entry_id=None):
+    if request.method == "GET":
+        response = jsonify(entries=load_maintenance_entries())
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Please submit a valid maintenance record."), 400
+    keys = ("maintenance_date", "machinery", "company", "machine_hours", "work_completed", "parts_used", "cost", "completed_by", "next_service_date", "notes")
+    values = {}
+    for key in keys:
+        value = payload.get(key, "")
+        if not isinstance(value, str):
+            return jsonify(error="Invalid maintenance field: " + key), 400
+        values[key] = value.strip() if key not in ("work_completed", "parts_used", "notes") else value.strip()
+    try:
+        if datetime.strptime(values["maintenance_date"], "%Y-%m-%d").strftime("%Y-%m-%d") != values["maintenance_date"]:
+            raise ValueError()
+    except ValueError:
+        return jsonify(error="Choose a valid maintenance date."), 400
+    if not values["machinery"] or len(values["machinery"]) > 160:
+        return jsonify(error="Enter the machinery name."), 400
+    if not values["work_completed"] or len(values["work_completed"]) > 20000:
+        return jsonify(error="Enter the maintenance work completed."), 400
+    if len(values["completed_by"]) > 120:
+        return jsonify(error="Completed by must be no more than 120 characters."), 400
+    for key, label in (("machine_hours", "Machine hours"), ("cost", "Cost")):
+        if values[key]:
+            try:
+                number = float(values[key])
+                if number < 0:
+                    raise ValueError()
+                values[key] = ("%.2f" % number).rstrip("0").rstrip(".")
+            except ValueError:
+                return jsonify(error=label + " must be a positive number."), 400
+    if values["next_service_date"]:
+        try:
+            if datetime.strptime(values["next_service_date"], "%Y-%m-%d").strftime("%Y-%m-%d") != values["next_service_date"]:
+                raise ValueError()
+        except ValueError:
+            return jsonify(error="Choose a valid next service date."), 400
+    if len(values["parts_used"]) > 20000 or len(values["notes"]) > 20000:
+        return jsonify(error="Please keep parts and notes below 20,000 characters."), 400
+    if entry_id is not None and type(payload.get("version")) is not int:
+        return jsonify(error="Reopen this maintenance record before saving."), 400
+
+    connection = maintenance_connection()
+    try:
+        with connection:
+            params = tuple(values[key] for key in keys)
+            updated_at = datetime.now().isoformat(timespec="seconds")
+            if entry_id is None:
+                cursor = connection.execute(
+                    "INSERT INTO maintenance (maintenance_date, machinery, company, machine_hours, work_completed, parts_used, cost, completed_by, next_service_date, notes, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    params + (updated_at,),
+                )
+                entry_id = cursor.lastrowid
+            else:
+                cursor = connection.execute(
+                    "UPDATE maintenance SET maintenance_date=?, machinery=?, company=?, machine_hours=?, work_completed=?, parts_used=?, cost=?, completed_by=?, next_service_date=?, notes=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    params + (updated_at, entry_id, payload["version"]),
+                )
+                if cursor.rowcount != 1:
+                    return jsonify(error="This record changed elsewhere. Reopen it before saving again."), 409
+            row = dict(connection.execute("SELECT * FROM maintenance WHERE id=?", (entry_id,)).fetchone())
+        try:
+            names = settings_names("Machinery", [])
+            if values["machinery"] not in names:
+                save_settings_names("Machinery", names + [values["machinery"]])
+        except Exception:
+            app.logger.warning("Maintenance saved, but machinery could not be added to settings.xlsx")
+        return jsonify(entry=row), 201 if request.method == "POST" else 200
+    finally:
+        connection.close()
+
+
+@app.route("/timesheet")
+def timesheet_home():
+    session.pop("timesheet_staff", None)
+    staff = timesheet_staff_records()
+    return render_template(
+        "timesheet_staff.html",
+        staff=staff,
+        status_msg=str(request.args.get("msg", "") or "").strip(),
+        status_ok=str(request.args.get("ok", "1")) == "1",
+    )
+
+
+@app.route("/timesheet/unlock/<path:staff_name>")
+def timesheet_unlock_form(staff_name):
+    selected = next((row for row in timesheet_staff_records() if row["name"].casefold() == clean_name(staff_name).casefold()), None)
+    if not selected:
+        return redirect(url_for("timesheet_home", ok=0, msg="That staff member is not available."))
+    configured_pin = str(selected.get("pin", "") or "").strip()
+    return render_template(
+        "timesheet_pin.html",
+        staff_name=selected["name"],
+        status_msg="",
+        pin_mode="unlock" if re.fullmatch(r"\d{4,8}", configured_pin) else "setup",
+    )
+
+
+@app.route("/timesheet/setup-pin", methods=["POST"])
+def timesheet_setup_pin():
+    staff_name = clean_name(request.form.get("staff_name"))
+    pin = str(request.form.get("new_pin", "") or "").strip()
+    confirmation = str(request.form.get("confirm_pin", "") or "").strip()
+    selected = next((row for row in timesheet_staff_records() if row["name"].casefold() == staff_name.casefold()), None)
+    if not selected:
+        return redirect(url_for("timesheet_home", ok=0, msg="That staff member is not available."))
+    if re.fullmatch(r"\d{4,8}", str(selected.get("pin", "") or "").strip()):
+        return redirect(url_for("timesheet_unlock_form", staff_name=selected["name"]))
+    if not re.fullmatch(r"\d{4,8}", pin):
+        return render_template("timesheet_pin.html", staff_name=selected["name"], pin_mode="setup", status_msg="Choose a PIN containing 4–8 digits."), 400
+    if pin != confirmation:
+        return render_template("timesheet_pin.html", staff_name=selected["name"], pin_mode="setup", status_msg="The two PINs do not match."), 400
+    try:
+        save_timesheet_staff_pin(selected["name"], pin)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        return render_template("timesheet_pin.html", staff_name=selected["name"], pin_mode="setup", status_msg=str(exc)), 500
+    session["timesheet_staff"] = selected["name"]
+    return redirect(url_for("timesheet_calendar", ok=1, msg="Your PIN has been set."))
+
+
+@app.route("/timesheet/unlock", methods=["POST"])
+def timesheet_unlock():
+    staff_name = clean_name(request.form.get("staff_name"))
+    pin = str(request.form.get("pin", "") or "").strip()
+    selected = next((row for row in timesheet_staff_records() if row["name"].casefold() == staff_name.casefold()), None)
+    if not selected:
+        return redirect(url_for("timesheet_home", ok=0, msg="That staff member is not available."))
+    now = int(time.time())
+    failures = session.get("timesheet_pin_failures", {})
+    failure = failures.get(selected["name"].casefold(), {}) if isinstance(failures, dict) else {}
+    locked_until = int(failure.get("locked_until", 0) or 0) if isinstance(failure, dict) else 0
+    if locked_until > now:
+        return render_template("timesheet_pin.html", staff_name=selected["name"], pin_mode="unlock", status_msg="Too many incorrect attempts. Try again in %s seconds." % (locked_until - now)), 429
+    configured_pin = str(selected.get("pin", "") or "").strip()
+    if not re.fullmatch(r"\d{4,8}", configured_pin):
+        return redirect(url_for("timesheet_unlock_form", staff_name=selected["name"]))
+    if not hmac.compare_digest(pin, configured_pin):
+        count = int(failure.get("count", 0) or 0) + 1 if isinstance(failure, dict) else 1
+        failures[selected["name"].casefold()] = {"count": count, "locked_until": now + 60 if count >= 5 else 0}
+        session["timesheet_pin_failures"] = failures
+        return render_template("timesheet_pin.html", staff_name=selected["name"], pin_mode="unlock", status_msg="Incorrect PIN."), 403
+    failures.pop(selected["name"].casefold(), None)
+    session["timesheet_pin_failures"] = failures
+    session["timesheet_staff"] = selected["name"]
+    return redirect(url_for("timesheet_calendar"))
+
+
+@app.route("/timesheet/change-pin", methods=["GET", "POST"])
+def timesheet_change_pin():
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return redirect(url_for("timesheet_home", ok=0, msg="Choose your name and enter your PIN."))
+    if request.method == "GET":
+        return render_template("timesheet_pin.html", staff_name=staff_name, pin_mode="change", status_msg="")
+    current_pin = str(request.form.get("current_pin", "") or "").strip()
+    new_pin = str(request.form.get("new_pin", "") or "").strip()
+    confirmation = str(request.form.get("confirm_pin", "") or "").strip()
+    selected = next((row for row in timesheet_staff_records() if row["name"].casefold() == staff_name.casefold()), None)
+    if not selected or not hmac.compare_digest(current_pin, str(selected.get("pin", "") or "").strip()):
+        return render_template("timesheet_pin.html", staff_name=staff_name, pin_mode="change", status_msg="Your current PIN is incorrect."), 403
+    if not re.fullmatch(r"\d{4,8}", new_pin):
+        return render_template("timesheet_pin.html", staff_name=staff_name, pin_mode="change", status_msg="Choose a new PIN containing 4–8 digits."), 400
+    if new_pin != confirmation:
+        return render_template("timesheet_pin.html", staff_name=staff_name, pin_mode="change", status_msg="The two new PINs do not match."), 400
+    try:
+        save_timesheet_staff_pin(staff_name, new_pin)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        return render_template("timesheet_pin.html", staff_name=staff_name, pin_mode="change", status_msg=str(exc)), 500
+    return redirect(url_for("timesheet_calendar", ok=1, msg="Your PIN has been changed."))
+
+
+@app.route("/timesheet/calendar")
+def timesheet_calendar():
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return redirect(url_for("timesheet_home", ok=0, msg="Choose your name and enter your PIN."))
+    return render_template(
+        "timesheet.html",
+        companies=settings_names("Companies", TIMESHEET_COMPANIES),
+        staff_names=[staff_name],
+        staff_name=staff_name,
+        status_msg=str(request.args.get("msg", "") or "").strip(),
+        status_ok=str(request.args.get("ok", "1")) == "1",
+    )
+
+
+def timesheet_time_options():
+    options = []
+    for minutes in range(0, 24 * 60, 15):
+        hour = minutes // 60
+        minute = minutes % 60
+        suffix = "am" if hour < 12 else "pm"
+        display_hour = hour % 12 or 12
+        options.append({"value": "%02d:%02d" % (hour, minute), "label": "%d:%02d %s" % (display_hour, minute, suffix)})
+    return options
+
+
+def timesheet_duration_label(duration_minutes):
+    hours, minutes = divmod(int(duration_minutes), 60)
+    parts = []
+    if hours:
+        parts.append("%d hour%s" % (hours, "" if hours == 1 else "s"))
+    if minutes or not parts:
+        parts.append("%d minute%s" % (minutes, "" if minutes == 1 else "s"))
+    return " ".join(parts)
+
+
+def timesheet_entry_dict(row):
+    entry = dict(row)
+    entry.update({"duration_minutes": None, "duration_label": "", "finish_date": entry.get("date", ""), "crosses_midnight": False, "daily_segments": []})
+    start_text = str(entry.get("start", "") or "")
+    finish_text = str(entry.get("finish", "") or "")
+    if not start_text or not finish_text:
+        return entry
+    try:
+        start_at = datetime.strptime("%s %s" % (entry["date"], start_text), "%Y-%m-%d %H:%M")
+        finish_at = datetime.strptime("%s %s" % (entry["date"], finish_text), "%Y-%m-%d %H:%M")
+    except (KeyError, ValueError):
+        return entry
+    if finish_at < start_at:
+        finish_at += timedelta(days=1)
+        entry["crosses_midnight"] = True
+    duration_minutes = int((finish_at - start_at).total_seconds() // 60)
+    entry["duration_minutes"] = duration_minutes
+    entry["duration_label"] = timesheet_duration_label(duration_minutes)
+    entry["finish_date"] = finish_at.strftime("%Y-%m-%d")
+    entry["finish_date_label"] = finish_at.strftime("%A %d %B %Y")
+    if entry["crosses_midnight"]:
+        start_minutes = start_at.hour * 60 + start_at.minute
+        first_minutes = (24 * 60) - start_minutes
+        second_minutes = finish_at.hour * 60 + finish_at.minute
+        if first_minutes:
+            entry["daily_segments"].append({
+                "date": entry["date"], "start": start_text, "finish": "00:00",
+                "duration_minutes": first_minutes, "duration_label": timesheet_duration_label(first_minutes),
+            })
+        if second_minutes:
+            entry["daily_segments"].append({
+                "date": entry["finish_date"], "start": "00:00", "finish": finish_text,
+                "duration_minutes": second_minutes, "duration_label": timesheet_duration_label(second_minutes),
+            })
+    else:
+        entry["daily_segments"].append({
+            "date": entry["date"], "start": start_text, "finish": finish_text,
+            "duration_minutes": duration_minutes, "duration_label": entry["duration_label"],
+        })
+    return entry
+
+
+@app.route("/timesheet/day/<day>")
+def timesheet_day(day):
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return redirect(url_for("timesheet_home", ok=0, msg="Choose your name and enter your PIN."))
+    try:
+        parsed = datetime.strptime(day, "%Y-%m-%d")
+        if parsed.strftime("%Y-%m-%d") != day:
+            raise ValueError()
+    except ValueError:
+        return "Invalid timesheet date", 404
+    return render_template(
+        "timesheet.html", companies=settings_names("Companies", TIMESHEET_COMPANIES), staff_names=[staff_name], staff_name=staff_name, time_options=timesheet_time_options(), day=day,
+        day_label=parsed.strftime("%A %d %B %Y"),
+        calendar_url=url_for("timesheet_calendar", month=day[:7]),
+    )
+
+
+def timesheet_connection():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    connection = sqlite3.connect(os.path.join(DATA_DIR, "timesheets.sqlite3"), timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("""CREATE TABLE IF NOT EXISTS timesheets (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE,
+        date TEXT NOT NULL,
+        company TEXT NOT NULL,
+        start TEXT NOT NULL,
+        finish TEXT NOT NULL,
+        notes TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(name, date, company)
+    )""")
+    return connection
+
+
+def parse_timesheet_month(month):
+    try:
+        start = datetime.strptime(str(month or ""), "%Y-%m")
+        if start.strftime("%Y-%m") != month:
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise ValueError("Choose a valid month")
+    following = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return start, following
+
+
+def format_timesheet_hours(minutes):
+    hours = float(minutes or 0) / 60.0
+    return ("%.2f" % hours).rstrip("0").rstrip(".")
+
+
+def timesheet_month_report(month, staff_name=""):
+    start, following = parse_timesheet_month(month)
+    connection = timesheet_connection()
+    try:
+        if staff_name:
+            query = "SELECT * FROM timesheets WHERE name=? COLLATE NOCASE ORDER BY date, name, company"
+            source_rows = connection.execute(query, (staff_name,)).fetchall()
+        else:
+            source_rows = connection.execute("SELECT * FROM timesheets ORDER BY date, name, company").fetchall()
+        entries = [timesheet_entry_dict(row) for row in source_rows]
+    finally:
+        connection.close()
+    rows = []
+    totals = {}
+    total_minutes = 0
+    for entry in entries:
+        segments = entry.get("daily_segments", [])
+        if not segments and start.strftime("%Y-%m-%d") <= entry.get("date", "") < following.strftime("%Y-%m-%d"):
+            segments = [{"date": entry["date"], "start": entry.get("start", ""), "finish": entry.get("finish", ""), "duration_minutes": 0, "duration_label": ""}]
+        for segment in segments:
+            segment_date = str(segment.get("date", "") or "")
+            if not (start.strftime("%Y-%m-%d") <= segment_date < following.strftime("%Y-%m-%d")):
+                continue
+            minutes = int(segment.get("duration_minutes", 0) or 0)
+            key = (entry.get("name", ""), entry.get("company", ""))
+            totals[key] = totals.get(key, 0) + minutes
+            total_minutes += minutes
+            rows.append({
+                "date": segment_date,
+                "date_label": datetime.strptime(segment_date, "%Y-%m-%d").strftime("%a %d %b %Y"),
+                "name": entry.get("name", ""),
+                "company": entry.get("company", ""),
+                "start": segment.get("start", ""),
+                "finish": segment.get("finish", ""),
+                "hours": format_timesheet_hours(minutes),
+                "duration_label": segment.get("duration_label", ""),
+                "shift_total": entry.get("duration_label", ""),
+                "source_date": entry.get("date", ""),
+                "continued": entry.get("date", "") != segment_date,
+                "notes": entry.get("notes", ""),
+            })
+    rows.sort(key=lambda row: (row["date"], row["name"].lower(), row["company"].lower(), row["start"]))
+    total_rows = [
+        {"name": key[0], "company": key[1], "minutes": minutes, "hours": format_timesheet_hours(minutes), "duration_label": timesheet_duration_label(minutes)}
+        for key, minutes in sorted(totals.items(), key=lambda item: (item[0][0].lower(), item[0][1].lower()))
+    ]
+    company_minutes = {}
+    for row in rows:
+        company_minutes[row["company"]] = company_minutes.get(row["company"], 0) + int(round(float(row["hours"] or 0) * 60))
+    company_totals = [
+        {"company": company, "minutes": minutes, "hours": format_timesheet_hours(minutes), "duration_label": timesheet_duration_label(minutes)}
+        for company, minutes in sorted(company_minutes.items(), key=lambda item: item[0].lower())
+    ]
+    return {
+        "staff_name": staff_name,
+        "month": month,
+        "month_label": start.strftime("%B %Y"),
+        "start_date": start.strftime("%Y-%m-%d"),
+        "end_date": (following - timedelta(days=1)).strftime("%Y-%m-%d"),
+        "rows": rows,
+        "totals": total_rows,
+        "company_totals": company_totals,
+        "total_minutes": total_minutes,
+        "total_hours": format_timesheet_hours(total_minutes),
+        "total_duration_label": timesheet_duration_label(total_minutes),
+    }
+
+
+def build_timesheet_month_xlsx(report):
+    rows = [[report.get("staff_name", "")], ["Company Hours Summary"], ["Company", "Hours"]]
+    for total in report["company_totals"]:
+        rows.append([total["company"], total["hours"]])
+    rows.extend([["Overall Total", report["total_hours"]], [""], ["Daily Timesheet Details"], ["Date", "Name", "Company", "Start", "Finish", "Hours on Day", "Full Shift Total", "Shift Started", "Job Details / Notes"]])
+    for row in report["rows"]:
+        rows.append([row["date"], row["name"], row["company"], row["start"], row["finish"], row["hours"], row["shift_total"], row["source_date"], row["notes"]])
+    rows.extend([[""], ["Monthly Totals"], ["Name", "Company", "Hours"]])
+    for total in report["totals"]:
+        rows.append([total["name"], total["company"], total["hours"]])
+    rows.append(["Overall", "", report["total_hours"]])
+    return build_basic_xlsx_bytes("Timesheet", "%s Timesheet" % report["month_label"], rows, [14, 18, 30, 11, 11, 13, 16, 14, 55])
+
+
+def timesheet_month_filename(report, extension="xlsx"):
+    staff_part = re.sub(r"[^a-z0-9]+", "_", str(report.get("staff_name", "") or "").lower()).strip("_")
+    return "timesheet_%s%s.%s" % ((staff_part + "_") if staff_part else "", report["month"], extension)
+
+
+def send_timesheet_month_email(report):
+    recipients = load_timesheet_email_recipients()
+    if not recipients:
+        raise RuntimeError("No active timesheet email recipients are selected in settings.xlsx")
+    config = load_email_config()
+    if not email_sender_ready(config):
+        raise RuntimeError("Email sending settings are incomplete")
+    xlsx_bytes = build_timesheet_month_xlsx(report)
+    msg = EmailMessage()
+    msg["Subject"] = "%s Timesheet - %s - %s" % (config.get("subject_prefix", "A. Farrell Contracting"), report.get("staff_name", "Staff"), report["month_label"])
+    msg["From"] = config["from_email"]
+    msg["To"] = ", ".join(recipients)
+    company_lines = ["%s: %s" % (total["company"], total["duration_label"]) for total in report["company_totals"]]
+    msg.set_content(
+        "Please find attached the completed timesheet for %s for %s.\n\nCompany hours:\n%s\n\nOverall total: %s"
+        % (report.get("staff_name", "Staff"), report["month_label"], "\n".join(company_lines) or "No recorded hours", report["total_duration_label"])
+    )
+    msg.add_attachment(xlsx_bytes, maintype="application", subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=timesheet_month_filename(report))
+    pdf_bytes = convert_xlsx_bytes_to_pdf_bytes(xlsx_bytes, timesheet_month_filename(report))
+    if pdf_bytes:
+        msg.add_attachment(pdf_bytes, maintype="application", subtype="pdf", filename=timesheet_month_filename(report, "pdf"))
+    with smtplib.SMTP(config["smtp_host"], int(config["smtp_port"]), timeout=30) as server:
+        server.ehlo()
+        if config.get("use_tls", True):
+            server.starttls()
+            server.ehlo()
+        if config.get("smtp_username"):
+            server.login(config.get("smtp_username", ""), config.get("smtp_password", ""))
+        server.send_message(msg)
+    return recipients
+
+
+@app.route("/timesheet/month/<month>/export.xlsx")
+def timesheet_month_export(month):
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return redirect(url_for("timesheet_home", ok=0, msg="Choose your name and enter your PIN."))
+    try:
+        report = timesheet_month_report(month, staff_name)
+    except ValueError:
+        return "Invalid timesheet month", 404
+    response = Response(build_timesheet_month_xlsx(report), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response.headers["Content-Disposition"] = 'attachment; filename="%s"' % timesheet_month_filename(report)
+    return response
+
+
+@app.route("/timesheet/month/<month>/print")
+def timesheet_month_print(month):
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return redirect(url_for("timesheet_home", ok=0, msg="Choose your name and enter your PIN."))
+    try:
+        report = timesheet_month_report(month, staff_name)
+    except ValueError:
+        return "Invalid timesheet month", 404
+    return render_template("timesheet_month.html", report=report)
+
+
+@app.route("/timesheet/month/complete", methods=["POST"])
+def timesheet_month_complete():
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return redirect(url_for("timesheet_home", ok=0, msg="Choose your name and enter your PIN."))
+    month = str(request.form.get("month", "") or "").strip()
+    try:
+        report = timesheet_month_report(month, staff_name)
+        if not report["rows"]:
+            raise RuntimeError("There are no timesheet entries for %s" % report["month_label"])
+        recipients = send_timesheet_month_email(report)
+        state = read_json_file(TIMESHEET_MONTH_STATE_PATH, {})
+        if not isinstance(state, dict):
+            state = {}
+        state["%s|%s" % (staff_name.casefold(), month)] = {"staff_name": staff_name, "month": month, "completed_at": datetime.now().isoformat(timespec="seconds"), "sent_to": recipients, "total_minutes": report["total_minutes"]}
+        write_json_atomic(TIMESHEET_MONTH_STATE_PATH, state)
+        return redirect(url_for("timesheet_calendar", month=month, ok=1, msg="%s timesheet for %s emailed to %s." % (report["month_label"], staff_name, ", ".join(recipients))))
+    except (ValueError, RuntimeError, OSError, smtplib.SMTPException) as exc:
+        return redirect(url_for("timesheet_calendar", month=month, ok=0, msg=str(exc)))
+
+
+@app.route("/api/timesheets", methods=["GET", "POST"])
+@app.route("/api/timesheets/<int:entry_id>", methods=["PUT"])
+def timesheet_entries(entry_id=None):
+    staff_name = current_timesheet_staff()
+    if not staff_name:
+        return jsonify(error="Unlock a staff timesheet first."), 401
+    if request.method == "GET":
+        connection = timesheet_connection()
+        try:
+            rows = connection.execute("SELECT * FROM timesheets WHERE name=? COLLATE NOCASE ORDER BY date DESC, name, company", (staff_name,)).fetchall()
+            response = jsonify(entries=[timesheet_entry_dict(row) for row in rows])
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        finally:
+            connection.close()
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Please submit a valid timesheet."), 400
+    values = {}
+    for key in ("name", "date", "company", "start", "finish", "notes"):
+        value = payload.get(key, "")
+        if not isinstance(value, str):
+            return jsonify(error="Invalid timesheet field: " + key), 400
+        values[key] = value.strip() if key != "notes" else value
+    values["name"] = staff_name
+    if values["company"] not in settings_names("Companies", TIMESHEET_COMPANIES):
+        return jsonify(error="Choose a company."), 400
+    try:
+        if datetime.strptime(values["date"], "%Y-%m-%d").strftime("%Y-%m-%d") != values["date"]:
+            raise ValueError()
+    except ValueError:
+        return jsonify(error="Choose a valid date."), 400
+    for key in ("start", "finish"):
+        if values[key] and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", values[key]):
+            return jsonify(error="Enter a valid " + key + " time."), 400
+        if values[key] and int(values[key].split(":", 1)[1]) % 15:
+            return jsonify(error="Choose a %s time in 15-minute increments." % key), 400
+    if len(values["notes"]) > 50000:
+        return jsonify(error="Please keep daily notes below 50,000 characters."), 400
+    if entry_id is not None and type(payload.get("version")) is not int:
+        return jsonify(error="Reopen this timesheet before saving."), 400
+
+    connection = timesheet_connection()
+    try:
+        with connection:
+            params = tuple(values[key] for key in ("name", "date", "company", "start", "finish", "notes"))
+            updated_at = datetime.now().isoformat(timespec="seconds")
+            if entry_id is None:
+                cursor = connection.execute(
+                    "INSERT INTO timesheets (name, date, company, start, finish, notes, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                    params + (updated_at,),
+                )
+                entry_id = cursor.lastrowid
+            else:
+                cursor = connection.execute(
+                    "UPDATE timesheets SET name=?, date=?, company=?, start=?, finish=?, notes=?, version=version+1, updated_at=? WHERE id=? AND version=? AND name=? COLLATE NOCASE",
+                    params + (updated_at, entry_id, payload["version"], staff_name),
+                )
+                if cursor.rowcount != 1:
+                    return jsonify(error="This timesheet changed elsewhere. Copy your latest notes, then reopen the saved day before updating it."), 409
+            row = connection.execute("SELECT * FROM timesheets WHERE id=?", (entry_id,)).fetchone()
+        return jsonify(entry=timesheet_entry_dict(row)), 201 if request.method == "POST" else 200
+    except sqlite3.IntegrityError:
+        return jsonify(error="A timesheet already exists for this name, date and company. Copy any new notes, then open the saved day below to continue it."), 409
+    finally:
+        connection.close()
 
 
 @app.route("/invoice")
@@ -9713,6 +10946,11 @@ def jobs_api():
     return jsonify({"ok": True, "jobs": load_jobs()})
 
 
+@app.route("/api/customers")
+def customers_api():
+    return jsonify({"ok": True, "customers": load_customers()})
+
+
 @app.route("/api/field-map")
 def field_map_api():
     return jsonify({"ok": True, "field_map": load_field_map()})
@@ -9968,6 +11206,11 @@ def update_app():
     <p>The latest update was installed. The app is restarting now and should reload automatically in a few seconds.</p>
     <a href="{{ url_for('home', ok=1, msg='App updated') }}">Return To App</a>
   </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+  </nav>
   <script>
     (function () {
       const targetUrl = {{ url_for('home', ok=1, msg='App updated')|tojson }};
@@ -9990,6 +11233,8 @@ def backup_export_zip():
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         candidate_paths = [
             ("app.py", os.path.join(APP_ROOT, "app.py")),
+            ("settings_workbook.py", os.path.join(APP_ROOT, "settings_workbook.py")),
+            ("settings.xlsx", SETTINGS_WORKBOOK_PATH),
             ("README.md", os.path.join(APP_ROOT, "README.md")),
             ("customer_master.xlsx", os.path.join(APP_ROOT, "customer_master.xlsx")),
             ("email_settings.csv", os.path.join(APP_ROOT, "email_settings.csv")),
@@ -10204,6 +11449,7 @@ def health():
 
 
 if __name__ == "__main__":
+    ensure_settings_workbook()
     ensure_data_dir()
     port = int(os.environ.get("MUCKSPREADING_APP_PORT", "8093"))
     debug_mode = str(os.environ.get("MUCKSPREADING_APP_DEBUG", "") or "").strip().lower() in ["1", "true", "yes", "on"]

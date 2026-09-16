@@ -1,0 +1,417 @@
+const STORAGE_KEY = 'straw-bale-recorder-v1';
+const state = { fields: [], stocktakes: [], loads: [], stockMovements: [], customers: [] };
+let map = null;
+let serverStateAvailable = false;
+
+const els = {};
+
+window.addEventListener('DOMContentLoaded', async () => {
+  collectElements();
+  els.seasonYear.textContent = new Date().getFullYear();
+  bindEvents();
+  await hydrateState();
+  render();
+  initMap();
+});
+
+function collectElements() {
+  [
+    'seasonYear', 'seasonTotal', 'cropTotals', 'customerTotals', 'dailyFieldsTotal', 'dailyBalesTotal', 'dailyMoistureAverage',
+    'recentFields', 'fieldList', 'estimatedStock', 'latestStocktakeTotal', 'removedSinceStocktake',
+    'boughtInSinceStocktake', 'pendingLoads', 'fieldSearch', 'addFieldButtonFields', 'fieldDialog',
+    'fieldForm', 'fieldDialogTitle', 'closeFieldDialogButton', 'fieldId', 'fieldCustomer', 'fieldFarm',
+    'fieldName', 'fieldHectares', 'fieldBales', 'fieldMoisture', 'fieldCrop', 'fieldPhoto', 'photoPreview',
+    'deleteFieldButton', 'partCompleteButton', 'completeFieldButton', 'addDeliveryButton', 'recentDeliveries',
+    'deliveryDialog', 'deliveryForm', 'deliveryDialogTitle', 'closeDeliveryDialogButton', 'deliveryId',
+    'deliveryCustomer', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight',
+    'deliveryStatus', 'saveDeliveryButton', 'straw-customers'
+  ].forEach((id) => { els[id] = document.getElementById(id); });
+}
+
+function bindEvents() {
+  document.querySelectorAll('[data-nav]').forEach((button) => {
+    button.addEventListener('click', () => showView(button.dataset.nav));
+  });
+  els.addFieldButtonFields.addEventListener('click', () => openFieldDialog());
+  els.fieldSearch.addEventListener('input', renderFieldList);
+  els.fieldForm.addEventListener('submit', saveFieldFromForm);
+  els.closeFieldDialogButton.addEventListener('click', closeFieldDialog);
+  els.deleteFieldButton.addEventListener('click', deleteCurrentField);
+  els.partCompleteButton.addEventListener('click', () => saveFieldWithStatus('part-complete'));
+  els.completeFieldButton.addEventListener('click', () => saveFieldWithStatus('complete'));
+  els.fieldPhoto.addEventListener('change', handlePhotoSelection);
+  els.addDeliveryButton.addEventListener('click', () => openDeliveryDialog());
+  els.deliveryForm.addEventListener('submit', saveDeliveryFromForm);
+  els.closeDeliveryDialogButton.addEventListener('click', () => els.deliveryDialog.close());
+}
+
+function showView(viewName) {
+  document.querySelectorAll('.view').forEach((view) => view.classList.toggle('active', view.id === `${viewName}View`));
+  document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.nav === viewName));
+}
+
+function loadLocalState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (saved && Array.isArray(saved.fields)) return saved;
+  } catch (error) {
+    console.warn('Unable to load saved straw records', error);
+  }
+  return { fields: [], stocktakes: [], loads: [], stockMovements: [], customers: [] };
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (serverStateAvailable) saveServerState();
+}
+
+async function hydrateState() {
+  const localState = loadLocalState();
+  Object.assign(state, localState);
+  try {
+    const response = await fetch('/api/straw/state', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Unable to load Straw app records');
+    const serverState = await response.json();
+    serverStateAvailable = true;
+    const serverHasRecords = serverState.fields.length || serverState.stocktakes.length || serverState.stockMovements.length;
+    const localHasRecords = state.fields.length || state.stocktakes.length || state.stockMovements.length;
+    if (serverHasRecords) {
+      state.fields = serverState.fields;
+      state.stocktakes = serverState.stocktakes;
+      state.stockMovements = serverState.stockMovements;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } else if (localHasRecords) {
+      await saveServerState();
+    }
+  } catch (error) {
+    console.warn('Unable to load central Straw app records', error);
+  }
+  try {
+    const response = await fetch('/api/straw/deliveries', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Unable to load deliveries');
+    state.loads = (await response.json()).deliveries;
+  } catch (error) {
+    console.warn('Unable to load delivered loads', error);
+    state.loads = Array.isArray(state.loads) ? state.loads : [];
+  }
+  try {
+    const response = await fetch('/api/straw/customers', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Unable to load straw customers');
+    state.customers = (await response.json()).customers;
+  } catch (error) {
+    console.warn('Unable to load straw customers', error);
+    state.customers = Array.isArray(state.customers) ? state.customers : [];
+  }
+  for (const field of state.fields) addCustomerLocally(field.customer);
+}
+
+async function saveServerState() {
+  try {
+    const response = await fetch('/api/straw/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: state.fields, stocktakes: state.stocktakes, stockMovements: state.stockMovements })
+    });
+    serverStateAvailable = response.ok;
+  } catch (error) {
+    serverStateAvailable = false;
+    console.warn('Unable to save central Straw app records', error);
+  }
+}
+
+function render() {
+  renderTotals();
+  renderFieldList();
+  renderRecentFields();
+  renderDeliveries();
+  renderStock();
+  renderStrawCustomers();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+}
+
+function formatDeliveryDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return value || 'No date';
+  return new Date(`${value}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function deliveryCards(deliveries) {
+  return deliveries.map((delivery) => `
+    <div class="field-card delivery-card">
+      <div><strong>${escapeHtml(delivery.customer)}</strong><span class="delivery-reg">${escapeHtml(delivery.registration)}</span></div>
+      <div>${escapeHtml(formatDeliveryDate(delivery.delivery_date))} at ${escapeHtml(delivery.delivery_time)}</div>
+      <div>${Number(delivery.bale_total || 0)} bales · ${delivery.weight_total ? `Weight: ${escapeHtml(delivery.weight_total)}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
+      <div class="dialog-actions"><button class="secondary-action" type="button" data-edit-delivery="${delivery.id}">Edit Load Out</button></div>
+    </div>
+  `).join('');
+}
+
+function bindDeliveryEditButtons(container) {
+  container.querySelectorAll('[data-edit-delivery]').forEach((button) => {
+    button.addEventListener('click', () => openDeliveryDialog(Number(button.dataset.editDelivery)));
+  });
+}
+
+function renderDeliveries() {
+  const recent = [...state.loads].slice(0, 5);
+  els.recentDeliveries.innerHTML = recent.length ? deliveryCards(recent) : '<div class="field-card">No deliveries recorded yet.</div>';
+  bindDeliveryEditButtons(els.recentDeliveries);
+}
+
+function addCustomerLocally(customer) {
+  const name = String(customer || '').trim().replace(/\s+/g, ' ');
+  if (!name || state.customers.some((value) => value.toLowerCase() === name.toLowerCase())) return;
+  state.customers.push(name);
+  state.customers.sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+
+function renderStrawCustomers() {
+  els['straw-customers'].replaceChildren(...state.customers.map((customer) => new Option(customer, customer)));
+}
+
+function rememberStrawCustomer(customer) {
+  const name = String(customer || '').trim().replace(/\s+/g, ' ');
+  if (!name) return;
+  addCustomerLocally(name);
+  renderStrawCustomers();
+  fetch('/api/straw/customers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer: name })
+  }).catch((error) => console.warn('Unable to remember straw customer', error));
+}
+
+function renderTotals() {
+  const totalBales = state.fields.reduce((sum, field) => sum + Number(field.bales || 0), 0);
+  els.seasonTotal.textContent = String(totalBales);
+  const cropTotals = {};
+  Array.from(els.fieldCrop.options).forEach((option) => { cropTotals[option.value] = 0; });
+  state.fields.forEach((field) => {
+    cropTotals[field.crop || 'Other'] = (cropTotals[field.crop || 'Other'] || 0) + Number(field.bales || 0);
+  });
+  const entries = Object.entries(cropTotals);
+  els.cropTotals.innerHTML = entries.map(([crop, total]) => `
+    <div class="panel crop-total" data-crop="${crop}">
+      <span>${crop}</span>
+      <strong>${total}</strong>
+    </div>
+  `).join('') || '<div class="panel">No crop varieties set up yet</div>';
+  const customerTotals = {};
+  state.fields.forEach((field) => {
+    const customer = String(field.customer || '').trim() || 'No customer entered';
+    customerTotals[customer] = (customerTotals[customer] || 0) + Number(field.bales || 0);
+  });
+  const customers = Object.entries(customerTotals).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  els.customerTotals.innerHTML = customers.map(([customer, total]) => `
+    <div class="customer-total-row"><strong>${escapeHtml(customer)}</strong><span>${total} bales</span></div>
+  `).join('') || '<div class="field-card">Customer totals will appear when field records are added.</div>';
+  const todays = state.fields.filter((field) => field.status !== 'complete' || true);
+  els.dailyFieldsTotal.textContent = String(todays.length);
+  els.dailyBalesTotal.textContent = String(totalBales);
+  const moistureValues = state.fields.map((field) => Number(field.moisture || 0)).filter((value) => value > 0);
+  els.dailyMoistureAverage.textContent = moistureValues.length ? `${(moistureValues.reduce((sum, v) => sum + v, 0) / moistureValues.length).toFixed(1)}%` : '-';
+}
+
+function renderRecentFields() {
+  const recent = [...state.fields].slice(-4).reverse();
+  els.recentFields.innerHTML = recent.map((field) => `
+    <div class="field-card">
+      <strong>${field.name || 'Unnamed field'}</strong>
+      <div>${field.customer || 'Unknown customer'} · ${field.farm || 'Unknown farm'}</div>
+      <div>${field.bales || 0} bales</div>
+    </div>
+  `).join('') || '<div class="field-card">No recent fields yet</div>';
+}
+
+function renderFieldList() {
+  const q = (els.fieldSearch.value || '').trim().toLowerCase();
+  const items = state.fields.filter((field) => {
+    const haystack = `${field.customer || ''} ${field.farm || ''} ${field.name || ''} ${field.crop || ''}`.toLowerCase();
+    return haystack.includes(q);
+  });
+  els.fieldList.innerHTML = items.map((field) => `
+    <div class="field-card">
+      <div><strong>${field.name || 'Unnamed field'}</strong></div>
+      <div>${field.customer || 'Unknown customer'} · ${field.farm || 'Unknown farm'}</div>
+      <div>${field.bales || 0} bales · ${field.crop || 'Unknown'} · ${field.hectares || 0} ha</div>
+      <div class="dialog-actions">
+        <button class="secondary-action" type="button" data-edit-field="${field.id}">Edit</button>
+      </div>
+    </div>
+  `).join('') || '<div class="field-card">No fields match this search.</div>';
+  els.fieldList.querySelectorAll('[data-edit-field]').forEach((button) => {
+    button.addEventListener('click', () => openFieldDialog(button.dataset.editField));
+  });
+}
+
+function renderStock() {
+  const total = state.fields.reduce((sum, field) => sum + Number(field.bales || 0), 0);
+  els.estimatedStock.textContent = String(total);
+  els.latestStocktakeTotal.textContent = String(state.stocktakes.reduce((sum, item) => sum + Number(item.bales || 0), 0));
+  els.removedSinceStocktake.textContent = String(state.loads.reduce((sum, load) => sum + Number(load.bale_total || 0), 0));
+  els.pendingLoads.innerHTML = state.loads.length ? deliveryCards(state.loads) : '<div class="field-card">No delivered loads recorded.</div>';
+  bindDeliveryEditButtons(els.pendingLoads);
+}
+
+function localDateTimeValue(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function openDeliveryDialog(deliveryId = null) {
+  const delivery = deliveryId ? state.loads.find((item) => Number(item.id) === Number(deliveryId)) : null;
+  els.deliveryForm.reset();
+  els.deliveryId.value = delivery ? delivery.id : '';
+  els.deliveryCustomer.value = delivery ? delivery.customer || '' : '';
+  els.deliveryRegistration.value = delivery ? delivery.registration || '' : '';
+  els.deliveryDateTime.value = delivery ? `${delivery.delivery_date || ''}T${delivery.delivery_time || ''}` : localDateTimeValue();
+  els.deliveryBales.value = delivery ? delivery.bale_total : '';
+  els.deliveryWeight.value = delivery ? delivery.weight_total || '' : '';
+  els.deliveryDialogTitle.textContent = delivery ? 'Edit Load Out' : 'Log Load Out';
+  els.saveDeliveryButton.textContent = delivery ? 'Save Changes' : 'Save Load Out';
+  els.deliveryStatus.textContent = delivery && !delivery.weight_total ? 'Add the weight when it is sent to you.' : 'Weight can be left blank and added later.';
+  els.deliveryStatus.dataset.error = 'false';
+  els.deliveryDialog.showModal();
+}
+
+async function saveDeliveryFromForm(event) {
+  event.preventDefault();
+  if (!els.deliveryForm.reportValidity()) return;
+  const existing = state.loads.find((item) => Number(item.id) === Number(els.deliveryId.value));
+  const [deliveryDate, deliveryTime] = els.deliveryDateTime.value.split('T');
+  const payload = {
+    customer: els.deliveryCustomer.value.trim(),
+    registration: els.deliveryRegistration.value.trim(),
+    delivery_date: deliveryDate || '',
+    delivery_time: deliveryTime || '',
+    bale_total: els.deliveryBales.value,
+    weight_total: els.deliveryWeight.value
+  };
+  if (existing) payload.version = existing.version;
+  els.saveDeliveryButton.disabled = true;
+  els.deliveryStatus.textContent = 'Saving…';
+  els.deliveryStatus.dataset.error = 'false';
+  try {
+    const response = await fetch(existing ? `/api/straw/deliveries/${existing.id}` : '/api/straw/deliveries', {
+      method: existing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to save this delivery.');
+    state.loads = state.loads.filter((item) => Number(item.id) !== Number(result.delivery.id));
+    state.loads.push(result.delivery);
+    state.loads.sort((a, b) => b.delivery_date.localeCompare(a.delivery_date) || b.delivery_time.localeCompare(a.delivery_time) || b.id - a.id);
+    saveState();
+    addCustomerLocally(result.delivery.customer);
+    render();
+    els.deliveryDialog.close();
+  } catch (error) {
+    els.deliveryStatus.textContent = error.message;
+    els.deliveryStatus.dataset.error = 'true';
+  } finally {
+    els.saveDeliveryButton.disabled = false;
+  }
+}
+
+function openFieldDialog(fieldId = null) {
+  const field = fieldId ? state.fields.find((item) => item.id === fieldId) : null;
+  els.fieldForm.reset();
+  els.fieldId.value = field ? field.id : '';
+  els.fieldCustomer.value = field ? field.customer || '' : '';
+  els.fieldFarm.value = field ? field.farm || '' : '';
+  els.fieldName.value = field ? field.name || '' : '';
+  els.fieldHectares.value = field ? field.hectares || '' : '';
+  els.fieldBales.value = field ? field.bales || '' : '';
+  els.fieldMoisture.value = field ? field.moisture || '' : '';
+  const crop = field && field.crop ? field.crop : (els.fieldCrop.options[0]?.value || '');
+  if (crop && !Array.from(els.fieldCrop.options).some(option => option.value === crop)) els.fieldCrop.add(new Option(crop, crop));
+  els.fieldCrop.value = crop;
+  els.fieldPhoto.value = '';
+  els.photoPreview.style.display = 'none';
+  els.photoPreview.src = field && field.photo ? field.photo : '';
+  if (field && field.photo) { els.photoPreview.style.display = 'block'; }
+  els.fieldDialog.showModal();
+}
+
+function closeFieldDialog() {
+  els.fieldDialog.close();
+}
+
+function saveFieldFromForm(event) {
+  event.preventDefault();
+  const id = els.fieldId.value || crypto.randomUUID();
+  const payload = {
+    id,
+    customer: els.fieldCustomer.value.trim(),
+    farm: els.fieldFarm.value.trim(),
+    name: els.fieldName.value.trim(),
+    hectares: Number(els.fieldHectares.value || 0),
+    bales: Number(els.fieldBales.value || 0),
+    moisture: Number(els.fieldMoisture.value || 0),
+    crop: els.fieldCrop.value,
+    photo: els.photoPreview.src || '',
+    status: 'active',
+    updatedAt: new Date().toISOString()
+  };
+  const existingIndex = state.fields.findIndex((item) => item.id === id);
+  if (existingIndex >= 0) state.fields[existingIndex] = payload; else state.fields.push(payload);
+  rememberStrawCustomer(payload.customer);
+  saveState();
+  render();
+  closeFieldDialog();
+}
+
+function saveFieldWithStatus(status) {
+  const id = els.fieldId.value || crypto.randomUUID();
+  const payload = {
+    id,
+    customer: els.fieldCustomer.value.trim(),
+    farm: els.fieldFarm.value.trim(),
+    name: els.fieldName.value.trim(),
+    hectares: Number(els.fieldHectares.value || 0),
+    bales: Number(els.fieldBales.value || 0),
+    moisture: Number(els.fieldMoisture.value || 0),
+    crop: els.fieldCrop.value,
+    photo: els.photoPreview.src || '',
+    status,
+    updatedAt: new Date().toISOString()
+  };
+  const existingIndex = state.fields.findIndex((item) => item.id === id);
+  if (existingIndex >= 0) state.fields[existingIndex] = payload; else state.fields.push(payload);
+  rememberStrawCustomer(payload.customer);
+  saveState();
+  render();
+  closeFieldDialog();
+}
+
+function deleteCurrentField() {
+  const id = els.fieldId.value;
+  if (!id) return;
+  state.fields = state.fields.filter((field) => field.id !== id);
+  saveState();
+  render();
+  closeFieldDialog();
+}
+
+function handlePhotoSelection(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    els.photoPreview.src = reader.result;
+    els.photoPreview.style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function initMap() {
+  if (!window.L) return;
+  map = L.map('map', { zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  map.setView([52.569259, 1.406654], 9);
+}

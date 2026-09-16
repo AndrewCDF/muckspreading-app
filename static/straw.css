@@ -1,0 +1,132 @@
+:root {
+  --ink: #18221a;
+  --muted: #657060;
+  --line: #d8ded2;
+  --paper: #fbfcf7;
+  --panel: rgba(255, 255, 255, 0.94);
+  --field: #e7f0dc;
+  --wheat: #4f8f46;
+  --barley: #dfbd56;
+  --oats: #d78632;
+  --spring: #4d8f9e;
+  --hay: #8fa84f;
+  --brand: #24442f;
+  --brand-2: #d78632;
+  --danger: #a73529;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+button, input, select, textarea { font: inherit; }
+button { touch-action: manipulation; }
+.app-shell {
+  min-height: 100dvh;
+  padding: max(14px, env(safe-area-inset-top)) 14px calc(150px + env(safe-area-inset-bottom));
+}
+.topbar { display:flex; align-items:center; justify-content:space-between; margin:2px auto 16px; max-width:980px; }
+.add-delivery-button { width:52px; height:52px; flex:0 0 52px; border:0; border-radius:50%; background:linear-gradient(135deg, var(--barley), #b78932); color:#fff; box-shadow:0 8px 18px rgba(36,68,47,0.18); cursor:pointer; font-size:2rem; font-weight:800; line-height:1; }
+.add-delivery-button:focus-visible { outline:3px solid var(--brand); outline-offset:3px; }
+.eyebrow { color:var(--muted); font-size:0.75rem; font-weight:800; margin:0 0 2px; text-transform:uppercase; }
+h1,h2,p{margin:0;}
+h1{font-size:clamp(2rem,10vw,3rem); line-height:0.95;}
+main { margin: 0 auto; max-width:980px; }
+.view { display:none; }
+.view.active { display:block; }
+.hero-total {
+  background: linear-gradient(135deg, #24442f 0%, #43683e 55%, #d78632 100%);
+  border-radius: 8px; color:#fff; min-height:180px; padding:22px; position:relative;
+}
+.hero-total span { display:block; font-size:0.9rem; font-weight:800; opacity:0.84; text-transform:uppercase; }
+.hero-total strong { position:absolute; right:20px; bottom:18px; font-size:clamp(4.5rem,24vw,8rem); line-height:0.86; }
+.crop-grid {
+  display:grid; gap:10px; grid-template-columns:repeat(2, minmax(0, 1fr)); margin:12px 0;
+}
+.crop-total { min-height:96px; display:flex; flex-direction:column; justify-content:space-between; gap:12px; background:var(--panel); color:var(--ink); margin-top:0; }
+.crop-total span { font-size:0.78rem; font-weight:800; letter-spacing:0.04em; text-transform:uppercase; }
+.crop-total strong { align-self:flex-end; color:var(--brand); font-size:2.35rem; line-height:0.9; }
+.dashboard-section-title { color:var(--brand); font-size:1.15rem; margin-top:18px; }
+.customer-total-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
+.customer-total-row { min-height:90px; display:flex; flex-direction:column; justify-content:space-between; gap:12px; padding:15px; border:1px solid var(--line); border-left:6px solid var(--brand); border-radius:10px; background:var(--panel); color:var(--ink); }
+.customer-total-row strong { overflow-wrap:anywhere; }
+.customer-total-row span { align-self:flex-end; color:var(--brand); font-size:1.35rem; font-weight:800; white-space:nowrap; }
+.customer-total-row:nth-child(5n+2) { border-left-color:var(--barley); }
+.customer-total-row:nth-child(5n+3) { border-left-color:var(--spring); }
+.customer-total-row:nth-child(5n+4) { border-left-color:var(--oats); }
+.customer-total-row:nth-child(5n+5) { border-left-color:var(--hay); }
+.daily-totals {
+  display:grid; gap:10px; grid-template-columns:repeat(3, minmax(0, 1fr)); margin:12px 0;
+}
+.daily-totals article {
+  background:var(--panel); border:1px solid var(--line); border-radius:8px; min-height:82px; padding:12px;
+}
+.daily-totals span { color:var(--muted); display:block; font-size:0.72rem; font-weight:800; text-transform:uppercase; }
+.daily-totals strong { color:var(--brand); display:block; font-size:1.8rem; line-height:1; margin-top:10px; }
+.panel {
+  background: var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-top:14px;
+}
+.panel.crop-total { margin-top:0; border-left-width:6px; }
+.panel.crop-total[data-crop="Wheat"] { border-left-color:var(--wheat); }
+.panel.crop-total[data-crop="Barley"] { border-left-color:var(--barley); }
+.panel.crop-total[data-crop="Spring Barley"] { border-left-color:var(--spring); }
+.panel.crop-total[data-crop="Oats"] { border-left-color:var(--oats); }
+.panel.crop-total[data-crop="Hay"] { border-left-color:var(--hay); }
+.panel.crop-total:not([data-crop="Wheat"]):not([data-crop="Barley"]):not([data-crop="Spring Barley"]):not([data-crop="Oats"]):not([data-crop="Hay"]) { border-left-color:var(--brand); }
+.customer-total-list > .field-card { grid-column:1 / -1; }
+.panel-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.text-button, .primary-action, .secondary-action, .danger-button, .primary-button, .secondary-button, .icon-button {
+  border: none; border-radius: 10px; cursor:pointer; font-weight:700;
+}
+.text-button { background:transparent; color:var(--brand); }
+.primary-action, .primary-button { background:var(--brand); color:#fff; padding: 10px 14px; }
+.secondary-action, .secondary-button { background:#eef3eb; color:var(--brand); padding: 10px 14px; }
+.danger-button { background: var(--danger); color:#fff; padding: 10px 14px; }
+.toolbar { display:flex; gap:10px; margin-bottom:12px; }
+.toolbar input { flex:1; padding:12px; border:1px solid var(--line); border-radius:10px; }
+.field-list { display:grid; gap:10px; }
+.field-card { background:#f7f9f5; border:1px solid var(--line); border-radius:10px; padding:12px; }
+.delivery-card { display:grid; gap:6px; }
+.delivery-card > div:first-child { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.delivery-reg { color:var(--brand); font-weight:800; letter-spacing:0.04em; }
+.awaiting-weight { color:#9a641c; }
+.bottom-nav {
+  position:fixed; left:0; right:0; bottom:0; display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); background:rgba(255,255,255,0.94); border-top:1px solid var(--line); backdrop-filter: blur(8px);
+}
+.straw-app-nav {
+  position: fixed; left: 0; right: 0; bottom: 62px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--brand); border-top: 3px solid var(--brand-2); box-shadow: 0 -8px 20px rgba(36, 68, 47, 0.18); z-index: 10;
+}
+.nav-button { background:none; border:none; padding:10px 8px 12px; color:var(--muted); font-weight:800; text-transform:uppercase; letter-spacing:0.04em; }
+.straw-app-nav .nav-button { color: rgba(255,255,255,0.82); }
+.straw-app-nav .nav-button.active { color: var(--barley); }
+.nav-button.active { color:var(--brand); }
+.nav-button small { display:block; }
+.nav-button span { display:block; font-size:1.2rem; margin-bottom:2px; }
+#map { height:72vh; width:100%; border-radius:12px; }
+.map-wrap { position:relative; }
+.map-prompt { position:absolute; left:12px; top:12px; background:rgba(255,255,255,0.86); border-radius:999px; padding:8px 12px; font-weight:700; }
+.map-fallback { display:none; }
+.dialog-heading { display:flex; justify-content:space-between; align-items:center; }
+.icon-button { background:transparent; color:var(--ink); font-size:2rem; }
+dialog { border:none; border-radius:16px; padding:0; width:min(90vw, 640px); }
+dialog form { padding:18px; display:grid; gap:12px; }
+.delivery-totals { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.form-status { color:var(--muted); font-size:0.9rem; line-height:1.4; }
+.form-status[data-error="true"] { color:var(--danger); font-weight:700; }
+label { display:grid; gap:6px; font-weight:600; }
+input, select { padding:10px 12px; border:1px solid var(--line); border-radius:10px; }
+.form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.photo-preview { max-height:180px; object-fit:cover; display:none; }
+.dialog-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+@media (max-width: 560px) {
+  .daily-totals, .form-grid, .delivery-totals { grid-template-columns:1fr; }
+  .crop-grid, .customer-total-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .crop-total, .customer-total-row { min-height:84px; padding:12px; }
+  .crop-total strong { font-size:2rem; }
+  .customer-total-row span { font-size:1.05rem; }
+  .bottom-nav, .straw-app-nav { grid-template-columns:repeat(3, minmax(0,1fr)); }
+}

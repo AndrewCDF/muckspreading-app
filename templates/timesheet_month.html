@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ report.month_label }} Timesheet</title>
+  <style>
+    body { margin: 24px; color: #1d2b1f; font: 14px Arial, sans-serif; }
+    header { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 22px; }
+    h1, h2 { margin: 0 0 8px; color: #24442f; }
+    p { margin: 4px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0 28px; }
+    th, td { padding: 8px; border: 1px solid #b8c2ba; text-align: left; vertical-align: top; }
+    th { background: #edf5ee; }
+    .hours { white-space: nowrap; text-align: right; }
+    .notes { white-space: pre-wrap; min-width: 220px; }
+    .print-button { padding: 11px 18px; border: 0; border-radius: 10px; background: #24442f; color: white; font-weight: bold; cursor: pointer; }
+    @media print {
+      body { margin: 8mm; font-size: 10px; }
+      .print-button { display: none; }
+      table { break-inside: auto; }
+      tr { break-inside: avoid; }
+      thead { display: table-header-group; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>A. Farrell Contracting</h1><h2>{{ report.month_label }} Timesheet</h2><p>Staff member: <strong>{{ report.staff_name }}</strong></p><p>Overall total: <strong>{{ report.total_duration_label }}</strong></p></div>
+    <button class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
+  </header>
+  <h2>Company Hours</h2>
+  <table>
+    <thead><tr><th>Company</th><th>Hours</th></tr></thead>
+    <tbody>{% for total in report.company_totals %}<tr><td><strong>{{ total.company }}</strong></td><td class="hours"><strong>{{ total.duration_label }}</strong></td></tr>{% else %}<tr><td colspan="2">No recorded hours.</td></tr>{% endfor %}<tr><th>Overall Total</th><th class="hours">{{ report.total_duration_label }}</th></tr></tbody>
+  </table>
+  <h2>Daily Details</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Name</th><th>Company</th><th>Start</th><th>Finish</th><th>Hours</th><th>Job Details / Notes</th></tr></thead>
+    <tbody>
+      {% for row in report.rows %}
+      <tr><td>{{ row.date_label }}</td><td>{{ row.name }}</td><td>{{ row.company }}</td><td>{{ row.start }}</td><td>{{ row.finish }}</td><td class="hours">{{ row.duration_label }}</td><td class="notes">{{ row.notes }}</td></tr>
+      {% else %}<tr><td colspan="7">No timesheet entries for this month.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <h2>Monthly Totals</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Company</th><th>Hours</th></tr></thead>
+    <tbody>{% for total in report.totals %}<tr><td>{{ total.name }}</td><td>{{ total.company }}</td><td class="hours">{{ total.duration_label }}</td></tr>{% endfor %}<tr><th colspan="2">Overall Total</th><th class="hours">{{ report.total_duration_label }}</th></tr></tbody>
+  </table>
+</body>
+</html>

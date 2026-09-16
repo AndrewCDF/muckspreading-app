@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#24442f">
+  <title>Choose Staff - Timesheet</title>
+  <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='af_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='combined.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='timesheet.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar"><div class="brand-block"><p class="eyebrow">A. Farrell Contracting</p><h1>Timesheets</h1></div></header>
+    <main class="layout">
+      {% if status_msg %}<div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>{% endif %}
+      <section class="panel quick-card staff-selector" aria-labelledby="choose-staff">
+        <h2 id="choose-staff">Choose your name</h2>
+        <p class="lead">Your PIN opens only your own calendar and saved timesheets.</p>
+        <div class="staff-grid">
+          {% for person in staff %}
+          <a class="staff-button" href="{{ url_for('timesheet_unlock_form', staff_name=person.name) }}"><span>{{ person.name }}</span></a>
+          {% else %}
+          <p>No active staff are set up. Add a name and PIN on the Staff tab in settings.xlsx.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+  </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">←</strong>Back</a>
+    <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">⌂</strong>Home</a>
+    <a class="bottom-nav-btn" href="{{ url_for('settings_home') }}"><strong aria-hidden="true">⚙</strong>Settings</a>
+  </nav>
+</body>
+</html>
