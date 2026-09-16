@@ -1262,6 +1262,7 @@ HTML = """
             <div class="field">
               <label for="invoice_number">Invoice Number</label>
               <input id="invoice_number" name="invoice_number" type="number" inputmode="numeric" min="1" step="1" value="{{ invoice_form.invoice_number }}" required>
+              <div class="hint">You can enter any unused invoice number, including a missing number from earlier in the sequence.</div>
             </div>
             <div class="field invoice-date-field">
               <label for="invoice_date">Invoice Date</label>
@@ -8650,7 +8651,6 @@ def resolve_invoice_number(requested_value="", existing_invoice_number=None):
     if requested_number < 1:
         raise ValueError("Invoice number must be at least 1.")
 
-    highest_issued = 0
     used_numbers = set()
     for invoice in load_invoice_ledger():
         try:
@@ -8659,12 +8659,9 @@ def resolve_invoice_number(requested_value="", existing_invoice_number=None):
             continue
         if value > 0:
             used_numbers.add(value)
-            highest_issued = max(highest_issued, value)
 
     if requested_number in used_numbers and requested_number != int(existing_invoice_number or 0):
         raise ValueError("Invoice number %s has already been used." % requested_number)
-    if requested_number < (highest_issued + 1) and requested_number != int(existing_invoice_number or 0):
-        raise ValueError("Invoice number must be at least %s." % (highest_issued + 1))
     return requested_number
 
 

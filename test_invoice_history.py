@@ -140,6 +140,17 @@ class InvoiceHistoryTests(unittest.TestCase):
         with zipfile.ZipFile(archived_path) as archive:
             self.assertFalse(any(name.startswith("xl/externalLinks/") for name in archive.namelist()))
 
+    def test_missing_invoice_number_can_be_used_but_duplicate_is_blocked(self):
+        ledger = [
+            {"invoice_number": 5430},
+            {"invoice_number": 5432},
+        ]
+        with patch.object(app, "load_invoice_ledger", return_value=ledger):
+            self.assertEqual(app.resolve_invoice_number("5431"), 5431)
+            with self.assertRaisesRegex(ValueError, "already been used"):
+                app.resolve_invoice_number("5432")
+            self.assertEqual(app.resolve_invoice_number("5432", existing_invoice_number=5432), 5432)
+
 
 if __name__ == "__main__":
     unittest.main()
