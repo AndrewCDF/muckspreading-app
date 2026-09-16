@@ -1656,6 +1656,7 @@ HTML = """
         <h2 class="panel-title">Invoices</h2>
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('invoice_home') }}">Create Invoice</a>
+          <a class="button button-secondary button-full" href="{{ url_for('invoice_history') }}">Previous Invoices</a>
         </div>
       </div>
 
@@ -3108,7 +3109,7 @@ INVOICE_HISTORY_HTML = """
 
     <div class="card">
       <h1>Invoice History</h1>
-      <p class="copy">One line per invoice or manual mark, newest first.</p>
+      <p class="copy">View, edit or save any previous invoice. Invoices are listed newest first.</p>
       {% if history_rows %}
       <div class="table-wrap">
         <table>
@@ -3142,8 +3143,9 @@ INVOICE_HISTORY_HTML = """
                 {% if row.can_edit %}
                 <div class="actions-inline">
                   <a class="button button-small" href="{{ url_for('invoice_history_edit', ledger_index=row.ledger_index) }}">Edit / Re-send</a>
-                  <a class="button button-small" href="{{ url_for('invoice_history_show_pdf', ledger_index=row.ledger_index) }}" target="_blank" rel="noopener">Show Invoice</a>
-                  <a class="button button-small" href="{{ url_for('invoice_history_download_xlsx', ledger_index=row.ledger_index) }}">Download Invoice</a>
+                  <a class="button button-small" href="{{ url_for('invoice_history_show_pdf', ledger_index=row.ledger_index) }}" target="_blank" rel="noopener">View PDF</a>
+                  <a class="button button-small" href="{{ url_for('invoice_history_download_pdf', ledger_index=row.ledger_index) }}">Save PDF</a>
+                  <a class="button button-small" href="{{ url_for('invoice_history_download_xlsx', ledger_index=row.ledger_index) }}">Save Excel</a>
                 </div>
                 {% else %}
                 --
@@ -7609,7 +7611,7 @@ def save_invoice_archive(attachment_name, attachment_bytes):
 
 def invoice_archive_path(filename):
     name = str(filename or "").strip()
-    if not name:
+    if not name or os.path.basename(name) != name:
         return ""
     return os.path.join(INVOICE_ARCHIVE_DIR, name)
 
@@ -10035,6 +10037,25 @@ def invoice_archive_response(filename, mimetype, download=False):
     return response
 
 
+def rebuild_and_archive_history_invoice(history_row, ledger_index):
+    invoice, error_message = build_invoice_from_history_entry(history_row, ledger_index)
+    if error_message:
+        return None, b"", b"", error_message
+    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
+    pdf_bytes = build_invoice_pdf_bytes(invoice, xlsx_bytes)
+    xlsx_filename = str(invoice.get("filename", "invoice.xlsx") or "invoice.xlsx")
+    pdf_filename = invoice_pdf_filename(invoice)
+    save_invoice_archive(xlsx_filename, xlsx_bytes)
+    save_invoice_archive(pdf_filename, pdf_bytes)
+
+    ledger = load_invoice_ledger()
+    if 0 <= ledger_index < len(ledger) and isinstance(ledger[ledger_index], dict):
+        ledger[ledger_index]["xlsx_filename"] = xlsx_filename
+        ledger[ledger_index]["pdf_filename"] = pdf_filename
+        save_invoice_ledger(ledger)
+    return invoice, xlsx_bytes, pdf_bytes, ""
+
+
 @app.route("/invoice/history/<int:ledger_index>/edit")
 def invoice_history_edit(ledger_index):
     ensure_data_dir()
@@ -10062,13 +10083,28 @@ def invoice_history_show_pdf(ledger_index):
     archived = invoice_archive_response(history_row.get("pdf_filename", ""), "application/pdf", download=False)
     if archived is not None:
         return archived
-    invoice, error_message = build_invoice_from_history_entry(history_row, actual_index)
+    invoice, _, pdf_bytes, error_message = rebuild_and_archive_history_invoice(history_row, actual_index)
     if error_message:
         return redirect(url_for("invoice_history", ok=0, msg=error_message))
-    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
-    pdf_bytes = build_invoice_pdf_bytes(invoice, xlsx_bytes)
     response = Response(pdf_bytes, mimetype="application/pdf")
     response.headers["Content-Disposition"] = 'inline; filename="%s"' % invoice_pdf_filename(invoice)
+    return response
+
+
+@app.route("/invoice/history/<int:ledger_index>/download.pdf")
+def invoice_history_download_pdf(ledger_index):
+    ensure_data_dir()
+    history_row, actual_index, _ = invoice_history_row_at(ledger_index)
+    if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
+        return redirect(url_for("invoice_history", ok=0, msg="That invoice PDF is not available"))
+    archived = invoice_archive_response(history_row.get("pdf_filename", ""), "application/pdf", download=True)
+    if archived is not None:
+        return archived
+    invoice, _, pdf_bytes, error_message = rebuild_and_archive_history_invoice(history_row, actual_index)
+    if error_message:
+        return redirect(url_for("invoice_history", ok=0, msg=error_message))
+    response = Response(pdf_bytes, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = 'attachment; filename="%s"' % invoice_pdf_filename(invoice)
     return response
 
 
@@ -10085,10 +10121,9 @@ def invoice_history_download_xlsx(ledger_index):
     )
     if archived is not None:
         return archived
-    invoice, error_message = build_invoice_from_history_entry(history_row, actual_index)
+    invoice, xlsx_bytes, _, error_message = rebuild_and_archive_history_invoice(history_row, actual_index)
     if error_message:
         return redirect(url_for("invoice_history", ok=0, msg=error_message))
-    xlsx_bytes = build_invoice_xlsx_bytes(invoice)
     response = Response(
         xlsx_bytes,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
