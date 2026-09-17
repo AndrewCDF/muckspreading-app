@@ -12,7 +12,7 @@ Standalone web app for the office Raspberry Pi.
 - New customer names are remembered for future entries
 - New farm names are remembered for future entries
 - New field names are remembered for future entries
-- New muck types can be managed from `customer_master.xlsx` and are also remembered from saved jobs
+- New muck types can be managed from the **Muck Types** tab in `settings.xlsx` and are also remembered from saved jobs
 - Field names are linked to each customer
 - Total spreader tons
 - Total Ops Center tons
@@ -43,7 +43,7 @@ The app reads its settings from `settings.xlsx`. The customer/farm/field and ema
 
 ## One settings workbook
 
-Edit **`settings.xlsx`** in the app folder. The app creates it once from the existing settings when it starts. It is the settings source after migration; the old CSV, JSON configuration files and `customer_master.xlsx` remain as backups.
+Edit **`settings.xlsx`** in the app folder. It is the live configuration source for customers, email settings, recipients, staff, farms, fields and muck types.
 
 | Tab | Controls |
 | --- | --- |

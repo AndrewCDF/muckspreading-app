@@ -3867,7 +3867,7 @@ def ensure_settings_workbook():
                     ["Email Settings", "enabled controls weekly email; monthly_enabled controls month-end email. 1 = enabled, 0 = disabled. send_weekday: Monday 0 through Sunday 6. Hours use 0–23."],
                     ["Customers", "Customer and farm addresses, email, price per ton and VAT. One row per customer/farm. active 0 hides the row."],
                     ["Saved work", "Timesheets, jobs, invoices and straw records remain in their existing data stores."],
-                    ["Original files", "Existing CSV, JSON and customer_master.xlsx files are retained as migration backups; settings.xlsx is now the settings source."]],
+                    ["Configuration", "settings.xlsx is the live configuration source. Legacy files are only read if an older installation still has them during first-time migration."]],
     })
 
 
@@ -11481,8 +11481,6 @@ def backup_export_zip():
             ("settings_workbook.py", os.path.join(APP_ROOT, "settings_workbook.py")),
             ("settings.xlsx", SETTINGS_WORKBOOK_PATH),
             ("README.md", os.path.join(APP_ROOT, "README.md")),
-            ("customer_master.xlsx", os.path.join(APP_ROOT, "customer_master.xlsx")),
-            ("email_settings.csv", os.path.join(APP_ROOT, "email_settings.csv")),
             ("email_config.example.json", os.path.join(APP_ROOT, "email_config.example.json")),
             ("muckspreading-app.service", os.path.join(APP_ROOT, "muckspreading-app.service")),
             ("weekly_summary_layout_template.xlsx", os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")),
