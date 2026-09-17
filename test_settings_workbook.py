@@ -51,6 +51,7 @@ class SettingsWorkbookTests(unittest.TestCase):
         app.ensure_settings_workbook()
         self.assertIn("timesheet", self.book.rows("Email Recipients")[0])
         self.assertIn("pin", self.book.rows("Staff")[0])
+        self.assertIn("email_2", self.book.rows("Customers")[0])
         self.assertEqual(self.book.rows("Machinery"), [["name", "active"]])
         self.assertEqual(app.load_email_config(), before)
         self.assertEqual(app.load_app_settings(), invoices)

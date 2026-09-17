@@ -61,6 +61,7 @@ CUSTOMER_MASTER_HEADERS = [
     "customer_name",
     "farm_name",
     "email",
+    "email_2",
     "address_line_1",
     "address_line_2",
     "town",
@@ -2801,6 +2802,7 @@ ADMIN_HTML = """
                                         <div><label>Customer Name</label><input name="customer_name" type="text" value="{{ record.customer_name }}" required></div>
                                         <div><label>Farm Name</label><input name="farm_name" type="text" value="{{ record.farm_name }}"></div>
                                         <div><label>Email</label><input name="email" type="email" value="{{ record.email }}"></div>
+                                        <div><label>Second Email</label><input name="email_2" type="email" value="{{ record.email_2 }}" placeholder="second@example.com"></div>
                                         <div><label>Address Line 1</label><input name="address_line_1" type="text" value="{{ record.address_line_1 }}"></div>
                                         <div><label>Address Line 2</label><input name="address_line_2" type="text" value="{{ record.address_line_2 }}"></div>
                                         <div><label>Town</label><input name="town" type="text" value="{{ record.town }}"></div>
@@ -3788,6 +3790,7 @@ def save_workbook_customer(name, email, rate, row_number, field_values):
 
 def ensure_settings_workbook():
     if settings_workbook_exists():
+        ensure_customer_second_email_column()
         ensure_timesheet_recipient_column()
         ensure_staff_pin_column()
         ensure_settings_name_sheet("Machinery")
@@ -3801,6 +3804,9 @@ def ensure_settings_workbook():
         customers = [list(CUSTOMER_MASTER_HEADERS)]
     else:
         customers = [[clean_name(cell).lower() for cell in raw_customers[header_index]]] + raw_customers[header_index + 1:]
+    if "email_2" not in customers[0]:
+        customers[0].append("email_2")
+        customers = [customers[0]] + [list(row) + [""] for row in customers[1:]]
     name_index = customers[0].index("customer_name")
     existing_names = {row[name_index].casefold() for row in customers[1:] if len(row) > name_index}
     for name in load_customers():
@@ -3879,6 +3885,20 @@ def ensure_timesheet_recipient_column():
         value = row[summary_index] if summary_index is not None and summary_index < len(row) else "0"
         updated.append(list(row) + [value])
     Workbook(SETTINGS_WORKBOOK_PATH).set_rows("Email Recipients", updated)
+
+
+def ensure_customer_second_email_column():
+    try:
+        rows = Workbook(SETTINGS_WORKBOOK_PATH).rows("Customers")
+    except Exception:
+        return
+    headers = [str(value).strip().lower() for value in rows[0]] if rows else []
+    if "email_2" in headers:
+        return
+    updated = [list(rows[0]) + ["email_2"]]
+    for row in rows[1:]:
+        updated.append(list(row) + [""])
+    Workbook(SETTINGS_WORKBOOK_PATH).set_rows("Customers", updated)
 
 
 def ensure_staff_pin_column():
@@ -4115,6 +4135,7 @@ def load_customer_master_rows():
             "farm_name": farm_name,
             "muck_type": clean_name(row_dict.get("muck_type")),
             "email": ", ".join(normalize_email_list([row_dict.get("email", "")])),
+            "email_2": normalize_email_address(row_dict.get("email_2", "")),
             "address_line_1": clean_name(row_dict.get("address_line_1")),
             "address_line_2": clean_name(row_dict.get("address_line_2")),
             "town": clean_name(row_dict.get("town")),
@@ -4235,8 +4256,14 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
     if raw_email and not normalized_emails:
         return False, "Customer email is not valid"
     normalized_field_values = dict(field_values) if isinstance(field_values, dict) else field_values
-    if isinstance(normalized_field_values, dict) and "email" in normalized_field_values:
-        normalized_field_values["email"] = normalized_email
+    if isinstance(normalized_field_values, dict):
+        if "email" in normalized_field_values:
+            normalized_field_values["email"] = normalized_email
+        if "email_2" in normalized_field_values:
+            second_email = normalize_email_address(normalized_field_values.get("email_2", ""))
+            if str(normalized_field_values.get("email_2", "") or "").strip() and not second_email:
+                return False, "Second customer email is not valid"
+            normalized_field_values["email_2"] = second_email
     if settings_workbook_exists():
         return save_workbook_customer(customer_name, normalized_email, rate_per_ton_text, row_number, normalized_field_values)
     if not os.path.exists(CUSTOMER_MASTER_XLSX_PATH):
@@ -4503,7 +4530,7 @@ def build_customer_field_admin_map(master_rows, jobs, field_map):
         ensure_bucket(customer_name, row.get("farm_name"))
         if customer_name:
             meta = customer_meta.setdefault(customer_name, {"customer_email": "", "rate_per_ton": ""})
-            email_values = normalize_email_list([row.get("email", "")])
+            email_values = normalize_email_list([row.get("email", ""), row.get("email_2", "")])
             existing_emails = normalize_email_list([meta["customer_email"]])
             for email in email_values:
                 if email.lower() not in {item.lower() for item in existing_emails}:
@@ -7313,7 +7340,7 @@ def fill_layout_invoice_template(invoice, template):
         set_template_cell_value(detail_row, "A%s" % current_row_number, description)
         set_template_cell_value(detail_row, "E%s" % current_row_number, product)
         set_template_cell_value(detail_row, "F%s" % current_row_number, detail.get("tons", ""))
-        set_template_cell_value(detail_row, "G%s" % current_row_number, format_money(detail.get("line_total", "")) if str(detail.get("line_total", "")).strip() != "" else "")
+        set_template_cell_value(detail_row, "G%s" % current_row_number, detail.get("line_total", "") if str(detail.get("line_total", "")).strip() != "" else "")
         sort_template_row_cells(detail_row)
         current_row_number += 1
 
@@ -7328,10 +7355,10 @@ def fill_layout_invoice_template(invoice, template):
 
     totals_start_row = detail_end_row + 1
     set_template_cell_value(row(totals_start_row), "F%s" % totals_start_row, invoice.get("total_tons", ""))
-    set_template_cell_value(row(totals_start_row + 1), "G%s" % (totals_start_row + 1), format_money(invoice.get("subtotal", "")))
+    set_template_cell_value(row(totals_start_row + 1), "G%s" % (totals_start_row + 1), invoice.get("subtotal", ""))
     set_template_cell_value(row(totals_start_row + 2), "F%s" % (totals_start_row + 2), "VAT 20%")
-    set_template_cell_value(row(totals_start_row + 2), "G%s" % (totals_start_row + 2), format_money(invoice.get("vat_total", "")))
-    set_template_cell_value(row(totals_start_row + 3), "G%s" % (totals_start_row + 3), format_money(invoice.get("grand_total", "")))
+    set_template_cell_value(row(totals_start_row + 2), "G%s" % (totals_start_row + 2), invoice.get("vat_total", ""))
+    set_template_cell_value(row(totals_start_row + 3), "G%s" % (totals_start_row + 3), invoice.get("grand_total", ""))
 
     for target_row in [9, 10, 11, 12, 13, 17, totals_start_row, totals_start_row + 1, totals_start_row + 2, totals_start_row + 3]:
         sort_template_row_cells(row(target_row))
@@ -8942,7 +8969,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
             return {"error": "Rate per ton is missing for one or more uninvoiced jobs in this scope."}
 
         if not customer_emails and isinstance(job_master_record, dict):
-            customer_emails = normalize_email_list([job_master_record.get("email", "")])
+            customer_emails = normalize_email_list([job_master_record.get("email", ""), job_master_record.get("email_2", "")])
         if not customer_emails:
             customer_emails = normalize_email_list([job.get("customer_email", "")])
         if not customer_address_line_1:
@@ -8986,7 +9013,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     if not customer_emails:
         master_record = scope_master_record
         if isinstance(master_record, dict):
-            customer_emails = normalize_email_list([master_record.get("email", "")])
+            customer_emails = normalize_email_list([master_record.get("email", ""), master_record.get("email_2", "")])
             customer_address_line_1 = customer_address_line_1 or clean_name(master_record.get("address_line_1"))
             customer_address_line_2 = customer_address_line_2 or clean_name(master_record.get("address_line_2"))
             customer_town = customer_town or clean_name(master_record.get("town"))
