@@ -130,6 +130,7 @@ DASHBOARD_HTML = """
   <meta name="theme-color" content="#24442f">
   <title>A. Farrell Contracting</title>
   <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('app_icon_png', size=180) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='af_brand.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='combined.css') }}">
 </head>
@@ -163,6 +164,9 @@ DASHBOARD_HTML = """
 
 
 def discover_custom_app_icon_path():
+    preferred_path = os.path.join(APP_ROOT, "static", "muckspreading-app-icon.png")
+    if os.path.exists(preferred_path):
+        return preferred_path
     try:
         names = sorted(os.listdir(APP_ROOT))
     except OSError:
