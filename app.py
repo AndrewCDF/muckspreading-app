@@ -2743,7 +2743,8 @@ ADMIN_HTML = """
                 <div class="mini-grid">
                   <div>
                     <label for="customer_email_{{ loop.index }}">Billing Email</label>
-                    <input id="customer_email_{{ loop.index }}" name="customer_email" type="email" value="{{ customer.customer_email }}" placeholder="billing@example.com">
+                    <input id="customer_email_{{ loop.index }}" name="customer_email" type="text" value="{{ customer.customer_email }}" placeholder="billing@example.com, accounts@example.com">
+                    <div class="hint">Use commas to add more than one invoice email address.</div>
                   </div>
                   <div>
                     <label for="customer_rate_{{ loop.index }}">Rate Per Ton</label>
@@ -4113,7 +4114,7 @@ def load_customer_master_rows():
             "customer_name": customer_name,
             "farm_name": farm_name,
             "muck_type": clean_name(row_dict.get("muck_type")),
-            "email": normalize_email_address(row_dict.get("email", "")),
+            "email": ", ".join(normalize_email_list([row_dict.get("email", "")])),
             "address_line_1": clean_name(row_dict.get("address_line_1")),
             "address_line_2": clean_name(row_dict.get("address_line_2")),
             "town": clean_name(row_dict.get("town")),
@@ -4229,8 +4230,9 @@ def save_customer_master_customer_details(customer_name, customer_email, rate_pe
     if not customer_name:
         return False, "Customer is required"
     raw_email = str(customer_email or "").strip()
-    normalized_email = normalize_email_address(raw_email) if raw_email else ""
-    if raw_email and not normalized_email:
+    normalized_emails = normalize_email_list([raw_email]) if raw_email else []
+    normalized_email = ", ".join(normalized_emails)
+    if raw_email and not normalized_emails:
         return False, "Customer email is not valid"
     normalized_field_values = dict(field_values) if isinstance(field_values, dict) else field_values
     if isinstance(normalized_field_values, dict) and "email" in normalized_field_values:
@@ -4501,9 +4503,12 @@ def build_customer_field_admin_map(master_rows, jobs, field_map):
         ensure_bucket(customer_name, row.get("farm_name"))
         if customer_name:
             meta = customer_meta.setdefault(customer_name, {"customer_email": "", "rate_per_ton": ""})
-            email = str(row.get("email", "") or "").strip()
-            if email and not meta["customer_email"]:
-                meta["customer_email"] = email
+            email_values = normalize_email_list([row.get("email", "")])
+            existing_emails = normalize_email_list([meta["customer_email"]])
+            for email in email_values:
+                if email.lower() not in {item.lower() for item in existing_emails}:
+                    existing_emails.append(email)
+            meta["customer_email"] = ", ".join(existing_emails)
             rate_value = str(row.get("rate_per_ton", "") or "").strip()
             if rate_value and not meta["rate_per_ton"]:
                 meta["rate_per_ton"] = rate_value
@@ -7861,6 +7866,7 @@ def record_invoice(invoice, accounts_emails, subject_text="", customer_message="
         "town_override": invoice.get("town_override", ""),
         "postcode_override": invoice.get("postcode_override", ""),
         "customer_email": invoice.get("customer_email", ""),
+        "customer_emails": list(invoice.get("customer_emails", [invoice.get("customer_email", "")]) or []),
         "accounts_emails": list(accounts_emails or []),
         "invoice_date": invoice.get("invoice_date", ""),
         "job_date_from": invoice.get("job_date_from", ""),
@@ -8041,9 +8047,10 @@ def manual_mark_jobs_invoiced(customer_name, farm_name="", through_date="", note
 
 
 def send_invoice_email(invoice, config, accounts_emails, subject_text="", customer_message="", history_ledger_index=""):
-    customer_email = first_valid_email([invoice.get("customer_email", "")])
-    if not customer_email:
+    customer_emails = normalize_email_list(invoice.get("customer_emails", [invoice.get("customer_email", "")]))
+    if not customer_emails:
         raise RuntimeError("Customer email is missing for this invoice.")
+    customer_email = customer_emails[0]
 
     xlsx_bytes = build_invoice_xlsx_bytes(invoice)
     pdf_bytes = build_invoice_pdf_bytes(invoice, xlsx_bytes)
@@ -8072,7 +8079,7 @@ def send_invoice_email(invoice, config, accounts_emails, subject_text="", custom
 
         send_invoice_smtp_batch(
             server,
-            [customer_email],
+            customer_emails,
             from_email_value,
             subject_value,
             customer_message_value,
@@ -8584,10 +8591,12 @@ def build_invoice_from_form(invoice_form):
 
 
 def build_invoice_preview(invoice, config, accounts_emails, subject_text="", customer_message=""):
-    customer_email = str(invoice.get("customer_email", "") or "").strip()
+    customer_emails = normalize_email_list(invoice.get("customer_emails", [invoice.get("customer_email", "")]))
+    customer_email = customer_emails[0] if customer_emails else ""
     normalized_accounts = normalize_email_list(accounts_emails)
-    deduped_accounts = [email for email in normalized_accounts if email.lower() != customer_email.lower()]
-    removed_accounts = [email for email in normalized_accounts if email.lower() == customer_email.lower()]
+    customer_email_keys = {email.lower() for email in customer_emails}
+    deduped_accounts = [email for email in normalized_accounts if email.lower() not in customer_email_keys]
+    removed_accounts = [email for email in normalized_accounts if email.lower() in customer_email_keys]
     subject_value = render_invoice_template(subject_text or invoice_email_subject(invoice, config), invoice)
     customer_message_value = render_invoice_template(customer_message or invoice_email_body(invoice, "customer"), invoice)
     accounts_message_value = render_invoice_template(invoice_email_body(invoice, "accounts"), invoice)
@@ -8605,6 +8614,7 @@ def build_invoice_preview(invoice, config, accounts_emails, subject_text="", cus
     return {
         "invoice": invoice,
         "customer_email": customer_email,
+        "customer_emails": customer_emails,
         "accounts_emails": deduped_accounts,
         "removed_accounts": removed_accounts,
         "subject": subject_value,
@@ -8910,6 +8920,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
     subtotal = 0.0
     vat_total = 0.0
     line_rows = []
+    customer_emails = []
     customer_email = ""
     customer_address_line_1 = ""
     customer_address_line_2 = ""
@@ -8930,10 +8941,10 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         if rate <= 0:
             return {"error": "Rate per ton is missing for one or more uninvoiced jobs in this scope."}
 
-        if not customer_email and isinstance(job_master_record, dict):
-            customer_email = first_valid_email([job_master_record.get("email", "")])
-        if not customer_email:
-            customer_email = first_valid_email([job.get("customer_email", "")])
+        if not customer_emails and isinstance(job_master_record, dict):
+            customer_emails = normalize_email_list([job_master_record.get("email", "")])
+        if not customer_emails:
+            customer_emails = normalize_email_list([job.get("customer_email", "")])
         if not customer_address_line_1:
             customer_address_line_1 = clean_name(job.get("customer_address_line_1"))
         if not customer_address_line_1 and isinstance(job_master_record, dict):
@@ -8972,17 +8983,18 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
             "is_extra_line": False,
         })
 
-    if not customer_email:
+    if not customer_emails:
         master_record = scope_master_record
         if isinstance(master_record, dict):
-            customer_email = first_valid_email([master_record.get("email", "")])
+            customer_emails = normalize_email_list([master_record.get("email", "")])
             customer_address_line_1 = customer_address_line_1 or clean_name(master_record.get("address_line_1"))
             customer_address_line_2 = customer_address_line_2 or clean_name(master_record.get("address_line_2"))
             customer_town = customer_town or clean_name(master_record.get("town"))
             customer_postcode = customer_postcode or clean_name(master_record.get("postcode"))
 
-    if not customer_email:
+    if not customer_emails:
         return {"error": "Customer email is missing for this customer/farm scope."}
+    customer_email = customer_emails[0]
 
     customer_name_override = clean_name(customer_name_override)
     address_line_1_override = clean_name(address_line_1_override)
@@ -9045,6 +9057,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         "display_customer_name": display_customer_name,
         "farm_name": farm_name,
         "customer_email": customer_email,
+        "customer_emails": customer_emails,
         "customer_address_line_1": customer_address_line_1,
         "customer_address_line_2": customer_address_line_2,
         "customer_town": customer_town,
@@ -11280,8 +11293,9 @@ def invoice_create_and_send():
         return redirect(url_for("invoice_home", ok=0, msg=error_message))
 
     accounts_emails = invoice_accounts_copy_emails(load_email_recipient_options())
-    customer_email = str(invoice.get("customer_email", "") or "").strip()
-    accounts_emails = [email for email in accounts_emails if email.lower() != customer_email.lower()]
+    customer_emails = normalize_email_list(invoice.get("customer_emails", [invoice.get("customer_email", "")]))
+    customer_email_keys = {email.lower() for email in customer_emails}
+    accounts_emails = [email for email in accounts_emails if email.lower() not in customer_email_keys]
 
     try:
         send_invoice_email(invoice, config, accounts_emails, subject_text, customer_message, history_ledger_index)
