@@ -124,6 +124,29 @@ class InvoiceHistoryTests(unittest.TestCase):
         self.assertNotIn(b"Ignorable", workbook)
         self.assertNotIn(b"Ignorable", styles)
 
+    def test_second_page_totals_have_complete_cached_formulas(self):
+        invoice = {
+            "invoice_number_label": "5431",
+            "invoice_date_label": "22/09/2026",
+            "payment_terms_days": "14",
+            "line_rows": [
+                {"job_date_label": "22/09/2026", "farm_name": "Farm", "muck_type": "Muck", "tons": 1, "line_total": 3.5}
+                for _ in range(30)
+            ],
+            "total_tons": 30,
+            "subtotal": 105,
+            "vat_total": 21,
+            "grand_total": 126,
+            "job_count": 30,
+        }
+        payload = app.build_invoice_xlsx_bytes(invoice)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            worksheet = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        self.assertIn("<f>SUM(F18:F47)</f><v>30</v>", worksheet)
+        self.assertIn("<f>SUM(G18:G47)</f><v>105</v>", worksheet)
+        self.assertIn("<f>G49*20%</f><v>21</v>", worksheet)
+        self.assertIn("<f>SUM(G49:G50)</f><v>126</v>", worksheet)
+
     def test_saved_workbook_is_repaired_when_downloaded(self):
         os.makedirs(self.archive_dir)
         template_path = app.resolve_invoice_template_path()
