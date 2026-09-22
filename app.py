@@ -7578,6 +7578,7 @@ def build_template_based_invoice_xlsx(invoice, template):
 
 
 def build_invoice_layout_xlsx_bytes(invoice):
+    invoice = normalize_invoice_totals(invoice)
     template = load_invoice_template()
     if template:
         try:
@@ -7589,6 +7590,21 @@ def build_invoice_layout_xlsx_bytes(invoice):
 
 def build_invoice_xlsx_bytes(invoice):
     return build_invoice_layout_xlsx_bytes(invoice)
+
+
+def normalize_invoice_totals(invoice):
+    """Recalculate monetary totals from the invoice lines before export."""
+    normalized = dict(invoice or {})
+    lines = normalized.get("line_rows", []) or []
+    subtotal = round(sum(parse_decimal_or_zero(row.get("line_total")) for row in lines if isinstance(row, dict)), 2)
+    vat_total = round(sum(
+        round(parse_decimal_or_zero(row.get("line_total")) * parse_decimal_or_zero(row.get("vat_rate")) / 100.0, 2)
+        for row in lines if isinstance(row, dict)
+    ), 2)
+    normalized["subtotal"] = subtotal
+    normalized["vat_total"] = vat_total
+    normalized["grand_total"] = round(subtotal + vat_total, 2)
+    return normalized
 
 
 def invoice_pdf_filename(invoice):
@@ -7660,6 +7676,7 @@ def convert_xlsx_bytes_to_pdf_bytes(xlsx_bytes, xlsx_name="invoice.xlsx"):
 
 
 def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
+    invoice = normalize_invoice_totals(invoice)
     layout_xlsx_bytes = build_invoice_layout_xlsx_bytes(invoice)
     converted_pdf = convert_xlsx_bytes_to_pdf_bytes(layout_xlsx_bytes, invoice.get("filename", "invoice.xlsx"))
     if converted_pdf:
