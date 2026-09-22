@@ -1592,7 +1592,7 @@ HTML = """
                   <td>{{ job.saved_label }}</td>
                   <td>
                     <div class="actions-inline">
-                      <a class="button button-secondary button-small" href="{{ url_for('home', edit_id=job.id) }}">Edit</a>
+                      <a class="button button-secondary button-small" href="{{ url_for('muck_home', edit_id=job.id) }}">Edit</a>
                       <form method="post" action="{{ url_for('delete_job', job_id=job.id) }}" class="delete-job-form">
                         <button class="button button-danger button-small" type="submit">Delete</button>
                       </form>
@@ -1634,7 +1634,7 @@ HTML = """
               <div class="job-row-meta">
                 <div class="job-row-date">{{ job.job_date_label }}</div>
                 <div class="actions-inline">
-                  <a class="button button-secondary button-small" href="{{ url_for('home', edit_id=job.id) }}">Edit</a>
+                  <a class="button button-secondary button-small" href="{{ url_for('muck_home', edit_id=job.id) }}">Edit</a>
                   <form method="post" action="{{ url_for('delete_job', job_id=job.id) }}" class="delete-job-form">
                     <button class="button button-danger button-small" type="submit">Delete</button>
                   </form>
@@ -1647,7 +1647,7 @@ HTML = """
         </div>
         {% if has_more_recent_jobs %}
         <div class="actions">
-          <a class="button button-secondary button-full" href="{{ url_for('home', jobs_page=jobs_page + 1) }}">Load 20 More Jobs</a>
+          <a class="button button-secondary button-full" href="{{ url_for('muck_home', jobs_page=jobs_page + 1) }}">Load 20 More Jobs</a>
         </div>
         {% endif %}
         {% else %}
