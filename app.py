@@ -7365,7 +7365,18 @@ def fill_layout_invoice_template(invoice, template):
         set_template_cell_value(detail_row, "A%s" % current_row_number, description)
         set_template_cell_value(detail_row, "E%s" % current_row_number, product)
         set_template_cell_value(detail_row, "F%s" % current_row_number, detail.get("tons", ""))
-        set_template_cell_value(detail_row, "G%s" % current_row_number, detail.get("line_total", "") if str(detail.get("line_total", "")).strip() != "" else "")
+        line_total = detail.get("line_total", "")
+        tons_value = detail.get("tons", "")
+        rate_value = detail.get("rate_per_ton", "")
+        if not detail.get("is_extra_line") and str(tons_value).strip() != "" and str(rate_value).strip() != "":
+            set_template_cell_formula(
+                detail_row,
+                "G%s" % current_row_number,
+                "F%s*%s" % (current_row_number, parse_decimal_or_zero(rate_value)),
+                line_total,
+            )
+        else:
+            set_template_cell_value(detail_row, "G%s" % current_row_number, line_total if str(line_total).strip() != "" else "")
         sort_template_row_cells(detail_row)
         current_row_number += 1
 
