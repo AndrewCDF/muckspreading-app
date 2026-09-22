@@ -9471,15 +9471,17 @@ def straw_home():
 @app.route("/straw/export.xlsx")
 def straw_export_xlsx():
     state = normalize_straw_state(read_json_file(STRAW_STATE_PATH, {}))
-    headers = ["Customer", "Farm", "Field Name", "Crop", "Total Bales", "Hectares", "Moisture %", "Photo Added", "Started", "Finished"]
-    rows = [headers]
-    for field in state["fields"]:
-        rows.append([
-            field.get("customer", ""), field.get("farm", ""), field.get("name", ""),
-            field.get("crop", ""), field.get("bales", 0), field.get("hectares", 0), field.get("moisture", 0), "Yes" if field.get("photo") else "No",
-            field.get("startedAt", field.get("createdAt", "")), field.get("finishedAt", ""),
-        ])
-    rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", ""]])
+    headers = ["Customer", "Farm", "Field Name", "Crop", "Total Bales", "Hectares", "Moisture %", "Photo Added", "Completed"]
+    fields = sorted(state["fields"], key=lambda f: (str(f.get("customer", "No customer")), str(f.get("farm", "")), str(f.get("name", ""))))
+    rows = []
+    customers = {}
+    for field in fields: customers.setdefault(field.get("customer") or "No customer", []).append(field)
+    for index, group in enumerate(customers.values()):
+        if index: rows.append([""] * len(headers))
+        rows.append(headers)
+        for field in group:
+            rows.append([field.get("customer", ""), field.get("farm", ""), field.get("name", ""), field.get("crop", ""), field.get("bales", 0), field.get("hectares", 0), field.get("moisture", ""), "Yes" if field.get("photo") else "No", field.get("finishedAt", "")])
+    rows += [[""] * len(headers), [""] * len(headers), ["Grand Total", "", "", "", sum(float(f.get("bales", 0) or 0) for f in fields), sum(float(f.get("bales", 0) or 0) for f in fields), sum(float(f.get("hectares", 0) or 0) for f in fields), "", ""]]
     payload = build_straw_multisheet_xlsx(state, rows)
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
