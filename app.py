@@ -7858,6 +7858,9 @@ def invoice_history_row_at(ledger_index):
 def invoice_jobs_for_history_row(history_row):
     if not isinstance(history_row, dict):
         return []
+    snapshots = history_row.get("job_snapshots", [])
+    if isinstance(snapshots, list) and snapshots:
+        return [dict(row) for row in snapshots if isinstance(row, dict)]
     wanted_ids = []
     for value in history_row.get("job_ids", []):
         try:
@@ -7955,6 +7958,7 @@ def record_invoice(invoice, accounts_emails, subject_text="", customer_message="
         "start_date": invoice.get("start_date", ""),
         "end_date": invoice.get("end_date", ""),
         "job_ids": list(invoice.get("job_ids", [])),
+        "job_snapshots": [dict(row) for row in invoice.get("source_jobs", []) if isinstance(row, dict)],
         "job_count": int(invoice.get("job_count", 0) or 0),
         "grand_total": invoice.get("grand_total", 0),
         "xlsx_filename": invoice.get("filename", ""),
@@ -9143,6 +9147,7 @@ def build_invoice_payload(customer_name, farm_name="", rate_override="", additio
         "end_date_label": format_invoice_date(end_date),
         "last_invoiced_end_date_label": format_invoice_date(last_invoice.get("end_date")) if isinstance(last_invoice, dict) and last_invoice.get("end_date") else "First invoice for this scope",
         "line_rows": line_rows,
+        "source_jobs": [dict(row) for row in jobs if isinstance(row, dict)],
         "job_ids": [row["job_id"] for row in line_rows if row.get("job_id")],
         "job_count": len([row for row in line_rows if not row.get("is_extra_line")]),
         "additional_fee_count": len([row for row in line_rows if row.get("is_extra_line")]),
