@@ -9482,10 +9482,37 @@ def straw_export_xlsx():
     rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", ""]])
     # Generate a clean workbook rather than rewriting the supplied mock's
     # Excel/LibreOffice metadata, which can trigger repair warnings.
-    payload = build_basic_xlsx_bytes("Straw Bales", "Straw Bales", rows, column_widths=[22, 20, 24, 16, 13, 12, 18, 18, 13, 22])
+    payload = build_straw_colored_xlsx(rows)
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
     return response
+
+
+def build_straw_colored_xlsx(rows):
+    """Create a clean field export with crop colour coding."""
+    styles = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4F8F46"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDFBD56"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD78632"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4D8F9E"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF8FA84F"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="1" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="5" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>'''
+    body = []
+    crop_styles = {"Wheat": 1, "Barley": 2, "Oats": 3, "Spring Barley": 4, "Hay": 5}
+    for row_num, values in enumerate(rows, 1):
+        cells = []
+        for col_num, value in enumerate(values, 1):
+            style = 0
+            if row_num == 1: style = 1
+            elif col_num == 4: style = crop_styles.get(str(value), 0)
+            ref = "%s%s" % (xlsx_col_name(col_num), row_num)
+            if isinstance(value, (int, float)): cells.append('<c r="%s" s="%s"><v>%s</v></c>' % (ref, style, value))
+            elif value in (None, ""): cells.append('<c r="%s" s="%s"/>' % (ref, style))
+            else: cells.append('<c r="%s" s="%s" t="inlineStr"><is><t>%s</t></is></c>' % (ref, style, xml_escape(str(value))))
+        body.append('<row r="%s">%s</row>' % (row_num, ''.join(cells)))
+    sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="%s"><dimension ref="A1:J%s"/><sheetData>%s</sheetData></worksheet>' % (XLSX_NS, len(rows), ''.join(body))
+    content = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'
+    workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="%s" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Straw Bales" sheetId="1" r:id="rId1"/></sheets></workbook>' % XLSX_NS
+    rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'
+    root_rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in {"[Content_Types].xml":content,"_rels/.rels":root_rels,"xl/workbook.xml":workbook,"xl/_rels/workbook.xml.rels":rels,"xl/worksheets/sheet1.xml":sheet,"xl/styles.xml":styles}.items(): archive.writestr(name, data)
+    return output.getvalue()
 
 
 def build_straw_template_export(rows, template_path):
