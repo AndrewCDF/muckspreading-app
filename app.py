@@ -9506,7 +9506,7 @@ def build_straw_template_export(rows, template_path):
         return '<c%s t="inlineStr"><is><t>%s</t></is></c>' % (attrs, xml_escape(str(value)))
     for row_index, values in enumerate(records, 1):
         styles = ["6", "6", "6", "7", "6", "6", "6", "6", "6", "6"] if row_index == 1 else ["", "", "", crop_styles.get(str(values[3]), ""), "", "", "", "", "", ""]
-        xml_rows.append('<row r="%s">%s</row>' % (row_index, "".join(cell(xlsx_col_name(i), value, styles[i-1]) for i, value in enumerate(values, 1))))
+        xml_rows.append('<row r="%s">%s</row>' % (row_index, "".join(cell("%s%s" % (xlsx_col_name(i), row_index), value, styles[i-1]) for i, value in enumerate(values, 1))))
     root = ET.fromstring(entries["xl/worksheets/sheet1.xml"])
     sheet_data = root.find("{%s}sheetData" % XLSX_NS)
     for child in list(sheet_data): sheet_data.remove(child)
