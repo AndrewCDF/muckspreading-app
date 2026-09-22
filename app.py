@@ -9468,6 +9468,22 @@ def straw_home():
     return render_template("straw_app.html", farms=load_farms(), crops=settings_names("Straw Crops", ["Wheat", "Barley", "Spring Barley", "Oats", "Hay"]))
 
 
+@app.route("/straw/export.xlsx")
+def straw_export_xlsx():
+    state = normalize_straw_state(read_json_file(STRAW_STATE_PATH, {}))
+    rows = [["Straw App Export"], [], ["Section", "Date / Time", "Customer", "Crop", "Field", "Bales", "Weight", "Notes", "Status"]]
+    for load in state["loads"]:
+        rows.append(["Load Out", "%s %s" % (load.get("delivery_date", ""), load.get("delivery_time", "")), load.get("customer", ""), "", load.get("registration", ""), load.get("bale_total", ""), load.get("weight_total", ""), "", "Completed" if load.get("weight_total") else "Awaiting weight"])
+    for stocktake in state["stocktakes"]:
+        rows.append(["Stocktake", stocktake.get("date", ""), "", "", "", stocktake.get("bales", ""), "", stocktake.get("notes", ""), ""])
+    for movement in state["stockMovements"]:
+        rows.append(["Bought In / Ducks", movement.get("date", ""), "", "", "", movement.get("bales", ""), "", movement.get("notes", ""), movement.get("type", "")])
+    payload = build_basic_xlsx_bytes("Straw Export", "Straw App Export", rows, column_widths=[20, 24, 28, 18, 24, 12, 14, 36, 18])
+    response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
+    return response
+
+
 def normalize_straw_state(value):
     value = value if isinstance(value, dict) else {}
     return {
