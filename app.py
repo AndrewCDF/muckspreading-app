@@ -9471,14 +9471,17 @@ def straw_home():
 @app.route("/straw/export.xlsx")
 def straw_export_xlsx():
     state = normalize_straw_state(read_json_file(STRAW_STATE_PATH, {}))
-    rows = [["Straw App Export"], [], ["Section", "Date / Time", "Customer", "Crop", "Field", "Bales", "Weight", "Notes", "Status"]]
-    for load in state["loads"]:
-        rows.append(["Load Out", "%s %s" % (load.get("delivery_date", ""), load.get("delivery_time", "")), load.get("customer", ""), "", load.get("registration", ""), load.get("bale_total", ""), load.get("weight_total", ""), "", "Completed" if load.get("weight_total") else "Awaiting weight"])
-    for stocktake in state["stocktakes"]:
-        rows.append(["Stocktake", stocktake.get("date", ""), "", "", "", stocktake.get("bales", ""), "", stocktake.get("notes", ""), ""])
-    for movement in state["stockMovements"]:
-        rows.append(["Bought In / Ducks", movement.get("date", ""), "", "", "", movement.get("bales", ""), "", movement.get("notes", ""), movement.get("type", "")])
-    payload = build_basic_xlsx_bytes("Straw Export", "Straw App Export", rows, column_widths=[20, 24, 28, 18, 24, 12, 14, 36, 18])
+    headers = ["Customer", "Farm", "Field Name", "Status", "Total Bales", "Hectares", "Crop", "Average Moisture %", "Photo Added", "Started", "Finished"]
+    rows = [headers]
+    for field in state["fields"]:
+        rows.append([
+            field.get("customer", ""), field.get("farm", ""), field.get("name", ""),
+            field.get("status", ""), field.get("bales", 0), field.get("hectares", 0),
+            field.get("crop", ""), field.get("moisture", 0), "Yes" if field.get("photo") else "No",
+            field.get("startedAt", field.get("createdAt", "")), field.get("finishedAt", ""),
+        ])
+    rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", "", ""]])
+    payload = build_basic_xlsx_bytes("Straw Bales", "Straw Bales", rows, column_widths=[22, 20, 24, 16, 13, 12, 18, 18, 13, 22, 22])
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
     return response
