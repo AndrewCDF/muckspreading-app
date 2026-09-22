@@ -9480,9 +9480,8 @@ def straw_export_xlsx():
             field.get("startedAt", field.get("createdAt", "")), field.get("finishedAt", ""),
         ])
     rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", ""]])
-    # Generate a clean workbook rather than rewriting the supplied mock's
-    # Excel/LibreOffice metadata, which can trigger repair warnings.
-    payload = build_straw_colored_xlsx(rows)
+    template_path = os.path.join(APP_ROOT, "mock-straw-export.xlsx")
+    payload = build_straw_template_export(rows, template_path) if os.path.exists(template_path) else build_straw_colored_xlsx(rows)
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
     return response
