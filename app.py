@@ -7597,10 +7597,10 @@ def normalize_invoice_totals(invoice):
     normalized = dict(invoice or {})
     lines = normalized.get("line_rows", []) or []
     subtotal = round(sum(parse_decimal_or_zero(row.get("line_total")) for row in lines if isinstance(row, dict)), 2)
-    vat_total = round(sum(
-        round(parse_decimal_or_zero(row.get("line_total")) * parse_decimal_or_zero(row.get("vat_rate")) / 100.0, 2)
-        for row in lines if isinstance(row, dict)
-    ), 2)
+    # Muck spreading invoices use the standard 20% VAT rate. Recalculate it
+    # from the complete subtotal so legacy rows with blank/stale VAT fields
+    # cannot leave an old cached figure in a regenerated PDF or workbook.
+    vat_total = round(subtotal * 0.20, 2)
     normalized["subtotal"] = subtotal
     normalized["vat_total"] = vat_total
     normalized["grand_total"] = round(subtotal + vat_total, 2)
