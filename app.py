@@ -9494,7 +9494,7 @@ def build_straw_template_export(rows, template_path):
     with zipfile.ZipFile(template_path, "r") as source:
         entries = {name: source.read(name) for name in source.namelist()}
     headers = rows[0]
-    records = rows[1:]
+    records = rows
     crop_styles = {"Wheat": "1", "Barley": "2", "Oats": "3", "Spring Barley": "4", "Hay": "5"}
     xml_rows = []
     def cell(ref, value, style=""):
