@@ -7145,6 +7145,26 @@ def set_template_cell_value(row, ref, value):
     text_node.text = str(value)
 
 
+def set_template_cell_formula(row, ref, formula, cached_value=None):
+    """Write an Excel formula while retaining a cached value for previewers."""
+    cells = template_row_cell_map(row)
+    cell = cells.get(ref)
+    if cell is None:
+        cell = ET.Element("{%s}c" % XLSX_NS, {"r": ref})
+        row.append(cell)
+    style_id = cell.attrib.get("s")
+    cell.attrib.clear()
+    cell.attrib["r"] = ref
+    if style_id not in [None, ""]:
+        cell.attrib["s"] = style_id
+    for child in list(cell):
+        cell.remove(child)
+    ET.SubElement(cell, "{%s}f" % XLSX_NS).text = str(formula)
+    value_node = ET.SubElement(cell, "{%s}v" % XLSX_NS)
+    if cached_value is not None and cached_value != "":
+        value_node.text = str(cached_value)
+
+
 def patch_currency_number_formats(styles_bytes):
     try:
         root = ET.fromstring(styles_bytes)
@@ -7358,11 +7378,31 @@ def fill_layout_invoice_template(invoice, template):
         current_row_number += 1
 
     totals_start_row = detail_end_row + 1
-    set_template_cell_value(row(totals_start_row), "F%s" % totals_start_row, invoice.get("total_tons", ""))
-    set_template_cell_value(row(totals_start_row + 1), "G%s" % (totals_start_row + 1), invoice.get("subtotal", ""))
+    set_template_cell_formula(
+        row(totals_start_row),
+        "F%s" % totals_start_row,
+        "SUM(F%s:F%s)" % (detail_start_row, detail_end_row),
+        invoice.get("total_tons", ""),
+    )
+    set_template_cell_formula(
+        row(totals_start_row + 1),
+        "G%s" % (totals_start_row + 1),
+        "SUM(G%s:G%s)" % (detail_start_row, detail_end_row),
+        invoice.get("subtotal", ""),
+    )
     set_template_cell_value(row(totals_start_row + 2), "F%s" % (totals_start_row + 2), "VAT 20%")
-    set_template_cell_value(row(totals_start_row + 2), "G%s" % (totals_start_row + 2), invoice.get("vat_total", ""))
-    set_template_cell_value(row(totals_start_row + 3), "G%s" % (totals_start_row + 3), invoice.get("grand_total", ""))
+    set_template_cell_formula(
+        row(totals_start_row + 2),
+        "G%s" % (totals_start_row + 2),
+        "G%s*20%%" % (totals_start_row + 1),
+        invoice.get("vat_total", ""),
+    )
+    set_template_cell_formula(
+        row(totals_start_row + 3),
+        "G%s" % (totals_start_row + 3),
+        "SUM(G%s:G%s)" % (totals_start_row + 1, totals_start_row + 2),
+        invoice.get("grand_total", ""),
+    )
 
     for target_row in [9, 10, 11, 12, 13, 17, totals_start_row, totals_start_row + 1, totals_start_row + 2, totals_start_row + 3]:
         sort_template_row_cells(row(target_row))
