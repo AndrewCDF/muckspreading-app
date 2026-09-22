@@ -7354,6 +7354,7 @@ def fill_layout_invoice_template(invoice, template):
     current_row_number = detail_start_row
     for detail in detail_rows:
         detail_row = row(current_row_number)
+        detail_row.attrib.pop("hidden", None)
         description = invoice_line_field_label(detail)
         if not description:
             description = clean_name(detail.get("job_notes"))
@@ -7370,6 +7371,10 @@ def fill_layout_invoice_template(invoice, template):
 
     while current_row_number <= detail_end_row:
         detail_row = row(current_row_number)
+        if current_row_number > detail_start_row + len(detail_rows) + 1:
+            detail_row.attrib["hidden"] = "1"
+        else:
+            detail_row.attrib.pop("hidden", None)
         set_template_cell_value(detail_row, "A%s" % current_row_number, "")
         set_template_cell_value(detail_row, "E%s" % current_row_number, "")
         set_template_cell_value(detail_row, "F%s" % current_row_number, "")
