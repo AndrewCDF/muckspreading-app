@@ -9471,20 +9471,54 @@ def straw_home():
 @app.route("/straw/export.xlsx")
 def straw_export_xlsx():
     state = normalize_straw_state(read_json_file(STRAW_STATE_PATH, {}))
-    headers = ["Customer", "Farm", "Field Name", "Status", "Total Bales", "Hectares", "Crop", "Average Moisture %", "Photo Added", "Started", "Finished"]
+    headers = ["Customer", "Farm", "Field Name", "Crop", "Total Bales", "Hectares", "Moisture %", "Photo Added", "Started", "Finished"]
     rows = [headers]
     for field in state["fields"]:
         rows.append([
             field.get("customer", ""), field.get("farm", ""), field.get("name", ""),
-            field.get("status", ""), field.get("bales", 0), field.get("hectares", 0),
-            field.get("crop", ""), field.get("moisture", 0), "Yes" if field.get("photo") else "No",
+            field.get("crop", ""), field.get("bales", 0), field.get("hectares", 0), field.get("moisture", 0), "Yes" if field.get("photo") else "No",
             field.get("startedAt", field.get("createdAt", "")), field.get("finishedAt", ""),
         ])
-    rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", "", ""]])
-    payload = build_basic_xlsx_bytes("Straw Bales", "Straw Bales", rows, column_widths=[22, 20, 24, 16, 13, 12, 18, 18, 13, 22, 22])
+    rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", ""]])
+    template_path = os.path.join(APP_ROOT, "mock-straw-export.xlsx")
+    if os.path.exists(template_path):
+        payload = build_straw_template_export(rows, template_path)
+    else:
+        payload = build_basic_xlsx_bytes("Straw Bales", "Straw Bales", rows, column_widths=[22, 20, 24, 16, 13, 12, 18, 18, 13, 22, 22])
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
     return response
+
+
+def build_straw_template_export(rows, template_path):
+    with zipfile.ZipFile(template_path, "r") as source:
+        entries = {name: source.read(name) for name in source.namelist()}
+    headers = rows[0]
+    records = rows[1:]
+    crop_styles = {"Wheat": "1", "Barley": "2", "Oats": "3", "Spring Barley": "4", "Hay": "5"}
+    xml_rows = []
+    def cell(ref, value, style=""):
+        attrs = ' r="%s"' % ref + ((' s="%s"' % style) if style else "")
+        if isinstance(value, (int, float)):
+            return "<c%s><v>%s</v></c>" % (attrs, value)
+        if value in (None, ""):
+            return "<c%s/>" % attrs
+        return '<c%s t="inlineStr"><is><t>%s</t></is></c>' % (attrs, xml_escape(str(value)))
+    for row_index, values in enumerate(records, 1):
+        styles = ["6", "6", "6", "7", "6", "6", "6", "6", "6", "6"] if row_index == 1 else ["", "", "", crop_styles.get(str(values[3]), ""), "", "", "", "", "", ""]
+        xml_rows.append('<row r="%s">%s</row>' % (row_index, "".join(cell(xlsx_col_name(i), value, styles[i-1]) for i, value in enumerate(values, 1))))
+    root = ET.fromstring(entries["xl/worksheets/sheet1.xml"])
+    sheet_data = root.find("{%s}sheetData" % XLSX_NS)
+    for child in list(sheet_data): sheet_data.remove(child)
+    for xml_row in xml_rows: sheet_data.append(ET.fromstring(xml_row))
+    dimension = root.find("{%s}dimension" % XLSX_NS)
+    if dimension is not None: dimension.attrib["ref"] = "A1:J%s" % len(records)
+    ET.register_namespace("", XLSX_NS)
+    entries["xl/worksheets/sheet1.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in entries.items(): archive.writestr(name, data)
+    return output.getvalue()
 
 
 def normalize_straw_state(value):
