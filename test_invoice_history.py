@@ -73,18 +73,21 @@ class InvoiceHistoryTests(unittest.TestCase):
         self.assertEqual(ledger[0]["xlsx_filename"], "invoice_12.xlsx")
         self.assertEqual(ledger[0]["pdf_filename"], "invoice_12.pdf")
 
-    def test_pdf_download_uses_saved_archive(self):
+    def test_pdf_download_rebuilds_saved_invoice(self):
         os.makedirs(self.archive_dir)
         with open(os.path.join(self.archive_dir, "invoice_12.pdf"), "wb") as handle:
             handle.write(b"%PDF-test")
         row = {"invoice_number": 12, "pdf_filename": "invoice_12.pdf"}
+        rebuilt_invoice = {"filename": "invoice_12.xlsx"}
         with patch.object(app, "ensure_data_dir"), patch.object(
             app, "invoice_history_row_at", return_value=(row, 0, [row])
+        ), patch.object(
+            app, "rebuild_and_archive_history_invoice", return_value=(rebuilt_invoice, b"xlsx", b"%PDF-rebuilt", "")
         ):
             with app.app.test_client() as client:
                 response = client.get("/invoice/history/0/download.pdf")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, b"%PDF-test")
+        self.assertEqual(response.data, b"%PDF-rebuilt")
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
 

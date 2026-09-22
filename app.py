@@ -10324,9 +10324,6 @@ def invoice_history_show_pdf(ledger_index):
     history_row, actual_index, _ = invoice_history_row_at(ledger_index)
     if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
         return redirect(url_for("invoice_history", ok=0, msg="That invoice PDF is not available"))
-    archived = invoice_archive_response(history_row.get("pdf_filename", ""), "application/pdf", download=False)
-    if archived is not None:
-        return archived
     invoice, _, pdf_bytes, error_message = rebuild_and_archive_history_invoice(history_row, actual_index)
     if error_message:
         return redirect(url_for("invoice_history", ok=0, msg=error_message))
@@ -10341,9 +10338,6 @@ def invoice_history_download_pdf(ledger_index):
     history_row, actual_index, _ = invoice_history_row_at(ledger_index)
     if not isinstance(history_row, dict) or bool(history_row.get("manual_only", False)):
         return redirect(url_for("invoice_history", ok=0, msg="That invoice PDF is not available"))
-    archived = invoice_archive_response(history_row.get("pdf_filename", ""), "application/pdf", download=True)
-    if archived is not None:
-        return archived
     invoice, _, pdf_bytes, error_message = rebuild_and_archive_history_invoice(history_row, actual_index)
     if error_message:
         return redirect(url_for("invoice_history", ok=0, msg=error_message))
