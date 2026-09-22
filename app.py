@@ -9480,10 +9480,42 @@ def straw_export_xlsx():
             field.get("startedAt", field.get("createdAt", "")), field.get("finishedAt", ""),
         ])
     rows.extend([["" for _ in headers], ["Totals"] + [""] * 3 + [sum(float(f.get("bales", 0) or 0) for f in state["fields"]), sum(float(f.get("hectares", 0) or 0) for f in state["fields"]), "", "", "", ""]])
-    payload = build_straw_colored_xlsx(rows)
+    payload = build_straw_multisheet_xlsx(state, rows)
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
     return response
+
+
+def build_straw_multisheet_xlsx(state, field_rows):
+    """Mirror the older Straw app export: fields, loads, stocktakes and movements."""
+    sheets = [
+        ("Fields", field_rows),
+        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Number of Bales", "Load Weight", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("bale_total", ""), x.get("weight_total", ""), ""] for x in state["loads"]]),
+        ("Stocktakes", [["Date and Time", "Bales in Stock", "Notes"]] + [[x.get("date", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stocktakes"]]),
+        ("Stock Movements", [["Type", "Date and Time", "Customer / Source", "Number of Bales", "Stock Effect", "Notes"]] + [[x.get("type", ""), x.get("date", ""), x.get("customer", ""), x.get("bales", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stockMovements"]]),
+    ]
+    style_xml = '''<styleSheet xmlns="%s"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4F8F46"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDFBD56"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD78632"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4D8F9E"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF8FA84F"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fillId="1" borderId="0" xfId="0"/><xf numFmtId="0" fillId="2" borderId="0" xfId="0"/><xf numFmtId="0" fillId="3" borderId="0" xfId="0"/><xf numFmtId="0" fillId="4" borderId="0" xfId="0"/><xf numFmtId="0" fillId="5" borderId="0" xfId="0"/></cellXfs></styleSheet>''' % XLSX_NS
+    sheets_xml = {}
+    for index, (name, data) in enumerate(sheets, 1):
+        body=[]
+        for r, values in enumerate(data, 1):
+            cells=[]
+            for c, value in enumerate(values, 1):
+                style = 1 if r == 1 else ({"Wheat":1,"Barley":2,"Oats":3,"Spring Barley":4,"Hay":5}.get(str(value),0) if c == 4 else 0)
+                ref="%s%s"%(xlsx_col_name(c),r)
+                if isinstance(value,(int,float)): cells.append('<c r="%s" s="%s"><v>%s</v></c>'%(ref,style,value))
+                elif value in (None,""): cells.append('<c r="%s" s="%s"/>'%(ref,style))
+                else: cells.append('<c r="%s" s="%s" t="inlineStr"><is><t>%s</t></is></c>'%(ref,style,xml_escape(str(value))))
+            body.append('<row r="%s">%s</row>'%(r,''.join(cells)))
+        sheets_xml[index]='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="%s"><dimension ref="A1:%s%s"/><sheetData>%s</sheetData></worksheet>'%(XLSX_NS,xlsx_col_name(max(len(x) for x in data)),len(data),''.join(body))
+    content=['<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>','<Default Extension="xml" ContentType="application/xml"/>','<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>','<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>']+[f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(1,5)]
+    workbook='<workbook xmlns="%s" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>%s</sheets></workbook>'%(XLSX_NS,''.join('<sheet name="%s" sheetId="%s" r:id="rId%s"/>'%(n,i,i) for i,(n,_) in enumerate(sheets,1)))
+    rels='<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">%s<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'%''.join('<Relationship Id="rId%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet%s.xml"/>'%(i,i) for i in range(1,5))
+    out=io.BytesIO()
+    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">%s</Types>'%''.join(content)); z.writestr('_rels/.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'); z.writestr('xl/workbook.xml',workbook); z.writestr('xl/_rels/workbook.xml.rels',rels); z.writestr('xl/styles.xml',style_xml)
+        for i,x in sheets_xml.items(): z.writestr('xl/worksheets/sheet%s.xml'%i,x)
+    return out.getvalue()
 
 
 def build_straw_colored_xlsx(rows):
