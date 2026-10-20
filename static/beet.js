@@ -214,10 +214,9 @@
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save the sugar beet job.');
-      current = result.entry;
       dirty = false;
-      replaceEntry(current);
-      form.elements.invoiced.checked = current.invoiced;
+      replaceEntry(result.entry);
+      fill(null);
       message(`Saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`);
     } catch (error) {
       message(`${error.message} Your changes remain in the form.`, true);

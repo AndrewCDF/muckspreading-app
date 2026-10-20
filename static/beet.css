@@ -19,3 +19,5 @@
 #escalator-terms { padding: 12px 14px; border-radius: 10px; background: var(--gold-soft); color: var(--green); }
 .settings-panel { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--line); }
 .settings-panel[hidden] { display: none; }
+.maintenance-grid label { min-width: 0; }
+.maintenance-grid input[type="date"] { display: block; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; -webkit-appearance: none; appearance: none; }
