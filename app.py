@@ -148,6 +148,7 @@ DASHBOARD_HTML = """
                 <a class="primary" href="/muck">Muck Spreading</a>
                 <a class="primary straw-button" href="/straw">Hay &amp; Straw</a>
                 <a class="primary" href="{{ url_for('timesheet_home') }}">Timesheet</a>
+                <a class="primary" href="{{ url_for('beet_home') }}">Sugar Beet</a>
                 <a class="primary maintenance-button" href="{{ url_for('maintenance_home') }}">Maintenance</a>
       </section>
     </main>
@@ -9888,6 +9889,169 @@ def maintenance_entries(entry_id=None):
                 save_settings_names("Machinery", names + [values["machinery"]])
         except Exception:
             app.logger.warning("Maintenance saved, but machinery could not be added to settings.xlsx")
+        return jsonify(entry=row), 201 if request.method == "POST" else 200
+    finally:
+        connection.close()
+
+
+BEET_DEFAULT_SETTINGS = {"base_price": 0.70, "trigger_pct": 10.0}
+BEET_DEFAULT_DIESEL_PRICE = 1.10
+
+
+def beet_settings():
+    saved = read_json_file(os.path.join(DATA_DIR, "beet_settings.json"), {})
+    settings = dict(BEET_DEFAULT_SETTINGS)
+    if isinstance(saved, dict):
+        for key in settings:
+            if isinstance(saved.get(key), (int, float)) and not isinstance(saved.get(key), bool):
+                settings[key] = float(saved[key])
+    return settings
+
+
+def beet_escalator(diesel_used, diesel_price, base_price, trigger_pct):
+    """Total surcharge: nothing until the price is trigger_pct above base, then the full rise over base."""
+    trigger_price = round(float(base_price) * (1 + float(trigger_pct) / 100), 4)
+    if round(float(diesel_price), 4) < trigger_price:
+        return 0.0
+    return round(float(diesel_used) * (float(diesel_price) - float(base_price)), 2)
+
+
+def beet_connection():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    connection = sqlite3.connect(os.path.join(DATA_DIR, "beet.sqlite3"), timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("""CREATE TABLE IF NOT EXISTS beet_jobs (
+        id INTEGER PRIMARY KEY,
+        job_date TEXT NOT NULL,
+        customer TEXT NOT NULL COLLATE NOCASE,
+        field TEXT NOT NULL COLLATE NOCASE,
+        area TEXT NOT NULL,
+        diesel_used TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(beet_jobs)")}
+    if "diesel_price" not in columns:
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN diesel_price TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_DIESEL_PRICE)
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN base_price TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_SETTINGS["base_price"])
+    if "trigger_pct" not in columns:
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN trigger_pct TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_SETTINGS["trigger_pct"])
+    connection.commit()
+    return connection
+
+
+def beet_row(row):
+    entry = dict(row)
+    total = beet_escalator(entry["diesel_used"], entry["diesel_price"], entry["base_price"], entry["trigger_pct"])
+    area = float(entry["area"])
+    entry["escalator"] = "%.2f" % total
+    entry["escalator_per_ha"] = "%.2f" % (total / area) if area > 0 else ""
+    return entry
+
+
+def load_beet_jobs():
+    connection = beet_connection()
+    try:
+        return [beet_row(row) for row in connection.execute("SELECT * FROM beet_jobs ORDER BY job_date DESC, id DESC").fetchall()]
+    finally:
+        connection.close()
+
+
+@app.route("/beet")
+def beet_home():
+    customers = load_customers()
+    field_map = {customer: sorted({field for fields in farms.values() for field in fields}, key=lambda value: value.lower()) for customer, farms in load_field_map().items()}
+    for row in load_beet_jobs():
+        customer, field = clean_name(row["customer"]), clean_name(row["field"])
+        if customer and customer not in customers:
+            customers.append(customer)
+        if customer and field and field not in field_map.setdefault(customer, []):
+            field_map[customer].append(field)
+    customers.sort(key=lambda value: value.lower())
+    return render_template("beet.html", customers=customers, field_map=field_map, settings=beet_settings(), default_price=BEET_DEFAULT_DIESEL_PRICE)
+
+
+@app.route("/api/beet/settings", methods=["GET", "POST"])
+def beet_settings_api():
+    if request.method == "GET":
+        return jsonify(settings=beet_settings())
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Please submit valid settings."), 400
+    settings = {}
+    for key, label in (("base_price", "Base diesel price"), ("trigger_pct", "Trigger percentage")):
+        value = payload.get(key)
+        try:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ValueError()
+            number = float(value)
+            if number < 0 or number != number or number == float("inf"):
+                raise ValueError()
+            settings[key] = round(number, 4)
+        except ValueError:
+            return jsonify(error=label + " must be a positive number."), 400
+    if settings["base_price"] <= 0:
+        return jsonify(error="Base diesel price must be more than zero."), 400
+    write_json_atomic(os.path.join(DATA_DIR, "beet_settings.json"), settings)
+    return jsonify(settings=settings)
+
+
+@app.route("/api/beet", methods=["GET", "POST"])
+@app.route("/api/beet/<int:entry_id>", methods=["PUT"])
+def beet_jobs(entry_id=None):
+    if request.method == "GET":
+        response = jsonify(entries=load_beet_jobs())
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Please submit a valid sugar beet job."), 400
+    keys = ("job_date", "customer", "field", "area", "diesel_used", "diesel_price")
+    values = {}
+    for key in keys:
+        value = payload.get(key, "")
+        if not isinstance(value, str):
+            return jsonify(error="Invalid sugar beet field: " + key), 400
+        values[key] = value.strip()
+    try:
+        if datetime.strptime(values["job_date"], "%Y-%m-%d").strftime("%Y-%m-%d") != values["job_date"]:
+            raise ValueError()
+    except ValueError:
+        return jsonify(error="Choose a valid date."), 400
+    for key, label in (("customer", "customer"), ("field", "field")):
+        if not values[key] or len(values[key]) > 160:
+            return jsonify(error="Enter the %s." % label), 400
+    for key, label in (("area", "Area"), ("diesel_used", "Diesel used"), ("diesel_price", "Diesel price")):
+        try:
+            number = float(values[key])
+            if number < 0 or number != number or number == float("inf"):
+                raise ValueError()
+            values[key] = ("%.4f" % number).rstrip("0").rstrip(".") if key == "diesel_price" else ("%.2f" % number).rstrip("0").rstrip(".")
+        except ValueError:
+            return jsonify(error=label + " must be a positive number."), 400
+    if entry_id is not None and type(payload.get("version")) is not int:
+        return jsonify(error="Reopen this job before saving."), 400
+
+    settings = beet_settings()
+    connection = beet_connection()
+    try:
+        with connection:
+            params = tuple(values[key] for key in keys)
+            updated_at = datetime.now().isoformat(timespec="seconds")
+            if entry_id is None:
+                cursor = connection.execute(
+                    "INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, diesel_price, base_price, trigger_pct, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    params + (str(settings["base_price"]), str(settings["trigger_pct"]), updated_at),
+                )
+                entry_id = cursor.lastrowid
+            else:
+                cursor = connection.execute(
+                    "UPDATE beet_jobs SET job_date=?, customer=?, field=?, area=?, diesel_used=?, diesel_price=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    params + (updated_at, entry_id, payload["version"]),
+                )
+                if cursor.rowcount != 1:
+                    return jsonify(error="This job changed elsewhere. Reopen it before saving again."), 409
+            row = beet_row(connection.execute("SELECT * FROM beet_jobs WHERE id=?", (entry_id,)).fetchone())
         return jsonify(entry=row), 201 if request.method == "POST" else 200
     finally:
         connection.close()

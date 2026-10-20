@@ -1,0 +1,4 @@
+#beet-status[data-error="true"] { color: #9b3329; }
+.beet-totals { margin-bottom: 18px; color: var(--green); font-weight: 700; }
+.escalator-box { margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--gold-soft); color: var(--green); font-weight: 700; }
+#settings-status[data-error="true"] { color: #9b3329; }
