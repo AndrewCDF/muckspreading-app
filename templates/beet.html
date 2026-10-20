@@ -15,23 +15,6 @@
   <div class="shell">
     <header class="topbar"><div class="brand-block"><p class="eyebrow">A. Farrell Contracting</p><h1>Sugar Beet</h1></div></header>
     <main class="maintenance-layout">
-      <section class="panel maintenance-panel" aria-labelledby="settings-heading">
-        <div class="section-heading"><div><h2 id="settings-heading">Diesel escalator</h2><p>New jobs use these figures. Saved jobs keep the figures they were recorded with.</p></div></div>
-        <form id="beet-settings-form">
-          <div class="maintenance-grid">
-            <label>Base Diesel Price (£ per litre)<input name="base_price" type="number" min="0" step="0.001" inputmode="decimal" required></label>
-            <label>Surcharge starts at a rise of (%)<input name="trigger_pct" type="number" min="0" step="0.1" inputmode="decimal" required></label>
-          </div>
-          <div class="maintenance-actions"><button class="secondary" id="save-settings" type="submit">Save Escalator Settings</button></div>
-          <p class="hint" id="settings-status" role="status" aria-live="polite"></p>
-        </form>
-        <div class="terms-note">
-          <p class="terms-label">Wording for invoices and quotes</p>
-          <p id="escalator-terms"></p>
-          <button class="secondary" id="copy-terms" type="button">Copy Wording</button>
-          <p class="hint" id="copy-status" role="status" aria-live="polite"></p>
-        </div>
-      </section>
       <section class="panel maintenance-panel" aria-labelledby="record-heading">
         <div class="section-heading"><div><h2 id="record-heading">New sugar beet job</h2><p>Record the field worked, area covered and diesel used.</p></div></div>
         <form id="beet-form">
@@ -46,15 +29,31 @@
               <label>Diesel Used (litres)<input name="diesel_used" type="number" min="0" step="0.1" inputmode="decimal" required></label>
               <label>Diesel Price (£ per litre)<input name="diesel_price" type="number" min="0" step="0.001" inputmode="decimal" placeholder="Leave blank until priced"></label>
               <label class="full-width invoiced-check"><input name="invoiced" type="checkbox"> Invoiced — tick once this job has been invoiced</label>
+              <div class="terms-note full-width">
+                <p class="terms-label">Wording for this job's invoice</p>
+                <p id="escalator-terms"></p>
+              </div>
               <p class="escalator-box full-width" id="escalator-preview" aria-live="polite"></p>
             </div>
           </fieldset>
           <div class="maintenance-actions">
             <button class="primary" id="save-record" type="submit">Save Job</button>
             <button class="secondary" id="new-record" type="button">New Job</button>
+            <button class="secondary" id="toggle-settings" type="button" aria-expanded="false" aria-controls="escalator-settings">Diesel Escalator Settings</button>
           </div>
           <p class="hint" id="beet-status" role="status" aria-live="polite">Complete the fields and press Save.</p>
         </form>
+        <section class="settings-panel" id="escalator-settings" aria-labelledby="settings-heading" hidden>
+          <div class="section-heading"><div><h2 id="settings-heading">Diesel escalator</h2><p>New jobs use these figures. Saved jobs keep the figures they were recorded with.</p></div></div>
+          <form id="beet-settings-form">
+            <div class="maintenance-grid">
+              <label>Base Diesel Price (£ per litre)<input name="base_price" type="number" min="0" step="0.001" inputmode="decimal" required></label>
+              <label>Surcharge starts at a rise of (%)<input name="trigger_pct" type="number" min="0" step="0.1" inputmode="decimal" required></label>
+            </div>
+            <div class="maintenance-actions"><button class="secondary" id="save-settings" type="submit">Save Escalator Settings</button></div>
+            <p class="hint" id="settings-status" role="status" aria-live="polite"></p>
+          </form>
+        </section>
       </section>
       <section class="panel maintenance-panel" aria-labelledby="history-heading">
         <div class="section-heading"><div><h2 id="history-heading">Sugar Beet Jobs</h2><p>Open a saved job to view or update it.</p></div></div>

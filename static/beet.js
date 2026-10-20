@@ -31,10 +31,12 @@
     return new Date(`${value}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   }
   const trim = value => String(Math.round(value * 10000) / 10000);
+  // A saved job quotes the base and trigger it was recorded with; a new job uses the current settings.
   function termsText() {
-    const base = trim(settings.base_price * 100);
-    const trigger = trim(settings.base_price * (1 + settings.trigger_pct / 100) * 100);
-    return `All contracting charges are worked at ${base}ppl. We absorb any diesel price fluctuation within ${trim(settings.trigger_pct)}% (up to ${trigger}ppl). Above that, a surcharge is added on the full rise over ${base}ppl.`;
+    const base = current ? Number(current.base_price) : settings.base_price;
+    const pct = current ? Number(current.trigger_pct) : settings.trigger_pct;
+    const ppl = trim(base * 100);
+    return `All contracting charges are worked at ${ppl}ppl. We absorb any diesel price fluctuation within ${trim(pct)}% (up to ${trim(base * (1 + pct / 100) * 100)}ppl). Above that, a surcharge is added on the full rise over ${ppl}ppl.`;
   }
   function showTerms() {
     document.getElementById('escalator-terms').textContent = termsText();
@@ -178,6 +180,7 @@
     form.elements.invoiced.checked = Boolean(entry && entry.invoiced);
     updateFieldOptions();
     updatePreview();
+    showTerms();
     dirty = false;
     document.getElementById('record-heading').textContent = entry ? `Edit ${entry.field}` : 'New sugar beet job';
     message(entry ? 'Job opened. Press Save Job after making changes.' : 'Complete the fields and press Save.');
@@ -252,27 +255,16 @@
       settingsStatus.dataset.error = 'true';
     }
   });
-  const copyStatus = document.getElementById('copy-status');
-  document.getElementById('copy-terms').addEventListener('click', async () => {
-    const text = termsText();
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const box = document.createElement('textarea');
-        box.value = text;
-        document.body.append(box);
-        box.select();
-        const copied = document.execCommand('copy');
-        box.remove();
-        if (!copied) throw new Error('copy blocked');
-      }
-      copyStatus.textContent = 'Copied.';
-    } catch (error) {
-      copyStatus.textContent = 'Could not copy automatically — select the wording above and copy it.';
-    }
-  });
   showTerms();
+  const settingsPanel = document.getElementById('escalator-settings');
+  const settingsToggle = document.getElementById('toggle-settings');
+  settingsToggle.addEventListener('click', () => {
+    const open = settingsPanel.hidden;
+    settingsPanel.hidden = !open;
+    settingsToggle.setAttribute('aria-expanded', String(open));
+    settingsToggle.textContent = open ? 'Hide Diesel Escalator Settings' : 'Diesel Escalator Settings';
+    if (open) settingsPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
   search.addEventListener('input', render);
   filter.addEventListener('change', render);
   window.addEventListener('beforeunload', event => {
