@@ -2,7 +2,6 @@
   const form = document.getElementById('beet-form');
   const status = document.getElementById('beet-status');
   const list = document.getElementById('beet-list');
-  const search = document.getElementById('beet-search');
   const filter = document.getElementById('beet-filter');
   const totals = document.getElementById('beet-totals');
   const fieldOptions = document.getElementById('field-options');
@@ -85,9 +84,8 @@
   }
   function render() {
     list.replaceChildren();
-    const query = search.value.trim().toLowerCase();
-    const filtered = entries.filter(entry => ['customer', 'field'].some(field => String(entry[field] || '').toLowerCase().includes(query))
-      && matchesFilter(entry));
+    const filtered = entries.filter(matchesFilter)
+      .sort((a, b) => b.job_date.localeCompare(a.job_date) || b.id - a.id);
     const priced = filtered.filter(entry => entry.priced);
     const unpriced = filtered.length - priced.length;
     const area = filtered.reduce((sum, entry) => sum + Number(entry.area), 0);
@@ -97,10 +95,29 @@
       ? `${filtered.length} jobs · ${area.toFixed(2)} ha · ${diesel.toFixed(1)} litres · ${money(escalator)} surcharge` + (unpriced ? ` on ${priced.length} priced (${unpriced} still need a diesel price)` : '')
       : '';
     if (!filtered.length) {
-      list.textContent = entries.length ? 'No matching sugar beet jobs.' : 'No sugar beet jobs saved yet.';
+      list.textContent = entries.length ? 'No sugar beet jobs match this view.' : 'No sugar beet jobs saved yet.';
       return;
     }
+    let monthList = null;
+    let monthKey = '';
     for (const entry of filtered) {
+      if (entry.job_date.slice(0, 7) !== monthKey) {
+        monthKey = entry.job_date.slice(0, 7);
+        const inMonth = filtered.filter(item => item.job_date.slice(0, 7) === monthKey);
+        const monthArea = inMonth.reduce((sum, item) => sum + Number(item.area), 0);
+        const monthSurcharge = inMonth.filter(item => item.priced).reduce((sum, item) => sum + Number(item.escalator), 0);
+        const section = document.createElement('section');
+        section.className = 'beet-month';
+        const monthHeading = document.createElement('h3');
+        monthHeading.className = 'month-heading';
+        monthHeading.textContent = new Date(`${monthKey}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+        const monthTotals = document.createElement('p');
+        monthTotals.className = 'month-totals';
+        monthTotals.textContent = `${inMonth.length} ${inMonth.length === 1 ? 'job' : 'jobs'} · ${monthArea.toFixed(2)} ha · ${money(monthSurcharge)} surcharge`;
+        section.append(monthHeading, monthTotals);
+        list.append(section);
+        monthList = section;
+      }
       const article = document.createElement('article');
       article.className = 'maintenance-record';
       const details = document.createElement('div');
@@ -140,7 +157,7 @@
         actions.append(toggle);
       }
       article.append(details, actions);
-      list.append(article);
+      monthList.append(article);
     }
   }
   async function setInvoiced(entry, invoiced) {
@@ -264,7 +281,6 @@
     settingsToggle.textContent = open ? 'Hide Diesel Escalator Settings' : 'Diesel Escalator Settings';
     if (open) settingsPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
-  search.addEventListener('input', render);
   filter.addEventListener('change', render);
   window.addEventListener('beforeunload', event => {
     if (dirty || saving) { event.preventDefault(); event.returnValue = ''; }
