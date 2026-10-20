@@ -3,6 +3,7 @@
   const status = document.getElementById('beet-status');
   const list = document.getElementById('beet-list');
   const search = document.getElementById('beet-search');
+  const filter = document.getElementById('beet-filter');
   const totals = document.getElementById('beet-totals');
   const fieldOptions = document.getElementById('field-options');
   const fieldMap = window.BEET_FIELD_MAP || {};
@@ -29,6 +30,15 @@
     if (!value) return '';
     return new Date(`${value}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   }
+  const trim = value => String(Math.round(value * 10000) / 10000);
+  function termsText() {
+    const base = trim(settings.base_price * 100);
+    const trigger = trim(settings.base_price * (1 + settings.trigger_pct / 100) * 100);
+    return `All contracting charges are worked at ${base}ppl. We absorb any diesel price fluctuation within ${trim(settings.trigger_pct)}% (up to ${trigger}ppl). Above that, a surcharge is added on the full rise over ${base}ppl.`;
+  }
+  function showTerms() {
+    document.getElementById('escalator-terms').textContent = termsText();
+  }
   function updatePreview() {
     const litres = parseFloat(form.elements.diesel_used.value);
     const price = parseFloat(form.elements.diesel_price.value);
@@ -37,8 +47,12 @@
     const pct = current ? Number(current.trigger_pct) : settings.trigger_pct;
     const trigger = Math.round(base * (1 + pct / 100) * 10000) / 10000;
     const basis = `base ${(base * 100).toFixed(1)}p, starts at ${(trigger * 100).toFixed(1)}p`;
-    if (!(litres >= 0) || !(price >= 0)) {
-      preview.textContent = `Diesel escalator (${basis}): enter litres and price.`;
+    if (!(price >= 0)) {
+      preview.textContent = `Surcharge not calculated yet — no diesel price entered (${basis}).`;
+      return;
+    }
+    if (!(litres >= 0)) {
+      preview.textContent = `Diesel escalator (${basis}): enter litres used.`;
       return;
     }
     if (Math.round(price * 10000) / 10000 < trigger) {
@@ -59,14 +73,27 @@
       return option;
     }));
   }
+  function matchesFilter(entry) {
+    switch (filter.value) {
+      case 'unpriced': return !entry.priced;
+      case 'ready': return entry.priced && !entry.invoiced;
+      case 'invoiced': return entry.invoiced;
+      default: return true;
+    }
+  }
   function render() {
     list.replaceChildren();
     const query = search.value.trim().toLowerCase();
-    const filtered = entries.filter(entry => ['customer', 'field'].some(field => String(entry[field] || '').toLowerCase().includes(query)));
+    const filtered = entries.filter(entry => ['customer', 'field'].some(field => String(entry[field] || '').toLowerCase().includes(query))
+      && matchesFilter(entry));
+    const priced = filtered.filter(entry => entry.priced);
+    const unpriced = filtered.length - priced.length;
     const area = filtered.reduce((sum, entry) => sum + Number(entry.area), 0);
     const diesel = filtered.reduce((sum, entry) => sum + Number(entry.diesel_used), 0);
-    const escalator = filtered.reduce((sum, entry) => sum + Number(entry.escalator), 0);
-    totals.textContent = filtered.length ? `${filtered.length} jobs · ${area.toFixed(2)} ha · ${diesel.toFixed(1)} litres · ${money(escalator)} surcharge` + (area > 0 ? ` (${money(escalator / area)} per ha)` : '') : '';
+    const escalator = priced.reduce((sum, entry) => sum + Number(entry.escalator), 0);
+    totals.textContent = filtered.length
+      ? `${filtered.length} jobs · ${area.toFixed(2)} ha · ${diesel.toFixed(1)} litres · ${money(escalator)} surcharge` + (unpriced ? ` on ${priced.length} priced (${unpriced} still need a diesel price)` : '')
+      : '';
     if (!filtered.length) {
       list.textContent = entries.length ? 'No matching sugar beet jobs.' : 'No sugar beet jobs saved yet.';
       return;
@@ -78,19 +105,66 @@
       const heading = document.createElement('h3');
       heading.textContent = `${entry.customer} · ${entry.field}`;
       const info = document.createElement('p');
-      const surcharge = Number(entry.escalator) > 0
-        ? `surcharge ${entry.escalator_per_ha ? money(entry.escalator_per_ha) + ' per ha' : 'no area'} (${money(entry.escalator)} total)`
+      const priceText = !entry.priced ? 'diesel price needed'
+        : Number(entry.escalator) > 0 ? `surcharge ${entry.escalator_per_ha ? money(entry.escalator_per_ha) + ' per ha' : 'no area'} (${money(entry.escalator)} total)`
         : 'no surcharge';
-      info.textContent = `${formatDate(entry.job_date)} · ${entry.area} ha · ${entry.diesel_used} litres · ${surcharge}`;
-      details.append(heading, info);
+      info.textContent = `${formatDate(entry.job_date)} · ${entry.area} ha · ${entry.diesel_used} litres · `;
+      const state = document.createElement('span');
+      if (!entry.priced) state.className = 'price-needed';
+      state.textContent = priceText;
+      info.append(state);
+      if (entry.invoiced) {
+        const badge = document.createElement('p');
+        badge.className = 'invoiced-badge';
+        badge.textContent = `Invoiced ${formatDate(entry.invoiced_date)}`;
+        details.append(heading, info, badge);
+      } else {
+        details.append(heading, info);
+      }
       const open = document.createElement('button');
       open.type = 'button';
       open.className = 'secondary';
       open.textContent = 'Open';
       open.addEventListener('click', () => openEntry(entry));
-      article.append(details, open);
+      const actions = document.createElement('div');
+      actions.className = 'record-actions';
+      actions.append(open);
+      if (entry.invoiced || entry.priced) {
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = entry.invoiced ? 'secondary' : 'primary';
+        toggle.textContent = entry.invoiced ? 'Undo invoiced' : 'Mark invoiced';
+        toggle.addEventListener('click', () => setInvoiced(entry, !entry.invoiced));
+        actions.append(toggle);
+      }
+      article.append(details, actions);
       list.append(article);
     }
+  }
+  async function setInvoiced(entry, invoiced) {
+    if (current && current.id === entry.id && dirty && !window.confirm('Discard your unsaved changes to this job?')) return;
+    try {
+      const payload = Object.fromEntries(fieldNames.map(field => [field, entry[field]]));
+      const response = await fetch(`/api/beet/${entry.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, invoiced, version: entry.version }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to update the job.');
+      replaceEntry(result.entry);
+      if (current && current.id === entry.id) fill(result.entry);
+      message(invoiced ? 'Marked as invoiced.' : 'Invoice marker removed.');
+    } catch (error) {
+      message(error.message, true);
+    }
+  }
+  function replaceEntry(saved) {
+    entries = entries.filter(item => item.id !== saved.id);
+    entries.push(saved);
+    entries.sort((a, b) => b.job_date.localeCompare(a.job_date) || b.id - a.id);
+    render();
   }
   async function load() {
     const response = await fetch('/api/beet', { cache: 'no-store' });
@@ -100,7 +174,8 @@
   }
   function fill(entry) {
     current = entry;
-    for (const field of fieldNames) form.elements[field].value = entry ? entry[field] : (field === 'job_date' ? today() : field === 'diesel_price' ? window.BEET_DEFAULT_PRICE : '');
+    for (const field of fieldNames) form.elements[field].value = entry ? entry[field] : (field === 'job_date' ? today() : '');
+    form.elements.invoiced.checked = Boolean(entry && entry.invoiced);
     updateFieldOptions();
     updatePreview();
     dirty = false;
@@ -125,6 +200,7 @@
     document.getElementById('save-record').disabled = true;
     message('Saving…');
     const payload = Object.fromEntries(fieldNames.map(field => [field, form.elements[field].value]));
+    payload.invoiced = form.elements.invoiced.checked;
     if (current) payload.version = current.version;
     try {
       const response = await fetch(current ? `/api/beet/${current.id}` : '/api/beet', {
@@ -136,11 +212,9 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save the sugar beet job.');
       current = result.entry;
-      entries = entries.filter(entry => entry.id !== current.id);
-      entries.push(current);
-      entries.sort((a, b) => b.job_date.localeCompare(a.job_date) || b.id - a.id);
       dirty = false;
-      render();
+      replaceEntry(current);
+      form.elements.invoiced.checked = current.invoiced;
       message(`Saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`);
     } catch (error) {
       message(`${error.message} Your changes remain in the form.`, true);
@@ -169,6 +243,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save the escalator settings.');
       Object.assign(settings, result.settings);
+      showTerms();
       settingsStatus.textContent = 'Saved. New jobs will use these figures.';
       settingsStatus.dataset.error = 'false';
       updatePreview();
@@ -177,7 +252,29 @@
       settingsStatus.dataset.error = 'true';
     }
   });
+  const copyStatus = document.getElementById('copy-status');
+  document.getElementById('copy-terms').addEventListener('click', async () => {
+    const text = termsText();
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const box = document.createElement('textarea');
+        box.value = text;
+        document.body.append(box);
+        box.select();
+        const copied = document.execCommand('copy');
+        box.remove();
+        if (!copied) throw new Error('copy blocked');
+      }
+      copyStatus.textContent = 'Copied.';
+    } catch (error) {
+      copyStatus.textContent = 'Could not copy automatically — select the wording above and copy it.';
+    }
+  });
+  showTerms();
   search.addEventListener('input', render);
+  filter.addEventListener('change', render);
   window.addEventListener('beforeunload', event => {
     if (dirty || saving) { event.preventDefault(); event.returnValue = ''; }
   });

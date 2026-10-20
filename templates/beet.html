@@ -25,6 +25,12 @@
           <div class="maintenance-actions"><button class="secondary" id="save-settings" type="submit">Save Escalator Settings</button></div>
           <p class="hint" id="settings-status" role="status" aria-live="polite"></p>
         </form>
+        <div class="terms-note">
+          <p class="terms-label">Wording for invoices and quotes</p>
+          <p id="escalator-terms"></p>
+          <button class="secondary" id="copy-terms" type="button">Copy Wording</button>
+          <p class="hint" id="copy-status" role="status" aria-live="polite"></p>
+        </div>
       </section>
       <section class="panel maintenance-panel" aria-labelledby="record-heading">
         <div class="section-heading"><div><h2 id="record-heading">New sugar beet job</h2><p>Record the field worked, area covered and diesel used.</p></div></div>
@@ -38,7 +44,8 @@
               <datalist id="field-options"></datalist>
               <label>Area (ha)<input name="area" type="number" min="0" step="0.01" inputmode="decimal" required></label>
               <label>Diesel Used (litres)<input name="diesel_used" type="number" min="0" step="0.1" inputmode="decimal" required></label>
-              <label>Current Diesel Price (£ per litre)<input name="diesel_price" type="number" min="0" step="0.001" inputmode="decimal" required></label>
+              <label>Diesel Price (£ per litre)<input name="diesel_price" type="number" min="0" step="0.001" inputmode="decimal" placeholder="Leave blank until priced"></label>
+              <label class="full-width invoiced-check"><input name="invoiced" type="checkbox"> Invoiced — tick once this job has been invoiced</label>
               <p class="escalator-box full-width" id="escalator-preview" aria-live="polite"></p>
             </div>
           </fieldset>
@@ -52,7 +59,10 @@
       <section class="panel maintenance-panel" aria-labelledby="history-heading">
         <div class="section-heading"><div><h2 id="history-heading">Sugar Beet Jobs</h2><p>Open a saved job to view or update it.</p></div></div>
         <div class="beet-totals" id="beet-totals" aria-live="polite"></div>
-        <label class="history-search">Search jobs<input id="beet-search" type="search" placeholder="Customer or field"></label>
+        <div class="beet-filters">
+          <label class="history-search">Search jobs<input id="beet-search" type="search" placeholder="Customer or field"></label>
+          <label class="history-search">Show<select id="beet-filter"><option value="all">All jobs</option><option value="unpriced">Needs diesel price</option><option value="ready">Ready to invoice</option><option value="invoiced">Invoiced</option></select></label>
+        </div>
         <div id="beet-list" aria-live="polite">Loading sugar beet jobs…</div>
       </section>
     </main>

@@ -63,8 +63,41 @@ class BeetTests(unittest.TestCase):
         for bad in ({"base_price": "0", "trigger_pct": "10"}, {"base_price": "x", "trigger_pct": "10"}, {"base_price": "0.7", "trigger_pct": "-1"}, {"base_price": "0.7"}):
             self.assertEqual(self.client.post("/api/beet/settings", json=bad).status_code, 400)
 
+    def test_office_adds_price_later(self):
+        saved = self.client.post("/api/beet", json=dict(self.job, diesel_price="")).get_json()["entry"]
+        self.assertEqual((saved["priced"], saved["escalator"], saved["escalator_per_ha"]), (False, "", ""))
+        self.client.post("/api/beet/settings", json={"base_price": "0.80", "trigger_pct": "5"})
+        reopened = self.client.get("/api/beet").get_json()["entries"][0]
+        priced = self.client.put("/api/beet/%s" % saved["id"], json=dict(reopened, diesel_price="1.10"))
+        self.assertEqual(priced.status_code, 200)
+        entry = priced.get_json()["entry"]
+        self.assertEqual((entry["priced"], entry["base_price"], entry["escalator"], entry["escalator_per_ha"]), (True, "0.8", "102.00", "8.16"))
+        self.client.post("/api/beet/settings", json={"base_price": "0.50", "trigger_pct": "5"})
+        again = self.client.put("/api/beet/%s" % saved["id"], json=dict(entry, diesel_price="1.20")).get_json()["entry"]
+        self.assertEqual((again["base_price"], again["escalator"]), ("0.8", "136.00"))
+        cleared = self.client.put("/api/beet/%s" % saved["id"], json=dict(again, diesel_price="")).get_json()["entry"]
+        self.assertFalse(cleared["priced"])
+
+    def test_invoiced_marker(self):
+        unpriced = self.client.post("/api/beet", json=dict(self.job, diesel_price="")).get_json()["entry"]
+        self.assertFalse(unpriced["invoiced"])
+        blocked = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(unpriced, invoiced=True))
+        self.assertEqual(blocked.status_code, 400)
+        priced = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(unpriced, diesel_price="1.10")).get_json()["entry"]
+        marked = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(priced, invoiced=True))
+        entry = marked.get_json()["entry"]
+        self.assertEqual((marked.status_code, entry["invoiced"]), (200, True))
+        self.assertRegex(entry["invoiced_date"], r"^\d{4}-\d{2}-\d{2}$")
+        kept = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(entry, area="13", invoiced=True)).get_json()["entry"]
+        self.assertEqual(kept["invoiced_date"], entry["invoiced_date"])
+        undone = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(kept, invoiced=False)).get_json()["entry"]
+        self.assertEqual((undone["invoiced"], undone["invoiced_date"]), (False, ""))
+        self.assertEqual(self.client.post("/api/beet", json=dict(self.job, invoiced="yes")).status_code, 400)
+        created = self.client.post("/api/beet", json=dict(self.job, invoiced=True)).get_json()["entry"]
+        self.assertTrue(created["invoiced"])
+
     def test_invalid_jobs_are_rejected(self):
-        for change in [{"job_date": "2026-02-30"}, {"customer": ""}, {"field": ""}, {"area": "-1"}, {"area": ""}, {"diesel_used": "abc"}, {"diesel_price": ""}, {"diesel_price": "-1"}, {"field": []}]:
+        for change in [{"job_date": "2026-02-30"}, {"customer": ""}, {"field": ""}, {"area": "-1"}, {"area": ""}, {"diesel_used": "abc"}, {"diesel_price": "-1"}, {"field": []}]:
             with self.subTest(change=change):
                 self.assertEqual(self.client.post("/api/beet", json=dict(self.job, **change)).status_code, 400)
         self.assertEqual(self.client.get("/api/beet").get_json()["entries"], [])

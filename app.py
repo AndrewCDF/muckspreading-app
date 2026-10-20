@@ -9934,6 +9934,8 @@ def beet_connection():
     if "diesel_price" not in columns:
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN diesel_price TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_DIESEL_PRICE)
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN base_price TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_SETTINGS["base_price"])
+    if "invoiced_date" not in columns:
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN invoiced_date TEXT NOT NULL DEFAULT ''")
     if "trigger_pct" not in columns:
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN trigger_pct TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_SETTINGS["trigger_pct"])
     connection.commit()
@@ -9942,6 +9944,11 @@ def beet_connection():
 
 def beet_row(row):
     entry = dict(row)
+    entry["priced"] = entry["diesel_price"] != ""
+    entry["invoiced"] = entry["invoiced_date"] != ""
+    if not entry["priced"]:
+        entry["escalator"] = entry["escalator_per_ha"] = ""
+        return entry
     total = beet_escalator(entry["diesel_used"], entry["diesel_price"], entry["base_price"], entry["trigger_pct"])
     area = float(entry["area"])
     entry["escalator"] = "%.2f" % total
@@ -10022,6 +10029,8 @@ def beet_jobs(entry_id=None):
         if not values[key] or len(values[key]) > 160:
             return jsonify(error="Enter the %s." % label), 400
     for key, label in (("area", "Area"), ("diesel_used", "Diesel used"), ("diesel_price", "Diesel price")):
+        if key == "diesel_price" and not values[key]:
+            continue  # the office adds the price later, ready for invoicing
         try:
             number = float(values[key])
             if number < 0 or number != number or number == float("inf"):
@@ -10029,9 +10038,15 @@ def beet_jobs(entry_id=None):
             values[key] = ("%.4f" % number).rstrip("0").rstrip(".") if key == "diesel_price" else ("%.2f" % number).rstrip("0").rstrip(".")
         except ValueError:
             return jsonify(error=label + " must be a positive number."), 400
+    invoiced = payload.get("invoiced", False)
+    if not isinstance(invoiced, bool):
+        return jsonify(error="Invalid sugar beet field: invoiced"), 400
+    if invoiced and not values["diesel_price"]:
+        return jsonify(error="Add the diesel price before marking a job as invoiced."), 400
     if entry_id is not None and type(payload.get("version")) is not int:
         return jsonify(error="Reopen this job before saving."), 400
 
+    today = datetime.now().strftime("%Y-%m-%d")
     settings = beet_settings()
     connection = beet_connection()
     try:
@@ -10040,14 +10055,18 @@ def beet_jobs(entry_id=None):
             updated_at = datetime.now().isoformat(timespec="seconds")
             if entry_id is None:
                 cursor = connection.execute(
-                    "INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, diesel_price, base_price, trigger_pct, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                    params + (str(settings["base_price"]), str(settings["trigger_pct"]), updated_at),
+                    "INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, diesel_price, base_price, trigger_pct, invoiced_date, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    params + (str(settings["base_price"]), str(settings["trigger_pct"]), today if invoiced else "", updated_at),
                 )
                 entry_id = cursor.lastrowid
             else:
                 cursor = connection.execute(
-                    "UPDATE beet_jobs SET job_date=?, customer=?, field=?, area=?, diesel_used=?, diesel_price=?, version=version+1, updated_at=? WHERE id=? AND version=?",
-                    params + (updated_at, entry_id, payload["version"]),
+                    "UPDATE beet_jobs SET job_date=?, customer=?, field=?, area=?, diesel_used=?, "
+                    "base_price=CASE WHEN diesel_price='' AND ?<>'' THEN ? ELSE base_price END, "
+                    "trigger_pct=CASE WHEN diesel_price='' AND ?<>'' THEN ? ELSE trigger_pct END, "
+                    "invoiced_date=CASE WHEN ? THEN COALESCE(NULLIF(invoiced_date, ''), ?) ELSE '' END, "
+                    "diesel_price=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    params[:5] + (values["diesel_price"], str(settings["base_price"]), values["diesel_price"], str(settings["trigger_pct"]), int(invoiced), today, values["diesel_price"], updated_at, entry_id, payload["version"]),
                 )
                 if cursor.rowcount != 1:
                     return jsonify(error="This job changed elsewhere. Reopen it before saving again."), 409
