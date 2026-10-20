@@ -24,3 +24,10 @@
 .beet-month:first-child { margin-top: 0; }
 .month-heading { margin: 0; padding-bottom: 4px; font-size: 20px; color: var(--green); }
 .month-totals { margin: 0 0 6px; color: var(--muted); font-weight: 700; }
+.field-list { display: grid; gap: 8px; }
+.field-list-label, .field-list .hint { margin: 0; }
+.field-list-label { font-weight: 700; }
+.field-row { display: flex; gap: 8px; }
+.field-row input { flex: 1; min-width: 0; font-size: 16px; }
+.field-row button { min-height: 44px; padding: 10px 14px; }
+.field-list > button { justify-self: start; min-height: 44px; padding: 10px 16px; }

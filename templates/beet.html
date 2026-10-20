@@ -23,10 +23,16 @@
               <label>Date<input name="job_date" type="date" required></label>
               <label>Customer<input name="customer" list="customer-options" maxlength="160" required autocomplete="off" placeholder="Choose or type a customer"></label>
               <datalist id="customer-options">{% for customer in customers %}<option value="{{ customer }}"></option>{% endfor %}</datalist>
-              <label>Field<input name="field" list="field-options" maxlength="160" required autocomplete="off" placeholder="Choose or type a field"></label>
+              <div class="full-width field-list">
+                <p class="field-list-label">Fields (optional)</p>
+                <div id="field-rows"></div>
+                <button class="secondary" id="add-field" type="button">Add Field</button>
+                <p class="hint">Name each field, or leave a name blank and it is numbered by its place in the list.</p>
+              </div>
               <datalist id="field-options"></datalist>
-              <label>Area (ha)<input name="area" type="number" min="0" step="0.01" inputmode="decimal" required></label>
-              <label>Diesel Used (litres)<input name="diesel_used" type="number" min="0" step="0.1" inputmode="decimal" required></label>
+              <label>Area (ha) (optional)<input name="area" type="number" min="0" step="0.01" inputmode="decimal"></label>
+              <label>Harvester Diesel Used (litres)<input name="diesel_used" type="number" min="0" step="0.1" inputmode="decimal" required></label>
+              <label>Tractor Diesel Used (litres) (optional)<input name="tractor_diesel" type="number" min="0" step="0.1" inputmode="decimal"></label>
               <label>Diesel Price (£ per litre)<input name="diesel_price" type="number" min="0" step="0.001" inputmode="decimal" placeholder="Leave blank until priced"></label>
               <label class="full-width invoiced-check"><input name="invoiced" type="checkbox"> Invoiced — tick once this job has been invoiced</label>
               <div class="terms-note full-width">

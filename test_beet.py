@@ -96,8 +96,50 @@ class BeetTests(unittest.TestCase):
         created = self.client.post("/api/beet", json=dict(self.job, invoiced=True)).get_json()["entry"]
         self.assertTrue(created["invoiced"])
 
+    def test_field_and_area_can_be_left_blank(self):
+        saved = self.client.post("/api/beet", json=dict(self.job, field="", area="")).get_json()["entry"]
+        self.assertEqual((saved["field"], saved["area"], saved["escalator"], saved["escalator_per_ha"]), ("", "", "136.00", ""))
+        reopened = self.client.put("/api/beet/%s" % saved["id"], json=dict(saved, fields=["Three fields"], area="30"))
+        self.assertEqual(reopened.get_json()["entry"]["escalator_per_ha"], "4.53")
+        self.assertEqual(self.client.get("/api/beet").get_json()["entries"][0]["field"], "Three fields")
+        self.assertEqual(self.client.get("/beet").status_code, 200)
+
+    def test_job_covers_a_list_of_fields(self):
+        saved = self.client.post("/api/beet", json=dict(self.job, field="", fields=["Coleseeds", "", "Top Meadow"], area="30")).get_json()["entry"]
+        self.assertEqual(saved["fields"], ["Coleseeds", "", "Top Meadow"])
+        self.assertEqual(saved["field"], "Coleseeds, Field 2, Top Meadow")
+        self.assertEqual(self.client.get("/api/beet").get_json()["entries"][0]["fields"], ["Coleseeds", "", "Top Meadow"])
+        blank = self.client.post("/api/beet", json=dict(self.job, fields=[""])).get_json()["entry"]
+        self.assertEqual((blank["fields"], blank["field"]), ([], ""))
+        numbered = self.client.post("/api/beet", json=dict(self.job, fields=["", "", ""])).get_json()["entry"]
+        self.assertEqual(numbered["field"], "Field 1, Field 2, Field 3")
+        for bad in (["x"] * 51, "Coleseeds", [1], ["x" * 161]):
+            self.assertEqual(self.client.post("/api/beet", json=dict(self.job, fields=bad)).status_code, 400)
+        names = self.client.get("/beet").data
+        self.assertIn(b"Top Meadow", names)
+
+    def test_tractor_diesel_is_added_to_harvester_diesel(self):
+        saved = self.client.post("/api/beet", json=dict(self.job, tractor_diesel="160", area="30")).get_json()["entry"]
+        self.assertEqual((saved["tractor_diesel"], saved["total_diesel"], saved["escalator"], saved["escalator_per_ha"]), ("160", "500", "200.00", "6.67"))
+        none = self.client.post("/api/beet", json=self.job).get_json()["entry"]
+        self.assertEqual((none["tractor_diesel"], none["total_diesel"], none["escalator"]), ("", "340", "136.00"))
+        below = self.client.post("/api/beet", json=dict(self.job, tractor_diesel="160", diesel_price="0.75")).get_json()["entry"]
+        self.assertEqual(below["escalator"], "0.00")
+        updated = self.client.put("/api/beet/%s" % saved["id"], json=dict(saved, tractor_diesel="")).get_json()["entry"]
+        self.assertEqual((updated["tractor_diesel"], updated["total_diesel"]), ("", "340"))
+        for bad in ("-5", "abc"):
+            self.assertEqual(self.client.post("/api/beet", json=dict(self.job, tractor_diesel=bad)).status_code, 400)
+
+    def test_old_jobs_with_one_field_still_load(self):
+        connection = app.beet_connection()
+        with connection:
+            connection.execute("INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, diesel_price, base_price, trigger_pct, invoiced_date, version, updated_at) VALUES ('2026-10-01', 'Claxton Manor', 'Coleseeds', '5', '100', '', '0.7', '10.0', '', 1, 'x')")
+        connection.close()
+        entry = self.client.get("/api/beet").get_json()["entries"][0]
+        self.assertEqual((entry["fields"], entry["field"]), (["Coleseeds"], "Coleseeds"))
+
     def test_invalid_jobs_are_rejected(self):
-        for change in [{"job_date": "2026-02-30"}, {"customer": ""}, {"field": ""}, {"area": "-1"}, {"area": ""}, {"diesel_used": "abc"}, {"diesel_price": "-1"}, {"field": []}]:
+        for change in [{"job_date": "2026-02-30"}, {"customer": ""}, {"area": "-1"}, {"diesel_used": "abc"}, {"diesel_price": "-1"}, {"field": []}]:
             with self.subTest(change=change):
                 self.assertEqual(self.client.post("/api/beet", json=dict(self.job, **change)).status_code, 400)
         self.assertEqual(self.client.get("/api/beet").get_json()["entries"], [])

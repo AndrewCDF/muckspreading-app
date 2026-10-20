@@ -9959,6 +9959,10 @@ def beet_connection():
     if "diesel_price" not in columns:
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN diesel_price TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_DIESEL_PRICE)
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN base_price TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_SETTINGS["base_price"])
+    if "tractor_diesel" not in columns:
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN tractor_diesel TEXT NOT NULL DEFAULT ''")
+    if "fields_json" not in columns:
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN fields_json TEXT NOT NULL DEFAULT ''")
     if "invoiced_date" not in columns:
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN invoiced_date TEXT NOT NULL DEFAULT ''")
     if "trigger_pct" not in columns:
@@ -9967,15 +9971,28 @@ def beet_connection():
     return connection
 
 
+def beet_field_summary(names):
+    """Fields left unnamed are numbered by their place in the list."""
+    return ", ".join(name or "Field %d" % (index + 1) for index, name in enumerate(names))
+
+
 def beet_row(row):
     entry = dict(row)
+    try:
+        names = json.loads(entry.get("fields_json") or "")
+    except ValueError:
+        names = None
+    if not isinstance(names, list):
+        names = [entry["field"]] if entry["field"] else []
+    entry["fields"] = names
+    entry["total_diesel"] = ("%.2f" % (float(entry["diesel_used"]) + float(entry["tractor_diesel"] or 0))).rstrip("0").rstrip(".")
     entry["priced"] = entry["diesel_price"] != ""
     entry["invoiced"] = entry["invoiced_date"] != ""
     if not entry["priced"]:
         entry["escalator"] = entry["escalator_per_ha"] = ""
         return entry
-    total = beet_escalator(entry["diesel_used"], entry["diesel_price"], entry["base_price"], entry["trigger_pct"])
-    area = float(entry["area"])
+    total = beet_escalator(entry["total_diesel"], entry["diesel_price"], entry["base_price"], entry["trigger_pct"])
+    area = float(entry["area"] or 0)
     entry["escalator"] = "%.2f" % total
     entry["escalator_per_ha"] = "%.2f" % (total / area) if area > 0 else ""
     return entry
@@ -9994,11 +10011,13 @@ def beet_home():
     customers = load_customers()
     field_map = {customer: sorted({field for fields in farms.values() for field in fields}, key=lambda value: value.lower()) for customer, farms in load_field_map().items()}
     for row in load_beet_jobs():
-        customer, field = clean_name(row["customer"]), clean_name(row["field"])
+        customer = clean_name(row["customer"])
         if customer and customer not in customers:
             customers.append(customer)
-        if customer and field and field not in field_map.setdefault(customer, []):
-            field_map[customer].append(field)
+        for name in row["fields"]:
+            field = clean_name(name)
+            if customer and field and field not in field_map.setdefault(customer, []):
+                field_map[customer].append(field)
     customers.sort(key=lambda value: value.lower())
     return render_template("beet.html", customers=customers, field_map=field_map, settings=beet_settings(), default_price=BEET_DEFAULT_DIESEL_PRICE)
 
@@ -10050,12 +10069,24 @@ def beet_jobs(entry_id=None):
             raise ValueError()
     except ValueError:
         return jsonify(error="Choose a valid date."), 400
-    for key, label in (("customer", "customer"), ("field", "field")):
-        if not values[key] or len(values[key]) > 160:
-            return jsonify(error="Enter the %s." % label), 400
+    if not values["customer"] or len(values["customer"]) > 160:
+        return jsonify(error="Enter the customer."), 400
+    # A job covers a list of fields; names may be left blank and are then numbered.
+    names = payload.get("fields")
+    if names is None:
+        names = [values["field"]] if values["field"] else []
+    if not isinstance(names, list) or len(names) > 50 or not all(isinstance(name, str) for name in names):
+        return jsonify(error="Invalid sugar beet field: fields"), 400
+    names = [name.strip() for name in names]
+    if any(len(name) > 160 for name in names):
+        return jsonify(error="Each field name must be no more than 160 characters."), 400
+    if names == [""]:
+        names = []
+    values["field"] = beet_field_summary(names)
+    fields_json = json.dumps(names)
     for key, label in (("area", "Area"), ("diesel_used", "Diesel used"), ("diesel_price", "Diesel price")):
-        if key == "diesel_price" and not values[key]:
-            continue  # the office adds the price later, ready for invoicing
+        if key in ("area", "diesel_price") and not values[key]:
+            continue  # area may be left blank; the office adds the price later, ready for invoicing
         try:
             number = float(values[key])
             if number < 0 or number != number or number == float("inf"):
@@ -10063,6 +10094,18 @@ def beet_jobs(entry_id=None):
             values[key] = ("%.4f" % number).rstrip("0").rstrip(".") if key == "diesel_price" else ("%.2f" % number).rstrip("0").rstrip(".")
         except ValueError:
             return jsonify(error=label + " must be a positive number."), 400
+    tractor_diesel = payload.get("tractor_diesel", "")
+    if not isinstance(tractor_diesel, str):
+        return jsonify(error="Invalid sugar beet field: tractor_diesel"), 400
+    tractor_diesel = tractor_diesel.strip()
+    if tractor_diesel:  # optional: blank means no tractor diesel recorded
+        try:
+            number = float(tractor_diesel)
+            if number < 0 or number != number or number == float("inf"):
+                raise ValueError()
+            tractor_diesel = ("%.2f" % number).rstrip("0").rstrip(".")
+        except ValueError:
+            return jsonify(error="Tractor diesel must be a positive number."), 400
     invoiced = payload.get("invoiced", False)
     if not isinstance(invoiced, bool):
         return jsonify(error="Invalid sugar beet field: invoiced"), 400
@@ -10080,8 +10123,8 @@ def beet_jobs(entry_id=None):
             updated_at = datetime.now().isoformat(timespec="seconds")
             if entry_id is None:
                 cursor = connection.execute(
-                    "INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, diesel_price, base_price, trigger_pct, invoiced_date, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                    params + (str(settings["base_price"]), str(settings["trigger_pct"]), today if invoiced else "", updated_at),
+                    "INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, diesel_price, base_price, trigger_pct, invoiced_date, fields_json, tractor_diesel, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    params + (str(settings["base_price"]), str(settings["trigger_pct"]), today if invoiced else "", fields_json, tractor_diesel, updated_at),
                 )
                 entry_id = cursor.lastrowid
             else:
@@ -10090,8 +10133,8 @@ def beet_jobs(entry_id=None):
                     "base_price=CASE WHEN diesel_price='' AND ?<>'' THEN ? ELSE base_price END, "
                     "trigger_pct=CASE WHEN diesel_price='' AND ?<>'' THEN ? ELSE trigger_pct END, "
                     "invoiced_date=CASE WHEN ? THEN COALESCE(NULLIF(invoiced_date, ''), ?) ELSE '' END, "
-                    "diesel_price=?, version=version+1, updated_at=? WHERE id=? AND version=?",
-                    params[:5] + (values["diesel_price"], str(settings["base_price"]), values["diesel_price"], str(settings["trigger_pct"]), int(invoiced), today, values["diesel_price"], updated_at, entry_id, payload["version"]),
+                    "diesel_price=?, fields_json=?, tractor_diesel=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    params[:5] + (values["diesel_price"], str(settings["base_price"]), values["diesel_price"], str(settings["trigger_pct"]), int(invoiced), today, values["diesel_price"], fields_json, tractor_diesel, updated_at, entry_id, payload["version"]),
                 )
                 if cursor.rowcount != 1:
                     return jsonify(error="This job changed elsewhere. Reopen it before saving again."), 409

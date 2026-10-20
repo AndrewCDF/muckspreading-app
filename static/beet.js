@@ -6,7 +6,8 @@
   const totals = document.getElementById('beet-totals');
   const fieldOptions = document.getElementById('field-options');
   const fieldMap = window.BEET_FIELD_MAP || {};
-  const fieldNames = ['job_date', 'customer', 'field', 'area', 'diesel_used', 'diesel_price'];
+  const fieldNames = ['job_date', 'customer', 'area', 'diesel_used', 'tractor_diesel', 'diesel_price'];
+  const fieldRows = document.getElementById('field-rows');
   const settings = window.BEET_SETTINGS;
   const settingsForm = document.getElementById('beet-settings-form');
   const settingsStatus = document.getElementById('settings-status');
@@ -41,7 +42,9 @@
     document.getElementById('escalator-terms').textContent = termsText();
   }
   function updatePreview() {
-    const litres = parseFloat(form.elements.diesel_used.value);
+    const harvester = parseFloat(form.elements.diesel_used.value);
+    const tractor = parseFloat(form.elements.tractor_diesel.value) || 0;
+    const litres = harvester + tractor;
     const price = parseFloat(form.elements.diesel_price.value);
     const area = parseFloat(form.elements.area.value);
     const base = current ? Number(current.base_price) : settings.base_price;
@@ -61,10 +64,60 @@
       return;
     }
     const total = litres * (price - base);
+    const litreText = tractor > 0 ? `${harvester} L harvester + ${tractor} L tractor = ${litres} L` : `${litres} L`;
     preview.textContent = area > 0
-      ? `${litres} L · surcharge ${money(total / area)} per ha (${money(total)} total on ${area} ha)`
-      : `${litres} L · surcharge ${money(total)} total (enter the area for a per-hectare figure)`;
+      ? `${litreText} · surcharge ${money(total / area)} per ha (${money(total)} total on ${area} ha)`
+      : `${litreText} · surcharge ${money(total)} total (enter the area for a per-hectare figure)`;
   }
+  function addFieldRow(name = '') {
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'field-input';
+    input.setAttribute('list', 'field-options');
+    input.maxLength = 160;
+    input.autocomplete = 'off';
+    input.value = name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      if (fieldRows.children.length === 1) {
+        input.value = '';
+      } else {
+        row.remove();
+      }
+      numberFieldRows();
+      dirty = true;
+      message('Unsaved changes — press Save Job.');
+    });
+    row.append(input, remove);
+    fieldRows.append(row);
+    numberFieldRows();
+    return input;
+  }
+  function numberFieldRows() {
+    [...fieldRows.children].forEach((row, index) => {
+      row.querySelector('input').placeholder = `Field ${index + 1}`;
+      row.querySelector('input').setAttribute('aria-label', `Field ${index + 1} name`);
+    });
+  }
+  function setFieldRows(names) {
+    fieldRows.replaceChildren();
+    for (const name of (names.length ? names : [''])) addFieldRow(name);
+  }
+  // One blank row means no fields were entered; with several rows, blank names are numbered.
+  function fieldValues() {
+    const names = [...fieldRows.querySelectorAll('input')].map(input => input.value.trim());
+    return names.length === 1 && !names[0] ? [] : names;
+  }
+  document.getElementById('add-field').addEventListener('click', () => {
+    addFieldRow().focus();
+    dirty = true;
+    message('Unsaved changes — press Save Job.');
+  });
   function updateFieldOptions() {
     const wanted = form.elements.customer.value.trim().toLowerCase();
     const match = Object.keys(fieldMap).find(name => name.toLowerCase() === wanted);
@@ -89,7 +142,7 @@
     const priced = filtered.filter(entry => entry.priced);
     const unpriced = filtered.length - priced.length;
     const area = filtered.reduce((sum, entry) => sum + Number(entry.area), 0);
-    const diesel = filtered.reduce((sum, entry) => sum + Number(entry.diesel_used), 0);
+    const diesel = filtered.reduce((sum, entry) => sum + Number(entry.total_diesel), 0);
     const escalator = priced.reduce((sum, entry) => sum + Number(entry.escalator), 0);
     totals.textContent = filtered.length
       ? `${filtered.length} jobs · ${area.toFixed(2)} ha · ${diesel.toFixed(1)} litres · ${money(escalator)} surcharge` + (unpriced ? ` on ${priced.length} priced (${unpriced} still need a diesel price)` : '')
@@ -122,12 +175,12 @@
       article.className = 'maintenance-record';
       const details = document.createElement('div');
       const heading = document.createElement('h3');
-      heading.textContent = `${entry.customer} · ${entry.field}`;
+      heading.textContent = entry.field ? `${entry.customer} · ${entry.field}` : entry.customer;
       const info = document.createElement('p');
       const priceText = !entry.priced ? 'diesel price needed'
-        : Number(entry.escalator) > 0 ? `surcharge ${entry.escalator_per_ha ? money(entry.escalator_per_ha) + ' per ha' : 'no area'} (${money(entry.escalator)} total)`
+        : Number(entry.escalator) > 0 ? `surcharge ${entry.escalator_per_ha ? money(entry.escalator_per_ha) + ' per ha (' + money(entry.escalator) + ' total)' : money(entry.escalator) + ' total'}`
         : 'no surcharge';
-      info.textContent = `${formatDate(entry.job_date)} · ${entry.area} ha · ${entry.diesel_used} litres · `;
+      info.textContent = `${formatDate(entry.job_date)} · ${entry.area ? entry.area + ' ha · ' : ''}${entry.tractor_diesel ? `${entry.diesel_used} L harvester + ${entry.tractor_diesel} L tractor` : `${entry.diesel_used} litres`} · `;
       const state = document.createElement('span');
       if (!entry.priced) state.className = 'price-needed';
       state.textContent = priceText;
@@ -163,7 +216,7 @@
   async function setInvoiced(entry, invoiced) {
     if (current && current.id === entry.id && dirty && !window.confirm('Discard your unsaved changes to this job?')) return;
     try {
-      const payload = Object.fromEntries(fieldNames.map(field => [field, entry[field]]));
+      const payload = { ...Object.fromEntries(fieldNames.map(field => [field, entry[field]])), fields: entry.fields };
       const response = await fetch(`/api/beet/${entry.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -195,11 +248,12 @@
     current = entry;
     for (const field of fieldNames) form.elements[field].value = entry ? entry[field] : (field === 'job_date' ? today() : '');
     form.elements.invoiced.checked = Boolean(entry && entry.invoiced);
+    setFieldRows(entry ? entry.fields : []);
     updateFieldOptions();
     updatePreview();
     showTerms();
     dirty = false;
-    document.getElementById('record-heading').textContent = entry ? `Edit ${entry.field}` : 'New sugar beet job';
+    document.getElementById('record-heading').textContent = entry ? `Edit ${entry.field || entry.customer}` : 'New sugar beet job';
     message(entry ? 'Job opened. Press Save Job after making changes.' : 'Complete the fields and press Save.');
   }
   function openEntry(entry) {
@@ -219,7 +273,7 @@
     saving = true;
     document.getElementById('save-record').disabled = true;
     message('Saving…');
-    const payload = Object.fromEntries(fieldNames.map(field => [field, form.elements[field].value]));
+    const payload = { ...Object.fromEntries(fieldNames.map(field => [field, form.elements[field].value])), fields: fieldValues() };
     payload.invoiced = form.elements.invoiced.checked;
     if (current) payload.version = current.version;
     try {
