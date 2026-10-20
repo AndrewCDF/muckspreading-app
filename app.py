@@ -9,6 +9,7 @@ import re
 import secrets
 import shutil
 import smtplib
+import socket
 import sqlite3
 import struct
 import subprocess
@@ -8411,11 +8412,34 @@ def app_version_label():
     return clean_name(result.stdout) or "unknown"
 
 
+# Changes on every start, so a page can tell a restarted app from the old process still answering.
+APP_BOOT_ID = secrets.token_hex(6)
+
+
+def wait_for_port(port, timeout_seconds=60):
+    """Wait until the previous process has released the port after an in-app restart."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("0.0.0.0", port))
+            return
+        except OSError:
+            time.sleep(0.5)
+        finally:
+            probe.close()
+
+
 def restart_app_process(delay_seconds=1.5):
     app_script = os.path.join(APP_ROOT, "app.py")
 
     def _restart():
         time.sleep(delay_seconds)
+        if os.environ.get("INVOCATION_ID"):
+            # Running under systemd: leave with a non-zero status and let Restart= bring the service back.
+            # A process started from here would be killed along with this one.
+            os._exit(75)
         try:
             subprocess.Popen(
                 [sys.executable, app_script],
@@ -8424,6 +8448,7 @@ def restart_app_process(delay_seconds=1.5):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                env=dict(os.environ, MUCKSPREADING_WAIT_FOR_PORT="1"),
             )
         finally:
             os._exit(0)
@@ -11762,83 +11787,7 @@ def update_app():
     if wants_json:
         return respond(True, "App updated", "updated", restart=True)
 
-    return render_template_string(
-        """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="12;url={{ url_for('home', ok=1, msg='App updated') }}">
-  <title>Updating App</title>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: linear-gradient(180deg, #efe7d8 0%, #e6dcc9 100%);
-      color: #272d21;
-      font-family: Georgia, "Times New Roman", serif;
-    }
-    .card {
-      max-width: 520px;
-      padding: 28px;
-      border-radius: 24px;
-      background: rgba(250, 247, 240, 0.96);
-      border: 1px solid rgba(82, 69, 42, 0.12);
-      box-shadow: 0 18px 44px rgba(60, 49, 25, 0.12);
-      text-align: center;
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: 32px;
-    }
-    p {
-      margin: 0;
-      line-height: 1.5;
-      color: #666653;
-    }
-    a {
-      display: inline-flex;
-      margin-top: 18px;
-      min-height: 48px;
-      padding: 0 18px;
-      border-radius: 999px;
-      align-items: center;
-      justify-content: center;
-      text-decoration: none;
-      font-weight: bold;
-      background: rgba(60,95,70,0.1);
-      color: #3c5f46;
-      border: 1px solid rgba(60,95,70,0.12);
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Updating App</h1>
-    <p>The latest update was installed. The app is restarting now and should reload automatically in a few seconds.</p>
-    <a href="{{ url_for('home', ok=1, msg='App updated') }}">Return To App</a>
-  </div>
-  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
-    <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
-    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
-    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
-  </nav>
-  <script>
-    (function () {
-      const targetUrl = {{ url_for('home', ok=1, msg='App updated')|tojson }};
-      function tryReturn() {
-        window.location.replace(targetUrl);
-      }
-      window.setTimeout(tryReturn, 6500);
-      window.setTimeout(tryReturn, 9000);
-      window.setTimeout(tryReturn, 12000);
-    })();
-  </script>
-</body>
-</html>"""
-    )
+    return render_template("updating.html", boot_id=APP_BOOT_ID, home_url=url_for("home", ok=1, msg="App updated"))
 
 
 @app.route("/backup/export.zip")
@@ -12057,6 +12006,7 @@ def health():
         "customers": len(load_customers()),
         "fields": field_count,
         "generated_at": int(time.time()),
+        "boot": APP_BOOT_ID,
     })
 
 
@@ -12064,6 +12014,8 @@ if __name__ == "__main__":
     ensure_settings_workbook()
     ensure_data_dir()
     port = int(os.environ.get("MUCKSPREADING_APP_PORT", "8093"))
+    if os.environ.get("MUCKSPREADING_WAIT_FOR_PORT"):
+        wait_for_port(port)
     debug_mode = str(os.environ.get("MUCKSPREADING_APP_DEBUG", "") or "").strip().lower() in ["1", "true", "yes", "on"]
     start_background_workers(debug_mode=debug_mode)
     app.run(host="0.0.0.0", port=port, debug=debug_mode, use_reloader=debug_mode)
