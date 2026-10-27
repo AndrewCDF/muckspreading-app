@@ -137,6 +137,47 @@ class BeetTests(unittest.TestCase):
         for bad in ("-5", "abc"):
             self.assertEqual(self.client.post("/api/beet", json=dict(self.job, tractor_diesel=bad)).status_code, 400)
 
+    def test_figures_are_stored_when_the_price_is_entered(self):
+        saved = self.client.post("/api/beet", json=self.job).get_json()["entry"]
+        self.assertEqual((saved["escalator"], saved["escalator_per_ha"]), ("112.20", "8.98"))
+        original = app.beet_escalator
+        app.beet_escalator = lambda *args: app.Decimal("999.00")  # as if the rule or settings changed later
+        try:
+            self.assertEqual(self.client.get("/api/beet").get_json()["entries"][0]["escalator"], "112.20")
+            marked = self.client.put("/api/beet/%s" % saved["id"], json=dict(saved, invoiced=True)).get_json()["entry"]
+            self.assertEqual((marked["invoiced"], marked["escalator"]), (True, "112.20"))
+            edited = self.client.put("/api/beet/%s" % saved["id"], json=dict(marked, diesel_used="400")).get_json()["entry"]
+            self.assertEqual(edited["escalator"], "999.00")  # a changed figure recalculates and stores again
+        finally:
+            app.beet_escalator = original
+        self.assertEqual(self.client.get("/api/beet").get_json()["entries"][0]["escalator"], "999.00")
+        unpriced = self.client.post("/api/beet", json=dict(self.job, diesel_price="")).get_json()["entry"]
+        self.assertEqual(unpriced["escalator"], "")
+        priced = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(unpriced, diesel_price="1.10")).get_json()["entry"]
+        self.assertEqual(priced["escalator"], "112.20")
+        cleared = self.client.put("/api/beet/%s" % unpriced["id"], json=dict(priced, diesel_price="")).get_json()["entry"]
+        self.assertEqual((cleared["escalator"], cleared["escalator_per_ha"]), ("", ""))
+
+    def test_existing_priced_jobs_are_backfilled_once(self):
+        import sqlite3
+        path = self.directory.name + "/beet.sqlite3"
+        old = sqlite3.connect(path)
+        old.execute("""CREATE TABLE beet_jobs (id INTEGER PRIMARY KEY, job_date TEXT NOT NULL, customer TEXT NOT NULL, field TEXT NOT NULL,
+            area TEXT NOT NULL, diesel_used TEXT NOT NULL, version INTEGER NOT NULL, updated_at TEXT NOT NULL,
+            diesel_price TEXT NOT NULL DEFAULT '1.1', base_price TEXT NOT NULL DEFAULT '0.7', trigger_pct TEXT NOT NULL DEFAULT '10.0',
+            tractor_diesel TEXT NOT NULL DEFAULT '', fields_json TEXT NOT NULL DEFAULT '', invoiced_date TEXT NOT NULL DEFAULT '')""")
+        old.execute("INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, version, updated_at, diesel_price) VALUES ('2026-10-01', 'Claxton Manor', 'A', '12.5', '340', 1, 'x', '1.10')")
+        old.execute("INSERT INTO beet_jobs (job_date, customer, field, area, diesel_used, version, updated_at, diesel_price) VALUES ('2026-10-02', 'Claxton Manor', 'B', '5', '100', 1, 'x', '')")
+        old.commit()
+        old.close()
+        rows = {row["field"]: row for row in self.client.get("/api/beet").get_json()["entries"]}
+        self.assertEqual((rows["A"]["escalator"], rows["A"]["escalator_per_ha"]), ("112.20", "8.98"))
+        self.assertEqual(rows["B"]["escalator"], "")
+        connection = app.beet_connection()
+        stored = connection.execute("SELECT surcharge_total FROM beet_jobs WHERE field='A'").fetchone()[0]
+        connection.close()
+        self.assertEqual(stored, "112.20")
+
     def test_old_jobs_with_one_field_still_load(self):
         connection = app.beet_connection()
         with connection:

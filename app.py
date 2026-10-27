@@ -10090,8 +10090,25 @@ def beet_connection():
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN invoiced_date TEXT NOT NULL DEFAULT ''")
     if "trigger_pct" not in columns:
         connection.execute("ALTER TABLE beet_jobs ADD COLUMN trigger_pct TEXT NOT NULL DEFAULT '%s'" % BEET_DEFAULT_SETTINGS["trigger_pct"])
+    if "surcharge_total" not in columns:
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN surcharge_total TEXT NOT NULL DEFAULT ''")
+        connection.execute("ALTER TABLE beet_jobs ADD COLUMN surcharge_per_ha TEXT NOT NULL DEFAULT ''")
+        # Jobs already priced get their figures stored now, so later changes cannot restate them.
+        for row in connection.execute("SELECT * FROM beet_jobs WHERE diesel_price<>''").fetchall():
+            total, per_ha = beet_surcharge_figures(row)
+            connection.execute("UPDATE beet_jobs SET surcharge_total=?, surcharge_per_ha=? WHERE id=?", (total, per_ha, row["id"]))
     connection.commit()
     return connection
+
+
+def beet_surcharge_figures(row):
+    """(total, per hectare) as pound strings for a priced job, from its own base and trigger; blanks if unpriced."""
+    if row["diesel_price"] == "":
+        return "", ""
+    litres = Decimal(row["diesel_used"]) + Decimal(row["tractor_diesel"] or "0")
+    total = beet_escalator(litres, row["diesel_price"], row["base_price"], row["trigger_pct"])
+    area = Decimal(row["area"] or "0")
+    return "%.2f" % total, ("%.2f" % beet_money(total / area) if area > 0 else "")
 
 
 def beet_field_summary(names):
@@ -10115,10 +10132,11 @@ def beet_row(row):
     if not entry["priced"]:
         entry["escalator"] = entry["escalator_per_ha"] = ""
         return entry
-    total = beet_escalator(entry["total_diesel"], entry["diesel_price"], entry["base_price"], entry["trigger_pct"])
-    area = Decimal(entry["area"] or "0")
-    entry["escalator"] = "%.2f" % total
-    entry["escalator_per_ha"] = "%.2f" % beet_money(total / area) if area > 0 else ""
+    # Figures are stored when the job is saved with a price; only a job with none stored is worked out here.
+    if entry["surcharge_total"] != "":
+        entry["escalator"], entry["escalator_per_ha"] = entry["surcharge_total"], entry["surcharge_per_ha"]
+    else:
+        entry["escalator"], entry["escalator_per_ha"] = beet_surcharge_figures(entry)
     return entry
 
 
@@ -10252,6 +10270,7 @@ def beet_jobs(entry_id=None):
                 )
                 entry_id = cursor.lastrowid
             else:
+                before = connection.execute("SELECT * FROM beet_jobs WHERE id=?", (entry_id,)).fetchone()
                 cursor = connection.execute(
                     "UPDATE beet_jobs SET job_date=?, customer=?, field=?, area=?, diesel_used=?, "
                     "base_price=CASE WHEN diesel_price='' AND ?<>'' THEN ? ELSE base_price END, "
@@ -10262,6 +10281,17 @@ def beet_jobs(entry_id=None):
                 )
                 if cursor.rowcount != 1:
                     return jsonify(error="This job changed elsewhere. Reopen it before saving again."), 409
+            after = connection.execute("SELECT * FROM beet_jobs WHERE id=?", (entry_id,)).fetchone()
+            # Work out and store the surcharge when the price is entered or any figure behind it changes.
+            # Other edits (such as marking a job invoiced) leave the stored figures as they were.
+            inputs = ("diesel_used", "tractor_diesel", "diesel_price", "area", "base_price", "trigger_pct")
+            if after["diesel_price"] == "":
+                figures = ("", "")
+            elif request.method == "POST" or before["surcharge_total"] == "" or any(before[key] != after[key] for key in inputs):
+                figures = beet_surcharge_figures(after)
+            else:
+                figures = (before["surcharge_total"], before["surcharge_per_ha"])
+            connection.execute("UPDATE beet_jobs SET surcharge_total=?, surcharge_per_ha=? WHERE id=?", figures + (entry_id,))
             row = beet_row(connection.execute("SELECT * FROM beet_jobs WHERE id=?", (entry_id,)).fetchone())
         return jsonify(entry=row), 201 if request.method == "POST" else 200
     finally:
