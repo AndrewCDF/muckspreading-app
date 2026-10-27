@@ -49,7 +49,10 @@
     const area = parseFloat(form.elements.area.value);
     const base = current ? Number(current.base_price) : settings.base_price;
     const pct = current ? Number(current.trigger_pct) : settings.trigger_pct;
-    const trigger = Math.round(base * (1 + pct / 100) * 10000) / 10000;
+    // Whole units (1/10000 of a pound, 1/100 of a litre) so the preview matches the saved figure to the penny.
+    const baseUnits = Math.round(base * 10000);
+    const triggerUnits = Math.floor((baseUnits * (1000000 + Math.round(pct * 10000)) + 500000) / 1000000);
+    const trigger = triggerUnits / 10000;
     const basis = `base ${(base * 100).toFixed(1)}p, starts at ${(trigger * 100).toFixed(1)}p`;
     if (!(price >= 0)) {
       preview.textContent = `Surcharge not calculated yet — no diesel price entered (${basis}).`;
@@ -59,14 +62,17 @@
       preview.textContent = `Diesel escalator (${basis}): enter litres used.`;
       return;
     }
-    if (Math.round(price * 10000) / 10000 < trigger) {
+    if (Math.round(price * 10000) < triggerUnits) {
       preview.textContent = `No surcharge: ${(price * 100).toFixed(1)}p is below the ${(trigger * 100).toFixed(1)}p trigger.`;
       return;
     }
-    const total = litres * (price - base);
+    const litreHundredths = Math.round(harvester * 100) + Math.round(tractor * 100);
+    const pennies = Math.floor((litreHundredths * (Math.round(price * 10000) - baseUnits) + 5000) / 10000);
+    const total = pennies / 100;
+    const perHa = area > 0 ? Math.floor((pennies * 100) / Math.round(area * 100) + 0.5) / 100 : 0;
     const litreText = tractor > 0 ? `${harvester} L harvester + ${tractor} L tractor = ${litres} L` : `${litres} L`;
     preview.textContent = area > 0
-      ? `${litreText} · surcharge ${money(total / area)} per ha (${money(total)} total on ${area} ha)`
+      ? `${litreText} · surcharge ${money(total)} total (about ${money(perHa)} per ha on ${area} ha, as a guide)`
       : `${litreText} · surcharge ${money(total)} total (enter the area for a per-hectare figure)`;
   }
   function addFieldRow(name = '') {
@@ -143,7 +149,7 @@
     const unpriced = filtered.length - priced.length;
     const area = filtered.reduce((sum, entry) => sum + Number(entry.area), 0);
     const diesel = filtered.reduce((sum, entry) => sum + Number(entry.total_diesel), 0);
-    const escalator = priced.reduce((sum, entry) => sum + Number(entry.escalator), 0);
+    const escalator = priced.reduce((sum, entry) => sum + Math.round(Number(entry.escalator) * 100), 0) / 100;
     totals.textContent = filtered.length
       ? `${filtered.length} jobs · ${area.toFixed(2)} ha · ${diesel.toFixed(1)} litres · ${money(escalator)} surcharge` + (unpriced ? ` on ${priced.length} priced (${unpriced} still need a diesel price)` : '')
       : '';
@@ -158,7 +164,9 @@
         monthKey = entry.job_date.slice(0, 7);
         const inMonth = filtered.filter(item => item.job_date.slice(0, 7) === monthKey);
         const monthArea = inMonth.reduce((sum, item) => sum + Number(item.area), 0);
-        const monthSurcharge = inMonth.filter(item => item.priced).reduce((sum, item) => sum + Number(item.escalator), 0);
+        const monthPriced = inMonth.filter(item => item.priced);
+        const monthSurcharge = monthPriced.reduce((sum, item) => sum + Math.round(Number(item.escalator) * 100), 0) / 100;
+        const monthUnpriced = inMonth.length - monthPriced.length;
         const section = document.createElement('section');
         section.className = 'beet-month';
         const monthHeading = document.createElement('h3');
@@ -166,7 +174,9 @@
         monthHeading.textContent = new Date(`${monthKey}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
         const monthTotals = document.createElement('p');
         monthTotals.className = 'month-totals';
-        monthTotals.textContent = `${inMonth.length} ${inMonth.length === 1 ? 'job' : 'jobs'} · ${monthArea.toFixed(2)} ha · ${money(monthSurcharge)} surcharge`;
+        monthTotals.textContent = `${inMonth.length} ${inMonth.length === 1 ? 'job' : 'jobs'} · ${monthArea.toFixed(2)} ha · `
+          + (monthPriced.length ? `${money(monthSurcharge)} surcharge` : 'no surcharge priced yet')
+          + (monthPriced.length && monthUnpriced ? ` on ${monthPriced.length} priced (${monthUnpriced} ${monthUnpriced === 1 ? 'needs' : 'need'} a price)` : '');
         section.append(monthHeading, monthTotals);
         list.append(section);
         monthList = section;
@@ -178,7 +188,7 @@
       heading.textContent = entry.field ? `${entry.customer} · ${entry.field}` : entry.customer;
       const info = document.createElement('p');
       const priceText = !entry.priced ? 'diesel price needed'
-        : Number(entry.escalator) > 0 ? `surcharge ${entry.escalator_per_ha ? money(entry.escalator_per_ha) + ' per ha (' + money(entry.escalator) + ' total)' : money(entry.escalator) + ' total'}`
+        : Number(entry.escalator) > 0 ? `surcharge ${money(entry.escalator)} total` + (entry.escalator_per_ha ? ` (about ${money(entry.escalator_per_ha)} per ha)` : '')
         : 'no surcharge';
       info.textContent = `${formatDate(entry.job_date)} · ${entry.area ? entry.area + ' ha · ' : ''}${entry.tractor_diesel ? `${entry.diesel_used} L harvester + ${entry.tractor_diesel} L tractor` : `${entry.diesel_used} litres`} · `;
       const state = document.createElement('span');

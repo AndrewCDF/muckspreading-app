@@ -21,6 +21,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 import zlib
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from email.message import EmailMessage
 from xml.sax.saxutils import escape as xml_escape
 from email.utils import parseaddr
@@ -9933,12 +9934,19 @@ def beet_settings():
     return settings
 
 
+def beet_money(value):
+    return Decimal(value).quantize(Decimal("0.01"), ROUND_HALF_UP)
+
+
 def beet_escalator(diesel_used, diesel_price, base_price, trigger_pct):
-    """Total surcharge: nothing until the price is trigger_pct above base, then the full rise over base."""
-    trigger_price = round(float(base_price) * (1 + float(trigger_pct) / 100), 4)
-    if round(float(diesel_price), 4) < trigger_price:
-        return 0.0
-    return round(float(diesel_used) * (float(diesel_price) - float(base_price)), 2)
+    """Total surcharge in pounds: nothing until the price is trigger_pct above base, then the full rise over base.
+
+    Decimal arithmetic with half-up rounding, so a half-penny is never lost to binary floats."""
+    price, base = Decimal(str(diesel_price)), Decimal(str(base_price))
+    trigger_price = (base * (1 + Decimal(str(trigger_pct)) / 100)).quantize(Decimal("0.0001"), ROUND_HALF_UP)
+    if price.quantize(Decimal("0.0001"), ROUND_HALF_UP) < trigger_price:
+        return Decimal("0.00")
+    return beet_money(Decimal(str(diesel_used)) * (price - base))
 
 
 def beet_connection():
@@ -9985,16 +9993,17 @@ def beet_row(row):
     if not isinstance(names, list):
         names = [entry["field"]] if entry["field"] else []
     entry["fields"] = names
-    entry["total_diesel"] = ("%.2f" % (float(entry["diesel_used"]) + float(entry["tractor_diesel"] or 0))).rstrip("0").rstrip(".")
+    total_diesel = Decimal(entry["diesel_used"]) + Decimal(entry["tractor_diesel"] or "0")
+    entry["total_diesel"] = ("%.2f" % total_diesel).rstrip("0").rstrip(".")
     entry["priced"] = entry["diesel_price"] != ""
     entry["invoiced"] = entry["invoiced_date"] != ""
     if not entry["priced"]:
         entry["escalator"] = entry["escalator_per_ha"] = ""
         return entry
     total = beet_escalator(entry["total_diesel"], entry["diesel_price"], entry["base_price"], entry["trigger_pct"])
-    area = float(entry["area"] or 0)
+    area = Decimal(entry["area"] or "0")
     entry["escalator"] = "%.2f" % total
-    entry["escalator_per_ha"] = "%.2f" % (total / area) if area > 0 else ""
+    entry["escalator_per_ha"] = "%.2f" % beet_money(total / area) if area > 0 else ""
     return entry
 
 

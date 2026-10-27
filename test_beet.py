@@ -51,6 +51,12 @@ class BeetTests(unittest.TestCase):
                 saved = self.client.post("/api/beet", json=dict(self.job, diesel_price=price)).get_json()["entry"]
                 self.assertEqual(saved["escalator"], expected)
 
+    def test_half_penny_rounds_up_exactly(self):
+        # 447 L x 52.5p over base is exactly £145.275; binary floats gave £145.27
+        saved = self.client.post("/api/beet", json=dict(self.job, diesel_used="447", diesel_price="1.025", area="10")).get_json()["entry"]
+        self.assertEqual((saved["escalator"], saved["escalator_per_ha"]), ("145.28", "14.53"))
+        self.assertEqual(str(app.beet_escalator("447", "1.025", "0.7", "10")), "145.28")
+
     def test_settings_are_editable_and_snapshotted(self):
         self.assertEqual(self.client.get("/api/beet/settings").get_json()["settings"], {"base_price": 0.7, "trigger_pct": 10.0})
         old = self.client.post("/api/beet", json=self.job).get_json()["entry"]
