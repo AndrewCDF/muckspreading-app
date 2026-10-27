@@ -30,3 +30,4 @@
   .maintenance-record { grid-template-columns: 1fr; }
   .maintenance-record button { width: 100%; }
 }
+.maintenance-grid label[hidden] { display: none; }
