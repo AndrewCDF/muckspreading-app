@@ -7242,6 +7242,66 @@ def sort_template_row_cells(row):
         row.append(cell)
 
 
+INVOICE_FOOTER_FIRST_ROW = 49
+INVOICE_FOOTER_LAST_ROW = 53
+
+
+def invoice_template_footer_blocks(entries):
+    """Company and payment detail lines from the layout template's details block (rows 49-53).
+
+    Returns [company_lines, payment_lines], or [] if the template has no such block."""
+    try:
+        root = ET.fromstring(entries["xl/worksheets/sheet1.xml"])
+    except Exception:
+        return []
+    shared_strings = []
+    if entries.get("xl/sharedStrings.xml"):
+        try:
+            for item in ET.fromstring(entries["xl/sharedStrings.xml"]).findall("{%s}si" % XLSX_NS):
+                shared_strings.append("".join(node.text or "" for node in item.findall(".//{%s}t" % XLSX_NS)))
+        except Exception:
+            shared_strings = []
+    cells = {}
+    sheet_data = root.find("{%s}sheetData" % XLSX_NS)
+    if sheet_data is None:
+        return []
+    for cell in sheet_data.iter("{%s}c" % XLSX_NS):
+        if cell.attrib.get("r"):
+            cells[cell.attrib["r"]] = cell
+
+    def text(ref):
+        return clean_name(template_string_cell_value(cells.get(ref), shared_strings))
+
+    if text("A%d" % INVOICE_FOOTER_FIRST_ROW).lower() != "company details":
+        return []
+    blocks = []
+    for label_col, value_col in (("A", "B"), ("E", "F")):
+        lines = [text("%s%d" % (label_col, INVOICE_FOOTER_FIRST_ROW))]
+        for row_number in range(INVOICE_FOOTER_FIRST_ROW + 1, INVOICE_FOOTER_LAST_ROW + 1):
+            label, value = text("%s%d" % (label_col, row_number)), text("%s%d" % (value_col, row_number))
+            if label and value:
+                lines.append("%s: %s" % (label.rstrip(":"), value))
+            elif label or value:
+                lines.append(label or value)
+        blocks.append([line for line in lines if line])
+    return blocks
+
+
+def invoice_footer_text(blocks):
+    """Excel page-footer markup: company details at the left, payment details at the right."""
+    def section(code, lines):
+        if not lines:
+            return ""
+        escaped = [line.replace("&", "&&") for line in lines]
+        body = '&"Arial,Bold"&9' + escaped[0]
+        if len(escaped) > 1:
+            first = escaped[1]
+            body += '\n&"Arial,Regular"&8' + (" " if first[:1].isdigit() else "") + "\n".join(escaped[1:])
+        return code + body
+    company, payment = (list(blocks) + [[], []])[:2]
+    return section("&L", company) + section("&R", payment)
+
+
 def fill_layout_invoice_template(invoice, template):
     entries = template.get("entries", {})
     sheet_bytes = entries.get("xl/worksheets/sheet1.xml")
@@ -7265,6 +7325,24 @@ def fill_layout_invoice_template(invoice, template):
         if found is None:
             raise ValueError("Invoice template row %s is missing." % number)
         return found
+
+    # The company and payment details are printed as the page footer so they always sit at the
+    # bottom of the page, however many lines the invoice has, instead of following the table.
+    footer_blocks = invoice_template_footer_blocks(entries)
+    if any(footer_blocks):
+        for number in [number for number in rows_by_number if number >= INVOICE_FOOTER_FIRST_ROW]:
+            sheet_data.remove(rows_by_number.pop(number))
+        merge_cells_node = first_child_by_local_name(root, "mergeCells")
+        if merge_cells_node is not None:
+            for merge_cell in children_by_local_name(merge_cells_node, "mergeCell"):
+                match = re.search(r"\d+", merge_cell.attrib.get("ref", ""))
+                if match and int(match.group(0)) >= INVOICE_FOOTER_FIRST_ROW:
+                    merge_cells_node.remove(merge_cell)
+            merge_cells_node.attrib["count"] = str(len(children_by_local_name(merge_cells_node, "mergeCell")))
+        dimension_node = first_child_by_local_name(root, "dimension")
+        if dimension_node is not None and ":" in dimension_node.attrib.get("ref", ""):
+            start_ref, end_ref = dimension_node.attrib["ref"].split(":", 1)
+            dimension_node.attrib["ref"] = "%s:%s" % (start_ref, re.sub(r"\d+$", str(INVOICE_FOOTER_FIRST_ROW - 1), end_ref))
 
     address_lines = invoice_address_lines(invoice)[:5]
     while len(address_lines) < 5:
@@ -7425,6 +7503,32 @@ def fill_layout_invoice_template(invoice, template):
 
     for target_row in [9, 10, 11, 12, 13, 17, totals_start_row, totals_start_row + 1, totals_start_row + 2, totals_start_row + 3]:
         sort_template_row_cells(row(target_row))
+
+    if any(footer_blocks):
+        for existing in children_by_local_name(root, "headerFooter"):
+            root.remove(existing)
+        header_footer = ET.Element("{%s}headerFooter" % XLSX_NS)
+        ET.SubElement(header_footer, "{%s}oddFooter" % XLSX_NS).text = invoice_footer_text(footer_blocks)
+        children = list(root)
+        insert_at = len(children)
+        for index, child in enumerate(children):
+            if str(child.tag).rsplit("}", 1)[-1] == "pageSetup":
+                insert_at = index + 1
+                break
+        else:
+            for index, child in enumerate(children):
+                if str(child.tag).rsplit("}", 1)[-1] in ("drawing", "legacyDrawing"):
+                    insert_at = index
+                    break
+        root.insert(insert_at, header_footer)
+        margins = first_child_by_local_name(root, "pageMargins")
+        if margins is not None:  # leave room above the footer for five lines of text
+            margins.attrib["bottom"] = "1.2"
+            margins.attrib["footer"] = "0.4"
+
+    merge_cells_final = first_child_by_local_name(root, "mergeCells")
+    if merge_cells_final is not None:
+        merge_cells_final.attrib["count"] = str(len(children_by_local_name(merge_cells_final, "mergeCell")))
 
     ET.register_namespace("", XLSX_NS)
     ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -7733,10 +7837,13 @@ def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
             format_money(line.get("line_total", 0)),
         ])
 
+    template = load_invoice_template()
+    footer_blocks = invoice_template_footer_blocks(template.get("entries", {})) if template else []
+
     page_rows = []
     current = []
     for row in rows:
-        if len(current) >= 18:
+        if len(current) >= 16:  # leaves room above the company details footer
             page_rows.append(current)
             current = []
         current.append(row)
@@ -7807,6 +7914,12 @@ def build_invoice_pdf_bytes(invoice, xlsx_bytes=None):
             commands.append(draw_text(left + 610, totals_y - 16, format_tons(invoice.get("vat_total", 0)), "F2", 10, 16))
             commands.append(draw_text(left + 470, totals_y - 34, "Grand Total:", "F2", 10.5, 20))
             commands.append(draw_text(left + 610, totals_y - 34, format_tons(invoice.get("grand_total", 0)), "F2", 10.5, 16))
+
+        # Company and payment details sit at the foot of every page.
+        for block_index, lines in enumerate(footer_blocks):
+            footer_x = left if block_index == 0 else left + 470
+            for line_index, line in enumerate(lines):
+                commands.append(draw_text(footer_x, 58 - line_index * 11, line, "F2" if line_index == 0 else "F1", 8.5 if line_index == 0 else 8, 60))
 
         stream = "\n".join(commands).encode("latin-1", "replace")
         content_id = add_object(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
