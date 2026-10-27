@@ -36,7 +36,7 @@
     const base = current ? Number(current.base_price) : settings.base_price;
     const pct = current ? Number(current.trigger_pct) : settings.trigger_pct;
     const ppl = trim(base * 100);
-    return `All contracting charges are worked at ${ppl}ppl. We absorb any diesel price fluctuation within ${trim(pct)}% (up to ${trim(base * (1 + pct / 100) * 100)}ppl). Above that, a surcharge is added on the full rise over ${ppl}ppl.`;
+    return `All contracting charges are worked at ${ppl}ppl. We absorb any diesel price fluctuation within ${trim(pct)}% (up to ${trim(base * (1 + pct / 100) * 100)}ppl). Above that, a surcharge is added on the rise above ${trim(base * (1 + pct / 100) * 100)}ppl.`;
   }
   function showTerms() {
     document.getElementById('escalator-terms').textContent = termsText();
@@ -62,12 +62,12 @@
       preview.textContent = `Diesel escalator (${basis}): enter litres used.`;
       return;
     }
-    if (Math.round(price * 10000) < triggerUnits) {
-      preview.textContent = `No surcharge: ${(price * 100).toFixed(1)}p is below the ${(trigger * 100).toFixed(1)}p trigger.`;
+    if (Math.round(price * 10000) <= triggerUnits) {
+      preview.textContent = `No surcharge: ${(price * 100).toFixed(1)}p is not above the ${(trigger * 100).toFixed(1)}p trigger.`;
       return;
     }
     const litreHundredths = Math.round(harvester * 100) + Math.round(tractor * 100);
-    const pennies = Math.floor((litreHundredths * (Math.round(price * 10000) - baseUnits) + 5000) / 10000);
+    const pennies = Math.floor((litreHundredths * (Math.round(price * 10000) - triggerUnits) + 5000) / 10000);
     const total = pennies / 100;
     const perHa = area > 0 ? Math.floor((pennies * 100) / Math.round(area * 100) + 0.5) / 100 : 0;
     const litreText = tractor > 0 ? `${harvester} L harvester + ${tractor} L tractor = ${litres} L` : `${litres} L`;

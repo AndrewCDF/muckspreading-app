@@ -9939,14 +9939,16 @@ def beet_money(value):
 
 
 def beet_escalator(diesel_used, diesel_price, base_price, trigger_pct):
-    """Total surcharge in pounds: nothing until the price is trigger_pct above base, then the full rise over base.
+    """Total surcharge in pounds: only the part of the price above the trigger (base plus trigger_pct) is charged.
+    The first trigger_pct of any rise is absorbed.
 
     Decimal arithmetic with half-up rounding, so a half-penny is never lost to binary floats."""
     price, base = Decimal(str(diesel_price)), Decimal(str(base_price))
     trigger_price = (base * (1 + Decimal(str(trigger_pct)) / 100)).quantize(Decimal("0.0001"), ROUND_HALF_UP)
-    if price.quantize(Decimal("0.0001"), ROUND_HALF_UP) < trigger_price:
+    price = price.quantize(Decimal("0.0001"), ROUND_HALF_UP)
+    if price <= trigger_price:
         return Decimal("0.00")
-    return beet_money(Decimal(str(diesel_used)) * (price - base))
+    return beet_money(Decimal(str(diesel_used)) * (price - trigger_price))
 
 
 def beet_connection():
