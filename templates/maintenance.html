@@ -20,8 +20,14 @@
           <fieldset id="maintenance-fields">
             <div class="maintenance-grid">
               <label>Date<input name="maintenance_date" type="date" required></label>
-              <label>Machinery — select or type a new one<input name="machinery" list="machinery-options" maxlength="160" required autocomplete="off" placeholder="Choose an existing machine or type a new one"></label>
-              <datalist id="machinery-options">{% for machine in machinery %}<option value="{{ machine }}"></option>{% endfor %}</datalist>
+              <label>Machinery
+                <select id="machinery-choice" name="machinery_choice" required>
+                  <option value="">Choose machinery…</option>
+                  {% for machine in machinery %}<option value="{{ machine }}">{{ machine }}</option>{% endfor %}
+                  <option value="__new__">＋ Add new machinery…</option>
+                </select>
+              </label>
+              <label id="machinery-new-label" hidden>New machinery name<input name="machinery" maxlength="160" autocomplete="off" placeholder="Type the new machine's name"></label>
               <label>Machine Hours (optional)<input name="machine_hours" type="number" min="0" step="0.1" inputmode="decimal"></label>
               <label class="full-width">Notes / Job Done<textarea name="work_completed" rows="7" maxlength="20000" required placeholder="Explain the maintenance or repair work completed"></textarea></label>
             </div>

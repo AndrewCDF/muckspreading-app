@@ -59,9 +59,29 @@
     entries = (await response.json()).entries;
     render();
   }
+  const choice = document.getElementById('machinery-choice');
+  const newLabel = document.getElementById('machinery-new-label');
+  // The machine name lives in the 'machinery' text box; the drop-down fills it, or reveals it to type a new name.
+  function showMachinery(name) {
+    const known = [...choice.options].some(option => option.value === name && name !== '' && name !== '__new__');
+    choice.value = known ? name : (name ? '__new__' : '');
+    form.elements.machinery.value = name;
+    syncNewMachine();
+  }
+  function syncNewMachine() {
+    const adding = choice.value === '__new__';
+    newLabel.hidden = !adding;
+    form.elements.machinery.required = adding;
+  }
+  choice.addEventListener('change', () => {
+    form.elements.machinery.value = choice.value === '__new__' ? '' : choice.value;
+    syncNewMachine();
+    if (choice.value === '__new__') form.elements.machinery.focus();
+  });
   function fill(entry) {
     current = entry;
     for (const field of fieldNames) form.elements[field].value = entry ? entry[field] : (field === 'maintenance_date' ? today() : '');
+    showMachinery(entry ? entry.machinery : '');
     dirty = false;
     document.getElementById('record-heading').textContent = entry ? `Edit ${entry.machinery}` : 'New maintenance record';
     message(entry ? 'Record opened. Press Save Maintenance Record after making changes.' : 'Complete the required fields and press Save.');
