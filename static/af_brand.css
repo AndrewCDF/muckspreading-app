@@ -12,7 +12,7 @@
   --af-gold-deep: #b68b38;
   --af-shadow: 0 18px 36px rgba(29, 48, 35, 0.08);
   --af-font: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --af-nav-bg: rgba(255, 255, 255, 0.96);
+  --af-nav-bg: #fff;
   --af-nav-border: rgba(36, 68, 47, 0.1);
 }
 
@@ -160,8 +160,7 @@ button:hover, .button:hover {
   gap: 0;
   background: var(--af-nav-bg);
   border-top: 1px solid var(--af-nav-border);
-  box-shadow: 0 -10px 24px rgba(29, 48, 35, 0.08);
-  backdrop-filter: blur(10px);
+  padding-bottom: calc(env(safe-area-inset-bottom) * 0.5);
 }
 
 .bottom-nav-btn {
@@ -169,8 +168,8 @@ button:hover, .button:hover {
   border: none;
   background: transparent;
   color: var(--af-muted);
-  padding: 12px 8px 14px;
-  font-size: 12px;
+  padding: 8px 8px 8px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -185,11 +184,11 @@ button:hover, .button:hover {
 
 .bottom-nav-btn strong {
   display: block;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 body {
-  padding-bottom: 72px;
+  padding-bottom: 60px;
 }
