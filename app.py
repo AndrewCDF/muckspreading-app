@@ -152,12 +152,12 @@ DASHBOARD_HTML = """
     <main class="layout">
       <section class="branch-grid">
                 <a class="primary" href="/muck">Muck Spreading</a>
-                <a class="primary straw-button" href="/straw">Hay &amp; Straw</a>
+                <a class="primary" href="/straw">Hay &amp; Straw</a>
                 <a class="primary" href="{{ url_for('timesheet_home') }}">Timesheet</a>
                 <a class="primary" href="{{ url_for('beet_home') }}">Sugar Beet</a>
                 <a class="primary" href="{{ url_for('gritting.dashboard') }}">Gritting</a>
                 <a class="primary" href="{{ url_for('weather.weather_home') }}">Weather</a>
-                <a class="primary maintenance-button" href="{{ url_for('maintenance_home') }}">Maintenance</a>
+                <a class="primary" href="{{ url_for('maintenance_home') }}">Maintenance</a>
       </section>
     </main>
   </div>
