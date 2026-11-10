@@ -7,7 +7,7 @@
     <div>
       <p class="eyebrow">Call-out #{{ call_out.id }}</p>
       <h2>{{ call_out.site_name }}</h2>
-      <p class="muted">{{ call_out.customer_name }} · {{ call_out.address }}</p>
+      <p class="muted">{{ call_out.customer_name }} · {{ call_out.address }}{% if call_out.postcode %}, {{ call_out.postcode }}{% endif %}</p>
     </div>
     <span class="status status-{{ call_out.status }}">{{ call_out.status|replace('_', ' ') }}</span>
   </section>
@@ -70,8 +70,8 @@
         <div><dt>Route notes</dt><dd>{{ call_out.route_notes or "None" }}</dd></div>
         <div><dt>Service notes</dt><dd>{{ call_out.service_notes or "None yet" }}</dd></div>
         <div><dt>Customer contact</dt><dd>{{ call_out.contact_name }}</dd></div>
-        <div><dt>Notification email</dt><dd>{{ call_out.email or "No email on record" }}</dd></div>
-        <div><dt>Emergency phone</dt><dd>{{ call_out.emergency_phone or "No emergency phone on record" }}</dd></div>
+        <div><dt>Notification emails</dt><dd>{{ call_out.email or "No email on record" }}</dd></div>
+        <div><dt>Emergency contacts</dt><dd>{{ call_out.emergency_contacts|emergency_text(call_out.emergency_phone) or "No emergency contact on record" }}</dd></div>
         <div><dt>Service days</dt><dd>{{ call_out.service_days|service_days_display }}</dd></div>
         <div><dt>Dispatch batch</dt><dd>{{ call_out.dispatch_batch_id if call_out.dispatch_batch_id else "Single call-out" }}</dd></div>
         <div><dt>Selected pricing</dt><dd>{% if call_out.pricing_label %}{{ call_out.pricing_label }} · {{ call_out.pricing_amount|price_plus_vat_display }}{% if extras_items %}<br><small class="muted">Site price {{ (call_out.pricing_amount - call_out.extras_amount)|currency_display }} + extras: {{ call_out.extras_json|extras_summary }}</small>{% endif %}{% else %}Not selected{% endif %}</dd></div>

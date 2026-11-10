@@ -3,6 +3,37 @@
 {% block title %}Customers & Sites | Norwich Gritting Services{% endblock %}
 
 {% block content %}
+{% macro email_list(name, values, required=False, label="Notification emails", placeholder="ops@client.co.uk") %}
+  <div class="full-width email-list">
+    <span class="field-label">{{ label }}</span>
+    <div class="email-rows" data-placeholder="{{ placeholder }}">
+      {% for value in (values or ['']) %}
+        <div class="email-row">
+          <input type="email" name="{{ name }}" value="{{ value }}" placeholder="{{ placeholder }}" {% if required and loop.first %}required{% endif %}>
+          {% if not loop.first %}<button type="button" class="button subtle row-remove" aria-label="Remove this email">✕</button>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="button subtle row-add">＋ Add another email</button>
+  </div>
+{% endmacro %}
+
+{% macro contact_list(contacts) %}
+  <div class="full-width contact-list">
+    <span class="field-label">Emergency contacts</span>
+    <div class="contact-rows">
+      {% for contact in (contacts or [{'name': '', 'phone': ''}]) %}
+        <div class="contact-row">
+          <input type="text" name="emergency_contact_name" value="{{ contact.name }}" placeholder="Contact name" aria-label="Emergency contact name">
+          <input type="tel" name="emergency_contact_phone" value="{{ contact.phone }}" placeholder="Phone number" aria-label="Emergency contact phone">
+          {% if not loop.first %}<button type="button" class="button subtle row-remove" aria-label="Remove this contact">✕</button>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="button subtle row-add">＋ Add another emergency contact</button>
+  </div>
+{% endmacro %}
+
   <section class="hero">
     <div>
       <p class="eyebrow">Setup</p>
@@ -33,14 +64,8 @@
             Contact name
             <input type="text" name="contact_name" required>
           </label>
-          <label>
-            Notification email
-            <input type="email" name="email" placeholder="ops@client.co.uk" required>
-          </label>
-          <label>
-            Emergency phone
-            <input type="text" name="emergency_phone" placeholder="+44 7...">
-          </label>
+          {{ email_list('email', [], required=True) }}
+          {{ contact_list([]) }}
         </div>
         <label>
           Site name
@@ -50,6 +75,11 @@
           Address
           <input type="text" name="address" required>
         </label>
+        <label>
+          Postcode
+          <input type="text" name="postcode" maxlength="9" placeholder="NR15 1BE" autocomplete="postal-code">
+        </label>
+        {{ email_list('site_emails', [], label='Extra notification emails for this site (optional)', placeholder='site.manager@client.co.uk') }}
         <label class="full-width">
           Route notes
           <textarea name="route_notes" rows="3"></textarea>
@@ -124,14 +154,8 @@
                       Contact name
                       <input type="text" name="contact_name" value="{{ row.contact_name }}" required>
                     </label>
-                    <label>
-                      Notification email
-                      <input type="email" name="email" value="{{ row.email }}" placeholder="ops@client.co.uk" required>
-                    </label>
-                    <label>
-                      Emergency phone
-                      <input type="text" name="emergency_phone" value="{{ row.emergency_phone }}" placeholder="+44 7...">
-                    </label>
+                    {{ email_list('email', row.emails_list, required=True) }}
+                    {{ contact_list(row.contacts_list) }}
                     <button class="button primary" type="submit">Save Customer Changes</button>
                   </form>
                 </div>
@@ -150,6 +174,11 @@
                         Address
                         <input type="text" name="address" value="{{ row.address }}" required>
                       </label>
+                      <label>
+                        Postcode
+                        <input type="text" name="postcode" value="{{ row.postcode or '' }}" maxlength="9" placeholder="NR15 1BE" autocomplete="postal-code">
+                      </label>
+                      {{ email_list('site_emails', row.site_emails_list, label='Extra notification emails for this site (optional)', placeholder='site.manager@client.co.uk') }}
                       <label class="full-width">
                         Route notes
                         <textarea name="route_notes" rows="4">{{ row.route_notes }}</textarea>
@@ -270,6 +299,34 @@
     }
   </script>
 
+  <script>
+    // "Add another" for the email and emergency contact lists: copy the last row, clear it, and give it a remove button.
+    document.addEventListener("click", function (event) {
+      const add = event.target.closest(".row-add");
+      const remove = event.target.closest(".row-remove");
+      if (remove) {
+        remove.closest(".email-row, .contact-row").remove();
+        return;
+      }
+      if (!add) {
+        return;
+      }
+      const list = add.closest(".email-list, .contact-list");
+      const rows = list.querySelector(".email-rows, .contact-rows");
+      const row = rows.lastElementChild.cloneNode(true);
+      row.querySelectorAll("input").forEach(function (input) { input.value = ""; input.required = false; });
+      if (!row.querySelector(".row-remove")) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button subtle row-remove";
+        button.textContent = "✕";
+        button.setAttribute("aria-label", "Remove this row");
+        row.append(button);
+      }
+      rows.append(row);
+      row.querySelector("input").focus();
+    });
+  </script>
   <script>
     (function () {
       const choice = document.getElementById("customer-choice");

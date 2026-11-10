@@ -562,6 +562,167 @@ class GrittingModuleTests(unittest.TestCase):
         from datetime import datetime, timedelta
         self.assertEqual(first_night, (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"))  # a blank first night means tomorrow
 
+    # ---- several notification emails, several emergency contacts, a postcode ---------------------------------
+
+    def contact_form(self, **changes):
+        form = {
+            "form_type": "customer_site", "customer_choice": "new", "customer_name": "Echo Ltd", "contact_name": "Ann",
+            "email": ["Ops@Echo.test", "accounts@echo.test", "ops@echo.test"],  # a repeat in a different case is dropped
+            "emergency_contact_name": ["Ann Lee", "Bob Ray"], "emergency_contact_phone": ["07700 900111", "07700 900222"],
+            "site_name": "Yard", "address": "7 Quay St", "postcode": "nr151be", "site_emails": ["Manager@Echo.test"],
+            "pricing_label_1": "Weekday Night", "pricing_amount_1": "100",
+        }
+        form.update(changes)
+        return form
+
+    def test_a_customer_has_several_emails_and_emergency_contacts_and_a_site_postcode(self):
+        added = self.client.post("/gritting/customers", data=self.contact_form(), follow_redirects=True).get_data(as_text=True)
+        self.assertIn("Customer Echo Ltd and site Yard added.", added)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        customer = db.execute("SELECT email, emergency_phone, emergency_contacts FROM customers WHERE name='Echo Ltd'").fetchone()
+        site = db.execute("SELECT postcode, notify_emails FROM sites WHERE name='Yard'").fetchone()
+        db.close()
+        self.assertEqual(customer[0], "ops@echo.test, accounts@echo.test")
+        self.assertEqual(customer[1], "07700 900111")  # the first contact's phone stays in the older single-phone field
+        self.assertEqual(gritting.load_emergency_contacts(customer[2]), [{"name": "Ann Lee", "phone": "07700 900111"}, {"name": "Bob Ray", "phone": "07700 900222"}])
+        self.assertEqual(site, ("NR15 1BE", "manager@echo.test"))  # the postcode is tidied into capitals with its space
+        self.assertEqual(gritting.emergency_text(customer[2]), "Ann Lee 07700 900111 · Bob Ray 07700 900222")
+
+    def test_contact_details_are_checked_before_anything_is_saved(self):
+        cases = [
+            ({"email": ["not-an-email"]}, "Check the email address: not-an-email."),
+            ({"email": ["ok@echo.test", "two words@echo.test"]}, "Check the email address: two words@echo.test."),
+            ({"site_emails": ["broken@"]}, "Check the email address: broken@."),
+            ({"email": [""]}, "Enter at least one notification email for the customer."),
+            ({"postcode": "ZZ"}, "That does not look like a UK postcode."),
+            ({"emergency_contact_name": ["Ann"], "emergency_contact_phone": [""]}, "Add a phone number for the emergency contact Ann."),
+            ({"emergency_contact_name": [""], "emergency_contact_phone": ["abc"]}, "abc does not look like a phone number."),
+        ]
+        for changes, message in cases:
+            with self.subTest(changes=changes):
+                response = self.client.post("/gritting/customers", data=self.contact_form(**changes), follow_redirects=True).get_data(as_text=True)
+                self.assertIn(message, response)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        self.assertEqual((db.execute("SELECT COUNT(*) FROM customers").fetchone()[0], db.execute("SELECT COUNT(*) FROM sites").fetchone()[0]), (0, 0))
+        db.close()
+        # the postcode is optional, and so are the contacts and the site's own emails
+        bare = self.contact_form(postcode="", site_emails=[""], emergency_contact_name=[""], emergency_contact_phone=[""])
+        self.assertIn("Customer Echo Ltd and site Yard added.", self.client.post("/gritting/customers", data=bare, follow_redirects=True).get_data(as_text=True))
+
+    def test_postcodes_are_tidied_and_checked(self):
+        for typed, expected in [("nr151be", "NR15 1BE"), ("NR15  1BE", "NR15 1BE"), (" sw1a 1aa ", "SW1A 1AA"), ("M11AE", "M1 1AE"), ("", ""), (None, "")]:
+            self.assertEqual(gritting.normalize_postcode(typed), expected)
+        for bad in ("12345", "NR15", "HELLO WORLD", "NR15 1B"):
+            self.assertIsNone(gritting.normalize_postcode(bad))
+
+    def test_notifications_go_to_the_customer_emails_and_the_sites_own_emails(self):
+        self.client.post("/gritting/customers", data=self.contact_form(site_emails=["Manager@Echo.test", "ops@echo.test"]))
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        site_id = db.execute("SELECT id FROM sites WHERE name='Yard'").fetchone()[0]
+        db.close()
+        sent = []
+        with patch.object(gritting, "send_email_message", side_effect=lambda recipients, subject, body, attachments=None: sent.append(list(recipients)) or ("sent", "ok")):
+            response = self.bulk_callout([site_id])
+            self.assertEqual(response.status_code, 302)
+            self.client.post("/gritting/batches/1/finalise")
+            self.client.post("/gritting/callouts/1/complete-quick", data={"next": "live_jobs"})
+        expected = ["ops@echo.test", "accounts@echo.test", "manager@echo.test"]  # customer list first, then the site's, no repeats
+        self.assertEqual(sent, [expected, expected])  # the call-out email and the completion email
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        logged = db.execute("SELECT recipient FROM notification_logs ORDER BY id").fetchall()
+        db.close()
+        self.assertEqual([row[0] for row in logged], [", ".join(expected)] * 2)
+        detail = self.client.get("/gritting/callouts/1").get_data(as_text=True)
+        self.assertIn("ops@echo.test, accounts@echo.test, manager@echo.test", detail)
+        self.assertIn("Ann Lee 07700 900111 · Bob Ray 07700 900222", detail)
+        self.assertIn("7 Quay St, NR15 1BE", detail)
+
+    def test_edit_forms_change_emails_contacts_and_postcode(self):
+        self.client.post("/gritting/customers", data=self.contact_form())
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        customer_id = db.execute("SELECT id FROM customers").fetchone()[0]
+        site_id = db.execute("SELECT id FROM sites").fetchone()[0]
+        db.close()
+        page = self.client.get("/gritting/customers").get_data(as_text=True)
+        self.assertIn('value="ops@echo.test"', page)
+        self.assertIn('value="accounts@echo.test"', page)
+        self.assertIn('value="Bob Ray"', page)
+        self.assertIn('value="07700 900222"', page)
+        self.assertIn('value="NR15 1BE"', page)
+        self.assertIn('value="manager@echo.test"', page)
+        self.assertGreaterEqual(page.count("Add another email"), 3)
+        self.assertIn("Add another emergency contact", page)
+        edited = self.client.post("/gritting/customers", data={
+            "form_type": "edit_customer", "customer_id": customer_id, "name": "Echo Ltd", "contact_name": "Ann",
+            "email": ["new@echo.test", "second@echo.test", "third@echo.test"],
+            "emergency_contact_name": ["Cy Day"], "emergency_contact_phone": ["01603 555 000"]}, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("Customer updated.", edited)
+        site = self.client.post("/gritting/customers", data={
+            "form_type": "edit_site", "site_id": site_id, "name": "Yard", "address": "7 Quay St", "postcode": "NR3 1AB", "site_emails": [""],
+            "route_notes": "", "service_day_monday": "on"}, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("Site updated.", site)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        customer = db.execute("SELECT email, emergency_phone, emergency_contacts FROM customers").fetchone()
+        site_row = db.execute("SELECT postcode, notify_emails FROM sites").fetchone()
+        db.close()
+        self.assertEqual(customer[0], "new@echo.test, second@echo.test, third@echo.test")
+        self.assertEqual((customer[1], gritting.load_emergency_contacts(customer[2])), ("01603 555 000", [{"name": "Cy Day", "phone": "01603 555 000"}]))
+        self.assertEqual(site_row, ("NR3 1AB", ""))  # clearing the site's extra emails works
+        for bad, message in [({"email": [""]}, "Enter at least one notification email"), ({"email": ["bad"]}, "Check the email address: bad.")]:
+            data = {"form_type": "edit_customer", "customer_id": customer_id, "name": "Echo Ltd", "contact_name": "Ann", "email": ["x@echo.test"], "emergency_contact_name": [""], "emergency_contact_phone": [""]}
+            data.update(bad)
+            self.assertIn(message, self.client.post("/gritting/customers", data=data, follow_redirects=True).get_data(as_text=True))
+        self.assertIn("NR3 1AB", self.client.get("/gritting/customers").get_data(as_text=True))
+        self.assertIn("does not look like a UK postcode", self.client.post("/gritting/customers", data={
+            "form_type": "edit_site", "site_id": site_id, "name": "Yard", "address": "7 Quay St", "postcode": "nope", "route_notes": ""}, follow_redirects=True).get_data(as_text=True))
+
+    def test_older_customers_with_one_phone_number_still_show_it_as_a_contact(self):
+        self.client.get("/gritting/customers")
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        db.execute("INSERT INTO customers (name, contact_name, contact_method, contact_value, email, emergency_phone) VALUES ('Old Ltd', 'Al', 'Email', '07700 900999', 'al@old.test', '07700 900999')")
+        db.commit()
+        db.close()
+        self.assertEqual(gritting.load_emergency_contacts(None, "07700 900999"), [{"name": "", "phone": "07700 900999"}])
+        self.assertEqual(gritting.load_emergency_contacts("garbage", ""), [])
+        self.assertEqual(gritting.emergency_text(None, "07700 900999"), "07700 900999")
+        page = self.client.get("/gritting/customers").get_data(as_text=True)
+        self.assertIn('value="07700 900999"', page)
+
+    def test_the_final_list_shows_the_postcode_and_every_emergency_contact(self):
+        self.client.post("/gritting/customers", data=self.contact_form())
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        site_id = db.execute("SELECT id FROM sites").fetchone()[0]
+        db.close()
+        self.bulk_callout([site_id])
+        self.client.post("/gritting/batches/1/finalise")
+        sheet = self.client.get("/gritting/batches/1/run-sheet").get_data(as_text=True)
+        self.assertIn("7 Quay St, NR15 1BE", sheet)
+        self.assertIn("Emergency: Ann Lee 07700 900111 · Bob Ray 07700 900222", sheet)
+        self.assertIn("7 Quay St, NR15 1BE", self.client.get("/gritting/live-jobs").get_data(as_text=True))
+
+    def test_the_spreadsheet_import_reads_several_emails_a_contact_name_postcode_and_site_emails(self):
+        gritting.ensure_initialised()
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        db.row_factory = gritting.sqlite3.Row
+        rows = [{"customer_name": "Fox Ltd", "contact_name": "Fay", "email": "Fay@fox.test; ACCOUNTS@fox.test, fay@fox.test", "emergency_contact": "Fay Fox",
+                 "emergency_phone": "07700 900333", "site_name": "Depot", "site_address": "1 Mill Rd", "postcode": "nr3 1ab", "site_emails": "depot@fox.test",
+                 "service_days": "Monday, Tuesday"}]
+        summary = gritting.import_customer_rows(db, rows)
+        self.assertEqual((summary["customers_added"], summary["sites_added"]), (1, 1))
+        customer = db.execute("SELECT email, emergency_contacts FROM customers WHERE name='Fox Ltd'").fetchone()
+        site = db.execute("SELECT postcode, notify_emails FROM sites WHERE name='Depot'").fetchone()
+        self.assertEqual(customer["email"], "fay@fox.test, accounts@fox.test")
+        self.assertEqual(gritting.load_emergency_contacts(customer["emergency_contacts"]), [{"name": "Fay Fox", "phone": "07700 900333"}])
+        self.assertEqual((site["postcode"], site["notify_emails"]), ("NR3 1AB", "depot@fox.test"))
+        # importing again without those columns keeps what is already saved
+        again = [{"customer_name": "Fox Ltd", "contact_name": "Fay", "email": "fay@fox.test", "site_name": "Depot", "site_address": "1 Mill Rd"}]
+        gritting.import_customer_rows(db, again)
+        site = db.execute("SELECT postcode, notify_emails FROM sites WHERE name='Depot'").fetchone()
+        customer = db.execute("SELECT emergency_contacts FROM customers WHERE name='Fox Ltd'").fetchone()
+        db.close()
+        self.assertEqual((site["postcode"], site["notify_emails"]), ("NR3 1AB", "depot@fox.test"))
+        self.assertEqual(len(gritting.load_emergency_contacts(customer["emergency_contacts"])), 1)
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):

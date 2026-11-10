@@ -4,6 +4,7 @@ import csv
 import html
 import json
 import os
+import re
 import sqlite3
 import smtplib
 import threading
@@ -289,11 +290,101 @@ def normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
+EMAIL_PATTERN = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+POSTCODE_PATTERN = re.compile(r"^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$")
+# Notification addresses for a job: the customer's own list plus any extra ones set on the site, one list for sending.
+NOTIFY_EMAILS_SQL = (
+    "TRIM(COALESCE(customers.email, '') || CASE WHEN COALESCE(sites.notify_emails, '') <> '' "
+    "THEN ', ' || sites.notify_emails ELSE '' END, ', ') AS email"
+)
+
+
+def split_emails(raw_value: str | None) -> list[str]:
+    """Addresses from text separated by commas, semicolons or new lines, lower case and without repeats."""
+    found: list[str] = []
+    for token in (raw_value or "").replace(";", "\n").replace(",", "\n").splitlines():
+        email = normalize_email(token)
+        if email and email not in found:
+            found.append(email)
+    return found
+
+
+def emails_from_form(form: Any, key: str) -> tuple[list[str], list[str]]:
+    """The addresses typed into every box named key: (valid ones, ones that do not look like an email address)."""
+    valid: list[str] = []
+    invalid: list[str] = []
+    for value in form.getlist(key):
+        for email in split_emails(value):
+            if EMAIL_PATTERN.match(email):
+                if email not in valid:
+                    valid.append(email)
+            elif email not in invalid:
+                invalid.append(email)
+    return valid, invalid
+
+
+PHONE_PATTERN = re.compile(r"^[0-9 +()./-]{5,30}$")
+
+
+def load_emergency_contacts(raw: str | None, fallback_phone: str | None = "") -> list[dict[str, str]]:
+    """The customer's emergency contacts, each with a name and a phone number. Older records only had a phone."""
+    contacts: list[dict[str, str]] = []
+    try:
+        data = json.loads(raw or "[]")
+    except ValueError:
+        data = []
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and str(item.get("phone", "")).strip():
+                contacts.append({"name": str(item.get("name", "")).strip(), "phone": str(item["phone"]).strip()})
+    if not contacts and (fallback_phone or "").strip():
+        contacts.append({"name": "", "phone": fallback_phone.strip()})
+    return contacts
+
+
+def emergency_contacts_from_form(form: Any) -> tuple[list[dict[str, str]], str]:
+    """Contacts typed into the paired name and phone boxes: (contacts, error message or "")."""
+    names = form.getlist("emergency_contact_name")
+    phones = form.getlist("emergency_contact_phone")
+    contacts: list[dict[str, str]] = []
+    for index in range(max(len(names), len(phones))):
+        name = (names[index] if index < len(names) else "").strip()
+        phone = (phones[index] if index < len(phones) else "").strip()
+        if not name and not phone:
+            continue
+        if not phone:
+            return [], f"Add a phone number for the emergency contact {name}."
+        if not PHONE_PATTERN.match(phone) or not re.search(r"\d{3}", phone):
+            return [], f"{phone} does not look like a phone number."
+        contacts.append({"name": name[:120], "phone": phone})
+    if not contacts and form.get("emergency_phone", "").strip():  # a single phone number sent by an older form
+        contacts.append({"name": "", "phone": form["emergency_phone"].strip()})
+    return contacts, ""
+
+
+def emergency_text(raw: str | None, fallback_phone: str | None = "") -> str:
+    """Emergency contacts in one line: "Pat Shah 07700 900101 · Sam 07700 900102"."""
+    return " · ".join(f"{item['name']} {item['phone']}".strip() for item in load_emergency_contacts(raw, fallback_phone))
+
+
+TEMPLATE_FILTERS["emergency_text"] = emergency_text
+
+
+def normalize_postcode(value: str | None) -> str | None:
+    """A UK postcode in capitals with its space (NR151BE becomes NR15 1BE); "" if blank; None if it is not a postcode."""
+    text = re.sub(r"\s+", "", (value or "").upper())
+    if not text:
+        return ""
+    candidate = f"{text[:-3]} {text[-3:]}"
+    return candidate if POSTCODE_PATTERN.match(candidate) else None
+
+
 def preferred_email(row: dict[str, str]) -> str:
+    """The customer's notification addresses as one list (a sheet cell may hold several separated by commas or semicolons)."""
     if row.get("email", "").strip():
-        return normalize_email(row["email"])
+        return ", ".join(split_emails(row["email"]))
     if "@" in row.get("contact_value", ""):
-        return normalize_email(row["contact_value"])
+        return ", ".join(split_emails(row["contact_value"]))
     return ""
 
 
@@ -1031,6 +1122,9 @@ def init_db() -> None:
 
     ensure_column("customers", "email", "TEXT")
     ensure_column("customers", "emergency_phone", "TEXT")
+    ensure_column("customers", "emergency_contacts", "TEXT")
+    ensure_column("sites", "postcode", "TEXT")
+    ensure_column("sites", "notify_emails", "TEXT")
     ensure_column("customers", "weekend_service_required", "INTEGER NOT NULL DEFAULT 1")
     ensure_column("sites", "service_days", "TEXT")
     ensure_column("sites", "pricing_options", "TEXT")
@@ -1309,6 +1403,9 @@ def map_import_row(row: dict[str, str]) -> dict[str, str]:
         "contact_value": ["contact_value", "contact_details", "phone", "email", "mobile"],
         "email": ["email", "client_email", "notification_email"],
         "emergency_phone": ["emergency_phone", "phone", "mobile", "emergency_contact_number"],
+        "emergency_contact_name": ["emergency_contact_name", "emergency_contact", "emergency_contact_person"],
+        "postcode": ["postcode", "post_code", "site_postcode"],
+        "site_emails": ["site_emails", "site_notification_emails", "site_email"],
         "weekend_service_required": [
             "weekend_service_required",
             "weekend_required",
@@ -1350,13 +1447,21 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
             "SELECT id FROM customers WHERE lower(name) = lower(?)",
             (row["customer_name"],),
         ).fetchone()
+        imported_phone = preferred_emergency_phone(row)
+        imported_contacts_json = (
+            json.dumps([{"name": row["emergency_contact_name"], "phone": imported_phone}]) if imported_phone else ""
+        )
+        imported_postcode = normalize_postcode(row["postcode"])
+        imported_postcode = row["postcode"].strip().upper() if imported_postcode is None else imported_postcode
+        imported_site_emails = ", ".join(split_emails(row["site_emails"]))
 
         if existing_customer:
             customer_id = existing_customer["id"]
             db.execute(
                 """
                 UPDATE customers
-                SET contact_name = ?, contact_method = ?, contact_value = ?, email = ?, emergency_phone = ?
+                SET contact_name = ?, contact_method = ?, contact_value = ?, email = ?, emergency_phone = ?,
+                    emergency_contacts = CASE WHEN ? <> '' THEN ? ELSE emergency_contacts END
                 WHERE id = ?
                 """,
                 (
@@ -1365,6 +1470,8 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
                     preferred_emergency_phone(row),
                     email_value,
                     preferred_emergency_phone(row),
+                    imported_contacts_json,
+                    imported_contacts_json,
                     customer_id,
                 ),
             )
@@ -1378,9 +1485,10 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
                     contact_method,
                     contact_value,
                     email,
-                    emergency_phone
+                    emergency_phone,
+                    emergency_contacts
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["customer_name"],
@@ -1389,6 +1497,7 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
                     preferred_emergency_phone(row),
                     email_value,
                     preferred_emergency_phone(row),
+                    imported_contacts_json or "[]",
                 ),
             )
             customer_id = cursor.lastrowid
@@ -1409,7 +1518,9 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
                 db.execute(
                     """
                     UPDATE sites
-                    SET address = ?, route_notes = ?, service_days = ?, pricing_options = ?
+                    SET address = ?, route_notes = ?, service_days = ?, pricing_options = ?,
+                        postcode = CASE WHEN ? <> '' THEN ? ELSE postcode END,
+                        notify_emails = CASE WHEN ? <> '' THEN ? ELSE notify_emails END
                     WHERE id = ?
                     """,
                     (
@@ -1419,6 +1530,10 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
                         serialize_pricing_options(parsed_site_pricing)
                         if parsed_site_pricing
                         else db.execute("SELECT pricing_options FROM sites WHERE id = ?", (existing_site["id"],)).fetchone()[0],
+                        imported_postcode,
+                        imported_postcode,
+                        imported_site_emails,
+                        imported_site_emails,
                         existing_site["id"],
                     ),
                 )
@@ -1426,13 +1541,15 @@ def import_customer_rows(db: sqlite3.Connection, rows: list[dict[str, str]]) -> 
             else:
                 db.execute(
                     """
-                    INSERT INTO sites (customer_id, name, address, route_notes, service_days, pricing_options)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO sites (customer_id, name, address, postcode, notify_emails, route_notes, service_days, pricing_options)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         customer_id,
                         row["site_name"],
                         row["site_address"] or "Address not supplied",
+                        imported_postcode,
+                        imported_site_emails,
                         row["route_notes"],
                         serialize_service_days(imported_service_days(row, source_row)),
                         serialize_pricing_options(parsed_site_pricing),
@@ -1477,12 +1594,13 @@ def fetch_sites() -> list[sqlite3.Row]:
             customers.contact_name,
             customers.contact_method,
             customers.contact_value,
-            customers.email,
-            customers.emergency_phone
+            NOTIFY_EMAILS_SQL,
+            customers.emergency_phone,
+            customers.emergency_contacts
         FROM sites
         JOIN customers ON customers.id = sites.customer_id
         ORDER BY customers.name COLLATE NOCASE, sites.name COLLATE NOCASE
-        """
+        """.replace("NOTIFY_EMAILS_SQL", NOTIFY_EMAILS_SQL)
     ).fetchall()
 
 
@@ -1495,9 +1613,12 @@ def fetch_customer_directory_rows() -> list[sqlite3.Row]:
             customers.contact_name,
             customers.email,
             customers.emergency_phone,
+            customers.emergency_contacts,
             sites.id AS site_id,
             sites.name AS site_name,
             sites.address,
+            sites.postcode,
+            sites.notify_emails AS site_notify_emails,
             sites.route_notes,
             sites.service_days,
             sites.pricing_options
@@ -1520,6 +1641,9 @@ def fetch_customer_directory_rows() -> list[sqlite3.Row]:
                     "amount": option.get("amount", ""),
                 }
             )
+        row_data["contacts_list"] = load_emergency_contacts(row_data.get("emergency_contacts"), row_data.get("emergency_phone"))
+        row_data["emails_list"] = split_emails(row_data.get("email"))
+        row_data["site_emails_list"] = split_emails(row_data.get("site_notify_emails"))
         row_data["service_days_list"] = load_service_days(row_data.get("service_days"))
         row_data["pricing_options_list"] = pricing_options_list
         row_data["pricing_fields"] = pricing_fields
@@ -1535,11 +1659,11 @@ def fetch_site_notification_row(site_id: int) -> sqlite3.Row | None:
             sites.name AS site_name,
             customers.name AS customer_name,
             customers.contact_name,
-            customers.email
+            NOTIFY_EMAILS_SQL
         FROM sites
         JOIN customers ON customers.id = sites.customer_id
         WHERE sites.id = ?
-        """,
+        """.replace("NOTIFY_EMAILS_SQL", NOTIFY_EMAILS_SQL),
         (site_id,),
     ).fetchone()
 
@@ -1578,12 +1702,13 @@ def fetch_bulk_dispatch_candidates(called_out_at: str) -> tuple[list[sqlite3.Row
             customers.contact_name,
             customers.contact_value,
             customers.contact_method,
-            customers.email,
-            customers.emergency_phone
+            NOTIFY_EMAILS_SQL,
+            customers.emergency_phone,
+            customers.emergency_contacts
         FROM sites
         JOIN customers ON customers.id = sites.customer_id
         ORDER BY customers.name COLLATE NOCASE, sites.name COLLATE NOCASE
-        """
+        """.replace("NOTIFY_EMAILS_SQL", NOTIFY_EMAILS_SQL)
     ).fetchall()
 
     eligible: list[sqlite3.Row] = []
@@ -1685,10 +1810,10 @@ def send_email_message(
 
 
 def send_email_notification(recipient: str | None, subject: str, body: str) -> tuple[str, str]:
-    normalized_recipient = normalize_email(recipient or "")
-    if not normalized_recipient:
+    recipients = split_emails(recipient)
+    if not recipients:
         return "skipped_no_email", "No customer email address is recorded."
-    return send_email_message([normalized_recipient], subject, body)
+    return send_email_message(recipients, subject, body)
 
 
 def log_notification(
@@ -1700,6 +1825,8 @@ def log_notification(
     message: str,
 ) -> tuple[str, str]:
     logged_message = message
+    if channel.lower() == "email":
+        recipient = ", ".join(split_emails(recipient)) or recipient
     delivery_status = "logged"
     delivery_details = ""
     if channel.lower() == "email":
@@ -2074,6 +2201,7 @@ def fetch_call_out(call_out_id: int) -> sqlite3.Row | None:
             dispatch_batches.email_subject AS batch_email_subject,
             sites.name AS site_name,
             sites.address,
+            sites.postcode,
             sites.route_notes,
             sites.service_days,
             sites.pricing_options,
@@ -2081,14 +2209,15 @@ def fetch_call_out(call_out_id: int) -> sqlite3.Row | None:
             customers.contact_name,
             customers.contact_method,
             customers.contact_value,
-            customers.email,
-            customers.emergency_phone
+            NOTIFY_EMAILS_SQL,
+            customers.emergency_phone,
+            customers.emergency_contacts
         FROM call_outs
         LEFT JOIN dispatch_batches ON dispatch_batches.id = call_outs.dispatch_batch_id
         JOIN sites ON sites.id = call_outs.site_id
         JOIN customers ON customers.id = sites.customer_id
         WHERE call_outs.id = ?
-        """,
+        """.replace("NOTIFY_EMAILS_SQL", NOTIFY_EMAILS_SQL),
         (call_out_id,),
     ).fetchone()
 
@@ -2480,9 +2609,11 @@ def fetch_night_lists() -> list[dict[str, Any]]:
             call_outs.cancelled_at,
             sites.name AS site_name,
             sites.address,
+            sites.postcode,
             sites.route_notes,
             customers.name AS customer_name,
-            customers.emergency_phone
+            customers.emergency_phone,
+            customers.emergency_contacts
         FROM call_outs
         JOIN sites ON sites.id = call_outs.site_id
         JOIN customers ON customers.id = sites.customer_id
@@ -2573,8 +2704,8 @@ def run_sheet(batch_id: int) -> str:
     rows = db.execute(
         """
         SELECT call_outs.id, call_outs.status, call_outs.pricing_label, call_outs.extras_json, call_outs.planned_attendance,
-               sites.name AS site_name, sites.address, sites.route_notes,
-               customers.name AS customer_name, customers.contact_name, customers.emergency_phone
+               sites.name AS site_name, sites.address, sites.postcode, sites.route_notes,
+               customers.name AS customer_name, customers.contact_name, customers.emergency_phone, customers.emergency_contacts
         FROM call_outs
         JOIN sites ON sites.id = call_outs.site_id
         JOIN customers ON customers.id = sites.customer_id
@@ -2669,6 +2800,31 @@ def fetch_extras_by_site() -> dict[int, list[dict[str, Any]]]:
     return grouped
 
 
+def read_contact_fields(*, need_customer: bool, need_site: bool = True) -> tuple[dict[str, Any] | None, str]:
+    """Emails, emergency contacts and postcode from the posted form: (values, error). An error means nothing is saved."""
+    form = request.form
+    customer_emails, bad_customer = emails_from_form(form, "email")
+    site_emails, bad_site = emails_from_form(form, "site_emails")
+    bad = bad_customer + bad_site
+    if bad:
+        return None, "Check the email address: " + ", ".join(bad) + "."
+    if need_customer and not customer_emails:
+        return None, "Enter at least one notification email for the customer."
+    contacts, contact_error = emergency_contacts_from_form(form)
+    if contact_error:
+        return None, contact_error
+    postcode = normalize_postcode(form.get("postcode", "")) if need_site else ""
+    if postcode is None:
+        return None, "That does not look like a UK postcode. Use the form NR15 1BE."
+    return {
+        "emails": ", ".join(customer_emails),
+        "site_emails": ", ".join(site_emails),
+        "contacts_json": json.dumps(contacts),
+        "first_phone": contacts[0]["phone"] if contacts else "",
+        "postcode": postcode,
+    }, ""
+
+
 def add_customer_and_site() -> Any:
     """One form: a new customer with their first site, or another site for a customer already on the list."""
     db = get_db()
@@ -2683,10 +2839,13 @@ def add_customer_and_site() -> Any:
         if not name or not contact:
             flash("Enter the customer name and contact name.")
             return redirect(url_for("gritting.customers"))
-        phone = form.get("emergency_phone", "").strip()
+        values, error = read_contact_fields(need_customer=True)
+        if values is None:
+            flash(error)
+            return redirect(url_for("gritting.customers"))
         cursor = db.execute(
-            "INSERT INTO customers (name, contact_name, contact_method, contact_value, email, emergency_phone) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, contact, "Email", phone, normalize_email(form.get("email", "")), phone),
+            "INSERT INTO customers (name, contact_name, contact_method, contact_value, email, emergency_phone, emergency_contacts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, contact, "Email", values["first_phone"], values["emails"], values["first_phone"], values["contacts_json"]),
         )
         customer_id = int(cursor.lastrowid)
         customer_label = name
@@ -2696,13 +2855,19 @@ def add_customer_and_site() -> Any:
             flash("That customer could not be found.")
             return redirect(url_for("gritting.customers"))
         customer_id, customer_label = int(row["id"]), row["name"]
+        values, error = read_contact_fields(need_customer=False)  # only the site's own extra emails and postcode apply
+        if values is None:
+            flash(error)
+            return redirect(url_for("gritting.customers"))
     selected_days = [day for day in DAY_KEYS if form.get(f"service_day_{day}") == "on"]
     db.execute(
-        "INSERT INTO sites (customer_id, name, address, route_notes, service_days, pricing_options) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sites (customer_id, name, address, postcode, notify_emails, route_notes, service_days, pricing_options) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             customer_id,
             site_name,
             address,
+            values["postcode"],
+            values["site_emails"],
             form.get("route_notes", "").strip(),
             serialize_service_days(selected_days or DAY_KEYS),
             serialize_pricing_options(pricing_options_from_form(form)),
@@ -2740,6 +2905,10 @@ def customers() -> str:
             flash("Site added.")
         elif form_type == "edit_customer":
             customer_id = int(request.form["customer_id"])
+            values, error = read_contact_fields(need_customer=True, need_site=False)
+            if values is None:
+                flash(error)
+                return redirect(url_for("gritting.customers") + f"#customer-{customer_id}")
             db.execute(
                 """
                 UPDATE customers
@@ -2749,15 +2918,17 @@ def customers() -> str:
                     contact_method = 'Email',
                     contact_value = ?,
                     email = ?,
-                    emergency_phone = ?
+                    emergency_phone = ?,
+                    emergency_contacts = ?
                 WHERE id = ?
                 """,
                 (
                     request.form["name"].strip(),
                     request.form["contact_name"].strip(),
-                    request.form.get("emergency_phone", "").strip(),
-                    normalize_email(request.form.get("email", "")),
-                    request.form.get("emergency_phone", "").strip(),
+                    values["first_phone"],
+                    values["emails"],
+                    values["first_phone"],
+                    values["contacts_json"],
                     customer_id,
                 ),
             )
@@ -2766,6 +2937,10 @@ def customers() -> str:
             return redirect(url_for("gritting.customers") + f"#customer-{customer_id}")
         elif form_type == "edit_site":
             site_id = int(request.form["site_id"])
+            values, error = read_contact_fields(need_customer=False)
+            if values is None:
+                flash(error)
+                return redirect(url_for("gritting.customers") + f"#customer-site-{site_id}")
             selected_days = [day for day in DAY_KEYS if request.form.get(f"service_day_{day}") == "on"]
             db.execute(
                 """
@@ -2773,6 +2948,8 @@ def customers() -> str:
                 SET
                     name = ?,
                     address = ?,
+                    postcode = ?,
+                    notify_emails = ?,
                     route_notes = ?,
                     service_days = ?,
                     pricing_options = ?
@@ -2781,6 +2958,8 @@ def customers() -> str:
                 (
                     request.form["name"].strip(),
                     request.form["address"].strip(),
+                    values["postcode"],
+                    values["site_emails"],
                     request.form["route_notes"].strip(),
                     serialize_service_days(selected_days or DAY_KEYS),
                     serialize_pricing_options(pricing_options_from_form(request.form)),
@@ -2791,6 +2970,8 @@ def customers() -> str:
             flash("Site updated.")
             return redirect(url_for("gritting.customers") + f"#customer-site-{site_id}")
         else:
+            old_contacts = emergency_contacts_from_form(request.form)[0]
+            old_phone = old_contacts[0]["phone"] if old_contacts else ""
             db.execute(
                 """
                 INSERT INTO customers (
@@ -2799,17 +2980,19 @@ def customers() -> str:
                     contact_method,
                     contact_value,
                     email,
-                    emergency_phone
+                    emergency_phone,
+                    emergency_contacts
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request.form["name"].strip(),
                     request.form["contact_name"].strip(),
                     "Email",
-                    request.form.get("emergency_phone", "").strip(),
-                    normalize_email(request.form.get("email", "")),
-                    request.form.get("emergency_phone", "").strip(),
+                    old_phone,
+                    ", ".join(emails_from_form(request.form, "email")[0]),
+                    old_phone,
+                    json.dumps(old_contacts),
                 ),
             )
             db.commit()

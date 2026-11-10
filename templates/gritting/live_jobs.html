@@ -60,7 +60,7 @@
                 <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
                 <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
               </div>
-              <p class="job-meta">{{ row.address }}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
+              <p class="job-meta">{{ row.address }}{% if row.postcode %}, {{ row.postcode }}{% endif %}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
               {% if row.extras_json|extras_summary %}<p class="job-meta rf-rain-line">Includes extras: {{ row.extras_json|extras_summary }}</p>{% endif %}
               <div class="job-actions">
                 {% if not group.finalised_at %}

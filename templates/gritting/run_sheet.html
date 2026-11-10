@@ -24,10 +24,10 @@
             <span class="run-box" aria-hidden="true"></span>
             <div>
               <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
-              <p>{{ row.address }}</p>
+              <p>{{ row.address }}{% if row.postcode %}, {{ row.postcode }}{% endif %}</p>
               {% if row.route_notes %}<p>{{ row.route_notes }}</p>{% endif %}
               {% if row.extras_json|extras_summary %}<p><strong>Includes:</strong> {{ row.extras_json|extras_summary }}</p>{% endif %}
-              <p class="job-meta">{% if row.pricing_label %}{{ row.pricing_label }} · {% endif %}{{ row.contact_name }}{% if row.emergency_phone %} · {{ row.emergency_phone }}{% endif %}</p>
+              <p class="job-meta">{% if row.pricing_label %}{{ row.pricing_label }} · {% endif %}{{ row.contact_name }}{% if row.emergency_contacts|emergency_text(row.emergency_phone) %} · Emergency: {{ row.emergency_contacts|emergency_text(row.emergency_phone) }}{% endif %}</p>
             </div>
           </li>
         {% endfor %}
