@@ -162,8 +162,9 @@
           } else if (night.reason) {
             text += " · " + night.reason;
           }
-          if (night.other_min_surface !== null && night.other_min_surface !== undefined) {
-            text += " · " + night.other_model + " low " + degrees(night.other_min_surface) + (night.models_disagree ? " (models disagree)" : "");
+          const lows = Object.entries(night.model_lows || {});
+          if (lows.length > 1) {
+            text += " · " + lows.map(function (item) { return item[0] + " " + degrees(item[1]); }).join(", ") + (night.models_disagree ? " (models disagree)" : "");
           }
           if (night.outlook) {
             text += " · early outlook, can change";

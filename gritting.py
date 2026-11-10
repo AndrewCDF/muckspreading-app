@@ -2394,7 +2394,7 @@ def forecast_request_url() -> str:
     query = (
         f"latitude={FORECAST_LATITUDE}&longitude={FORECAST_LONGITUDE}"
         "&hourly=soil_temperature_0cm,temperature_2m,dew_point_2m,precipitation,snowfall,cloud_cover,wind_speed_10m"
-        "&models=ukmo_seamless,ecmwf_ifs025&past_days=1&forecast_days=8&timezone=Europe%2FLondon&wind_speed_unit=mph"
+        "&models=ukmo_seamless,ecmwf_ifs025,icon_seamless&past_days=1&forecast_days=8&timezone=Europe%2FLondon&wind_speed_unit=mph"
     )
     api_key = os.environ.get("OPEN_METEO_API_KEY", "").strip()
     if api_key:  # a paid Open-Meteo plan, for commercial use
@@ -2520,56 +2520,76 @@ def next_rain_spell(upcoming: list[dict[str, Any]]) -> dict[str, Any] | None:
 RISK_HEADLINES = {"grit": "GRITTING REQUIRED", "watch": "Keep an eye on it", "ok": "NO Gritting"}
 
 
-PRIMARY_MODEL, SECOND_MODEL = "ukmo_seamless", "ecmwf_ifs025"
-SECOND_MODEL_NAME = "ECMWF"
+# Three forecast models, each with its own idea of the weather. The page uses the middle value, so one model that is
+# far colder or warmer than the others (common five or six days out) cannot swing the answer on its own.
+MODELS = {"ukmo_seamless": "Met Office", "ecmwf_ifs025": "ECMWF", "icon_seamless": "ICON"}
 OUTLOOK_AFTER_DAYS = 3  # nights further ahead than this are marked as an early outlook
 
 
-def split_models(raw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """A response asking for two models names every series after its model; return one plain response per model.
+def split_models(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """A response for several models names every series after its model; return one plain response per model.
 
-    A response without model names (older cached data, or a single model) is the first model on its own."""
+    A response without model names (older cached data, or the weather page's own forecast) is one model on its own."""
     hourly = raw.get("hourly") or {}
-    if f"temperature_2m_{PRIMARY_MODEL}" not in hourly:
-        return raw, None
-
-    def one(model: str) -> dict[str, Any]:
+    if not any(key.endswith(f"_{model}") for key in hourly for model in MODELS):
+        return {"ukmo_seamless": raw}
+    found: dict[str, dict[str, Any]] = {}
+    for model in MODELS:
         suffix = f"_{model}"
         data: dict[str, Any] = {"time": hourly.get("time") or []}
         for key, values in hourly.items():
             if key.endswith(suffix):
                 data[key[: -len(suffix)]] = values
-        return {"hourly": data}
+        if data.get("soil_temperature_0cm") and data.get("temperature_2m"):
+            found[model] = {"hourly": data}
+    return found
 
-    second = one(SECOND_MODEL)
-    return one(PRIMARY_MODEL), second if second["hourly"].get("temperature_2m") else None
+
+def _middle(values: list[float]) -> float:
+    ordered = sorted(values)
+    count = len(ordered)
+    return ordered[count // 2] if count % 2 else (ordered[count // 2 - 1] + ordered[count // 2]) / 2
 
 
-def combine_models(rows: list[dict[str, Any]], other_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Grit only when both models say so. If one says grit and the other says it is mild, show "keep an eye on it"."""
-    other_by_time = {row["time"]: row for row in other_rows}
+def consensus_rows(per_model: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """One row per hour using the middle value of the models that have that hour; keeps each model's own reading."""
+    by_time: dict[datetime, dict[str, dict[str, Any]]] = {}
+    for model, rows in per_model.items():
+        for row in rows:
+            by_time.setdefault(row["time"], {})[model] = row
     merged = []
-    for row in rows:
-        other = other_by_time.get(row["time"])
-        if other is not None:
-            row["other_surface"] = other["surface"]
-            low, high = sorted((row["level"], other["level"]), key=lambda level: RISK_ORDER[level])
-            if low == "ok" and high == "grit":
-                row["level"], row["reason"], row["disagree"] = "watch", "The two forecast models disagree", True
-            elif low != row["level"]:
-                row["level"], row["reason"] = low, other["reason"]
+    for moment in sorted(by_time):
+        readings = by_time[moment]
+        group = list(readings.values())
+
+        def middle(key: str) -> float | None:
+            values = [float(row[key]) for row in group if row[key] is not None]
+            return _middle(values) if values else None
+
+        rain = [float(row["rain"] or 0) for row in group]
+        snow = [float(row["snow"] or 0) for row in group]
+        row = {"time": moment, "surface": middle("surface"), "air": middle("air"), "dew": middle("dew"),
+               "rain": sum(rain) / len(rain), "snow": sum(snow) / len(snow), "cloud": middle("cloud"), "wind": middle("wind"),
+               "models": {model: item["surface"] for model, item in readings.items()},
+               "model_air": {model: item["air"] for model, item in readings.items()},
+               "model_levels": [item["level"] for item in group]}
+        row["level"], row["reason"] = classify_road_hour(row)
+        row["lone_grit"] = len(group) > 1 and row["level"] != "grit" and "grit" in row["model_levels"]
         merged.append(row)
     return merged
 
 
 def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_count: int = 7) -> dict[str, Any]:
     """The next seven nights (18:00 to 06:00) and the next seven days hour by hour, from a raw Open-Meteo response."""
-    first_raw, second_raw = split_models(raw)
-    rows = forecast_rows(first_raw)
-    if not rows:
+    per_model = {model: forecast_rows(part) for model, part in split_models(raw).items()}
+    per_model = {model: rows for model, rows in per_model.items() if rows}
+    if not per_model:
         raise ValueError("The forecast had no surface temperatures.")
-    if second_raw is not None:
-        rows = combine_models(rows, forecast_rows(second_raw))
+    rows = consensus_rows(per_model)
+    near_cutoff = datetime.combine(now.date() + timedelta(days=OUTLOOK_AFTER_DAYS + 1), datetime.min.time())
+    for row in rows:  # inside the first few days, one model showing a freeze is worth a look even when the others are mild
+        if row["lone_grit"] and row["level"] == "ok" and row["time"] < near_cutoff:
+            row["level"], row["reason"] = "watch", "One forecast model shows a freeze"
     first_start = (now if now.hour >= 6 else now - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
     nights = []
     for offset in range(night_count):
@@ -2578,6 +2598,8 @@ def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_coun
         if not window:
             continue
         coldest = min(window, key=lambda row: row["surface"])
+        model_lows = {MODELS[model]: round(min(row["models"][model] for row in window if model in row["models"]), 1)
+                      for model in MODELS if any(model in row["models"] for row in window)}
         worst = max(window, key=lambda row: (RISK_ORDER[row["level"]], -row["surface"]))
         risky_hours = [row for row in window if row["level"] == "grit"]
         wet_hours = [row for row in window if is_wet_hour(row)]
@@ -2592,9 +2614,8 @@ def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_coun
             "min_surface_time": coldest["time"].strftime("%H:%M"),
             "min_surface_day": coldest["time"].strftime("%a"),  # the low is often after midnight, so say which day
             "min_air": round(min(row["air"] for row in window), 1),
-            "other_min_surface": round(min(row["other_surface"] for row in window), 1) if all("other_surface" in row for row in window) else None,
-            "other_model": SECOND_MODEL_NAME,
-            "models_disagree": any(row.get("disagree") for row in window),
+            "model_lows": model_lows,
+            "models_disagree": any(row["lone_grit"] for row in window) or (len(model_lows) > 1 and max(model_lows.values()) - min(model_lows.values()) > 3),
             "outlook": (start.date() - now.date()).days > OUTLOOK_AFTER_DAYS,
             "grit_from": risky_hours[0]["time"].strftime("%H:%M") if risky_hours else "",
             "grit_until": (risky_hours[-1]["time"] + timedelta(hours=1)).strftime("%H:%M") if risky_hours else "",

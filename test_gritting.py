@@ -756,30 +756,35 @@ class RoadForecastTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertEqual(gritting.classify_road_hour(case)[0], expected)
 
-    def test_two_models_must_agree_before_it_says_grit(self):
+    def test_three_models_use_the_middle_value(self):
         cold, mild = (lambda stamp: -1.0), (lambda stamp: 6.0)
-        def two(first, second):
-            a, b = raw_forecast(first, hours=24 * 8), raw_forecast(second, hours=24 * 8)
-            hourly = {"time": a["hourly"]["time"]}
-            for key, values in a["hourly"].items():
-                if key != "time":
-                    hourly[f"{key}_ukmo_seamless"] = values
-            for key, values in b["hourly"].items():
-                if key != "time":
-                    hourly[f"{key}_ecmwf_ifs025"] = values
+
+        def three(first, second, third):
+            hourly = {}
+            for model, surface in (("ukmo_seamless", first), ("ecmwf_ifs025", second), ("icon_seamless", third)):
+                part = raw_forecast(surface, hours=24 * 8)["hourly"]
+                hourly.setdefault("time", part["time"])
+                for key, values in part.items():
+                    if key != "time":
+                        hourly[f"{key}_{model}"] = values
             return {"hourly": hourly}
         now = datetime(2026, 11, 10, 19, 0)
-        both = gritting.road_forecast_from_open_meteo(two(cold, cold), now)["nights"][0]
-        self.assertEqual((both["level"], both["models_disagree"], both["other_min_surface"]), ("grit", False, -1.0))
-        split = gritting.road_forecast_from_open_meteo(two(cold, mild), now)
-        night = split["nights"][0]
-        self.assertEqual((night["level"], night["models_disagree"], night["min_surface"], night["other_min_surface"]), ("watch", True, -1.0, 6.0))
-        self.assertIn("disagree", night["reason"])
-        self.assertTrue(all(hour["level"] == "watch" for hour in split["hourly"][:12]))
-        self.assertEqual(gritting.road_forecast_from_open_meteo(two(mild, cold), now)["nights"][0]["level"], "watch")
-        nights = gritting.road_forecast_from_open_meteo(two(cold, cold), now)["nights"]
+        def first_night(*models, when=now):
+            return gritting.road_forecast_from_open_meteo(three(*models), when)["nights"][0]
+        self.assertEqual(first_night(cold, cold, cold)["level"], "grit")
+        two_cold = first_night(cold, cold, mild)  # two of three say freezing
+        self.assertEqual((two_cold["level"], two_cold["min_surface"]), ("grit", -1.0))
+        self.assertEqual(two_cold["model_lows"], {"Met Office": -1.0, "ECMWF": -1.0, "ICON": 6.0})
+        one_cold = first_night(cold, mild, mild)  # one model on its own is outvoted for the numbers but still worth a look
+        self.assertEqual((one_cold["level"], one_cold["min_surface"], one_cold["models_disagree"]), ("watch", 6.0, True))
+        self.assertIn("One forecast model", one_cold["reason"])
+        nights = gritting.road_forecast_from_open_meteo(three(cold, mild, mild), now)["nights"]
+        self.assertEqual([n["level"] for n in nights[:6]], ["watch"] * 4 + ["ok", "ok"])  # beyond three days a lone model is ignored
         self.assertEqual([n["outlook"] for n in nights[:6]], [False, False, False, False, True, True])
-        self.assertIn("ecmwf_ifs025", gritting.forecast_request_url())
+        self.assertEqual(len(gritting.split_models(three(cold, mild, mild))), 3)
+        self.assertEqual(len(gritting.split_models(raw_forecast(mild))), 1)
+        for model in ("ukmo_seamless", "ecmwf_ifs025", "icon_seamless"):
+            self.assertIn(model, gritting.forecast_request_url())
 
     def test_nights_and_labels(self):
         freezing = lambda stamp: -1.0 if datetime(2026, 11, 10, 22) <= stamp < datetime(2026, 11, 11, 6) else 6.0
