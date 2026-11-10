@@ -162,6 +162,12 @@
           } else if (night.reason) {
             text += " · " + night.reason;
           }
+          if (night.other_min_surface !== null && night.other_min_surface !== undefined) {
+            text += " · " + night.other_model + " low " + degrees(night.other_min_surface) + (night.models_disagree ? " (models disagree)" : "");
+          }
+          if (night.outlook) {
+            text += " · early outlook, can change";
+          }
           if (night.hours_covered < 12) {
             text += " · the forecast only covers part of this night";
           }
