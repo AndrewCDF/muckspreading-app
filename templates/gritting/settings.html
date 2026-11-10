@@ -1,0 +1,214 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Settings | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Gritting setup</p>
+      <h2>Settings</h2>
+      <p class="muted">Email delivery, email wording and the season.</p>
+    </div>
+  </section>
+
+  <section class="split-layout">
+    <details class="disclosure" open>
+    <summary><span>Outgoing mail server</span></summary>
+    <div class="disclosure-body">
+      <form method="post" class="form-grid">
+        <input type="hidden" name="form_type" value="smtp">
+        <label>
+          SMTP host
+          <input type="text" name="smtp_host" value="{{ smtp_settings.smtp_host }}" placeholder="smtp.office365.com">
+        </label>
+        <label>
+          SMTP port
+          <input type="number" name="smtp_port" value="{{ smtp_settings.smtp_port }}" min="1" step="1">
+        </label>
+        <label>
+          From email
+          <input type="email" name="smtp_from_email" value="{{ smtp_settings.smtp_from_email }}" placeholder="info@norwichgrittingservices.co.uk">
+        </label>
+        <label>
+          Username
+          <input type="text" name="smtp_username" value="{{ smtp_settings.smtp_username }}" placeholder="info@norwichgrittingservices.co.uk">
+        </label>
+        <label class="full-width">
+          Password
+          <input type="password" name="smtp_password" value="{{ smtp_settings.smtp_password }}">
+        </label>
+        <label>
+          Use TLS
+          <select name="smtp_use_tls">
+            <option value="true" {% if smtp_settings.smtp_use_tls == "true" %}selected{% endif %}>Yes</option>
+            <option value="false" {% if smtp_settings.smtp_use_tls == "false" %}selected{% endif %}>No</option>
+          </select>
+        </label>
+        <label>
+          Use SSL
+          <select name="smtp_use_ssl">
+            <option value="false" {% if smtp_settings.smtp_use_ssl == "false" %}selected{% endif %}>No</option>
+            <option value="true" {% if smtp_settings.smtp_use_ssl == "true" %}selected{% endif %}>Yes</option>
+          </select>
+        </label>
+        <label class="full-width">
+          Monthly summary email list
+          <textarea name="monthly_summary_recipients" rows="4" placeholder="accounts@example.com&#10;ops@example.com">{{ report_settings.monthly_summary_recipients }}</textarea>
+        </label>
+        <label class="checkbox-field full-width">
+          <input type="checkbox" name="monthly_summary_auto_send" value="true" {% if report_settings.monthly_summary_auto_send == "true" %}checked{% endif %}>
+          <span>Send the previous month&apos;s summary automatically each month</span>
+        </label>
+        <label>
+          Automatic summary date
+          <select name="monthly_summary_auto_day">
+            {% for day_option in monthly_day_options %}
+              <option value="{{ day_option }}" {% if report_settings.monthly_summary_auto_day == day_option %}selected{% endif %}>{{ day_option }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Automatic summary time
+          <select name="monthly_summary_auto_time">
+            {% for time_option in monthly_time_options %}
+              <option value="{{ time_option }}" {% if report_settings.monthly_summary_auto_time == time_option %}selected{% endif %}>{{ time_option }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="full-width">
+          <p class="muted">Enter one monthly summary recipient per line, or separate addresses with commas.</p>
+          <p class="muted">Automatic monthly sending uses the saved recipient list and sends the previous month&apos;s `.xlsx` summary.</p>
+          <p class="muted">If the chosen date does not exist in a shorter month, the app uses the last day of that month instead.</p>
+          <p class="muted">If SMTP host and from email are blank, the app will log emails only instead of sending them live.</p>
+          <p class="muted">These settings are stored locally in the app database on this machine.</p>
+          <p class="muted">
+            {% if smtp_ready %}
+              SMTP is currently configured for live sending.
+            {% else %}
+              SMTP is not configured yet.
+            {% endif %}
+          </p>
+        </div>
+        <button class="button primary" type="submit">Save Settings</button>
+      </form>
+    </div>
+    </details>
+
+    <div class="stack-list">
+      <details class="disclosure">
+    <summary><span>Email setup</span></summary>
+    <div class="disclosure-body">
+        <form method="post" class="form-grid">
+          <input type="hidden" name="form_type" value="email_setup">
+          <label class="full-width">
+            Call-out subject
+            <input type="text" name="callout_subject" id="callout-subject-template" value="{{ email_settings.callout_subject }}">
+          </label>
+          <label class="full-width">
+            Call-out body
+            <textarea name="callout_body" id="callout-body-template" rows="8">{{ email_settings.callout_body }}</textarea>
+          </label>
+          <div class="full-width sub-panel">
+            <h4>Call-out live preview</h4>
+            <p class="muted">Rendered using sample template data.</p>
+            <p><strong>Subject</strong></p>
+            <div class="template-preview" id="callout-subject-preview"></div>
+            <p><strong>Message</strong></p>
+            <pre class="template-preview template-preview-body" id="callout-body-preview"></pre>
+          </div>
+          <label class="full-width">
+            Completion subject
+            <input type="text" name="completion_subject" id="completion-subject-template" value="{{ email_settings.completion_subject }}">
+          </label>
+          <label class="full-width">
+            Completion body
+            <textarea name="completion_body" id="completion-body-template" rows="9">{{ email_settings.completion_body }}</textarea>
+          </label>
+          <div class="full-width sub-panel">
+            <h4>Completion live preview</h4>
+            <p class="muted">Rendered using sample template data.</p>
+            <p><strong>Subject</strong></p>
+            <div class="template-preview" id="completion-subject-preview"></div>
+            <p><strong>Message</strong></p>
+            <pre class="template-preview template-preview-body" id="completion-body-preview"></pre>
+          </div>
+          <label class="full-width">
+            Signature HTML
+            <textarea name="email_signature_html" rows="10">{{ email_settings.email_signature_html }}</textarea>
+          </label>
+          <label class="full-width">
+            Signature text fallback
+            <textarea name="email_signature_text" rows="5">{{ email_settings.email_signature_text }}</textarea>
+          </label>
+          <div class="full-width">
+            <p class="muted">Template placeholders: `contact_name`, `customer_name`, `site_name`, `called_out_at`, `weather_conditions`, `service_window`, `planned_attendance`, `service_notes`, `company_name`.</p>
+            <p class="muted">Signature placeholders: `company_name`. The bundled logo can be shown in HTML with `&lt;img src="cid:ngs-logo" alt="NGS logo"&gt;`.</p>
+            <p class="muted">The app sends a plain-text version and a branded HTML version, so the signature stays professional across different email clients.</p>
+          </div>
+          <div class="full-width row-actions">
+            <a class="button subtle" href="{{ url_for('gritting.email_signature_preview') }}" target="_blank" rel="noreferrer">Preview Signature</a>
+            <button class="button primary" type="submit">Save Settings</button>
+          </div>
+        </form>
+      </div>
+    </details>
+
+      <details class="disclosure">
+    <summary><span>Start new gritting season</span></summary>
+    <div class="disclosure-body">
+        <p class="muted">Current season: {{ season.label }} ({{ season.date_range_label }})</p>
+        <p class="muted">Starting a new season will save the current season to an `.xlsx` archive first, then switch the dashboard and season reporting over to the next season.</p>
+        <p class="muted">Last archived season: {{ season_state.last_archived_season_label or "Not archived yet" }}</p>
+        <p class="muted">Last archive file: {{ season_state.last_archived_season_path or "No archive file created yet" }}</p>
+        <form method="post" class="inline-form">
+          <input type="hidden" name="form_type" value="season_rollover">
+          <button class="button primary" type="submit">Start New Gritting Season</button>
+        </form>
+      </div>
+    </details>
+    </div>
+  </section>
+
+  <script>
+    function renderTemplatePreview(template, context) {
+      return template.replace(/\{(\w+)\}/g, (match, key) => context[key] ?? "");
+    }
+
+    const previewContext = {
+      company_name: "Norwich Gritting Services",
+      contact_name: "Andrew Farrell",
+      customer_name: "Example Customer",
+      site_name: "Example Site",
+      called_out_at: "29 Mar 2026, 18:00",
+      weather_conditions: "Heavy frost with low road temperatures overnight.",
+      service_window: "Between 18:00 and 00:00",
+      planned_attendance: "Between 18:00 and 00:00",
+      service_notes: "Main entrance first, then rear access road if conditions worsen.",
+    };
+
+    const calloutSubjectTemplate = document.getElementById("callout-subject-template");
+    const calloutBodyTemplate = document.getElementById("callout-body-template");
+    const completionSubjectTemplate = document.getElementById("completion-subject-template");
+    const completionBodyTemplate = document.getElementById("completion-body-template");
+    const calloutSubjectPreview = document.getElementById("callout-subject-preview");
+    const calloutBodyPreview = document.getElementById("callout-body-preview");
+    const completionSubjectPreview = document.getElementById("completion-subject-preview");
+    const completionBodyPreview = document.getElementById("completion-body-preview");
+
+    function syncTemplatePreviews() {
+      calloutSubjectPreview.textContent = renderTemplatePreview(calloutSubjectTemplate.value, previewContext);
+      calloutBodyPreview.textContent = renderTemplatePreview(calloutBodyTemplate.value, previewContext);
+      completionSubjectPreview.textContent = renderTemplatePreview(completionSubjectTemplate.value, previewContext);
+      completionBodyPreview.textContent = renderTemplatePreview(completionBodyTemplate.value, previewContext);
+    }
+
+    [
+      calloutSubjectTemplate,
+      calloutBodyTemplate,
+      completionSubjectTemplate,
+      completionBodyTemplate,
+    ].forEach((field) => field.addEventListener("input", syncTemplatePreviews));
+
+    syncTemplatePreviews();
+  </script>
+{% endblock %}

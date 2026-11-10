@@ -26,6 +26,8 @@ from email.message import EmailMessage
 from xml.sax.saxutils import escape as xml_escape
 from email.utils import parseaddr
 from settings_workbook import Workbook, active as settings_row_active
+import gritting
+import weather
 
 
 app = Flask(__name__)
@@ -34,6 +36,8 @@ app.secret_key = os.environ.get("MUCKSPREADING_SESSION_SECRET") or secrets.token
 SETTINGS_WORKBOOK_PATH = os.path.join(APP_ROOT, "settings.xlsx")
 TIMESHEET_COMPANIES = ["Cherry Dene Farm Ltd.", "A. Farrell Contracting Ltd."]
 DATA_DIR = os.path.join(APP_ROOT, "data")
+gritting.register(app, os.path.join(DATA_DIR, "gritting"))
+weather.register(app)
 JOBS_PATH = os.path.join(DATA_DIR, "jobs.ndjson")
 CUSTOMERS_PATH = os.path.join(DATA_DIR, "customers.json")
 FARMS_PATH = os.path.join(DATA_DIR, "farms.json")
@@ -151,6 +155,8 @@ DASHBOARD_HTML = """
                 <a class="primary straw-button" href="/straw">Hay &amp; Straw</a>
                 <a class="primary" href="{{ url_for('timesheet_home') }}">Timesheet</a>
                 <a class="primary" href="{{ url_for('beet_home') }}">Sugar Beet</a>
+                <a class="primary" href="{{ url_for('gritting.dashboard') }}">Gritting</a>
+                <a class="primary" href="{{ url_for('weather.weather_home') }}">Weather</a>
                 <a class="primary maintenance-button" href="{{ url_for('maintenance_home') }}">Maintenance</a>
       </section>
     </main>
@@ -8497,6 +8503,7 @@ def start_background_workers(debug_mode=False):
         return
     worker = threading.Thread(target=weekly_email_worker, daemon=True)
     worker.start()
+    gritting.start_background_jobs()
 
 
 def run_git_command(args, timeout_seconds=120):
@@ -11994,6 +12001,8 @@ def backup_export_zip():
         candidate_paths = [
             ("app.py", os.path.join(APP_ROOT, "app.py")),
             ("settings_workbook.py", os.path.join(APP_ROOT, "settings_workbook.py")),
+            ("gritting.py", os.path.join(APP_ROOT, "gritting.py")),
+            ("weather.py", os.path.join(APP_ROOT, "weather.py")),
             ("settings.xlsx", SETTINGS_WORKBOOK_PATH),
             ("README.md", os.path.join(APP_ROOT, "README.md")),
             ("email_config.example.json", os.path.join(APP_ROOT, "email_config.example.json")),
@@ -12018,6 +12027,11 @@ def backup_export_zip():
                 file_path = os.path.join(INVOICE_ARCHIVE_DIR, name)
                 if os.path.isfile(file_path):
                     archive.write(file_path, os.path.join("data", "invoices", name))
+        gritting_root = os.path.join(DATA_DIR, "gritting")
+        for folder, _, names in sorted(os.walk(gritting_root)):
+            for name in sorted(names):
+                file_path = os.path.join(folder, name)
+                archive.write(file_path, os.path.join("data", "gritting", os.path.relpath(file_path, gritting_root)))
     output.seek(0)
     filename = "muckspreading_backup_%s.zip" % datetime.now().strftime("%Y%m%d_%H%M%S")
     return Response(

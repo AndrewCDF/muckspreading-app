@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#24442f">
+  <title>Weather - A. Farrell Contracting</title>
+  <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='af_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='combined.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='weather.css') }}">
+</head>
+<body>
+  <div class="shell wx-shell">
+    <header class="topbar"><div class="brand-block"><p class="eyebrow">{{ place }} · next 14 days</p><h1>Weather</h1></div></header>
+
+    <main class="wx-layout" id="wx-main">
+      <section class="panel wx-panel" id="wx-now" aria-labelledby="wx-now-heading">
+        <h2 id="wx-now-heading">Right now</h2>
+        <p class="hint" id="wx-status" role="status">Loading the forecast…</p>
+        <div id="wx-now-body"></div>
+      </section>
+
+      <section class="panel wx-panel" id="wx-forecast-panel" hidden aria-labelledby="wx-forecast-heading">
+        <h2 id="wx-forecast-heading">Daily forecast</h2>
+        <p class="hint">Tap a day to open its 24 hours: charts, road surface temperature and an hour-by-hour table. Each row shows the road surface low for that night and whether gritting is needed.</p>
+        <div class="wx-rows" id="wx-strip"></div>
+      </section>
+
+      <section class="panel wx-panel" id="wx-charts-panel" hidden aria-labelledby="wx-charts-heading">
+        <h2 id="wx-charts-heading">14-day charts</h2>
+        <p class="hint">Tap a chart to open it. Each one runs hour by hour for the next 14 days; touch or hover to read the values for that hour.</p>
+        <div id="wx-charts"></div>
+      </section>
+    </main>
+  </div>
+  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+    <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">←</strong>Back</a>
+    <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">⌂</strong>Home</a>
+    <a class="bottom-nav-btn" href="{{ url_for('gritting.dashboard') }}"><strong aria-hidden="true">❄</strong>Gritting</a>
+  </nav>
+  <script>window.WEATHER_URL = {{ url_for('weather.forecast_json')|tojson }};</script>
+  <script src="{{ url_for('static', filename='weather.js') }}"></script>
+</body>
+</html>

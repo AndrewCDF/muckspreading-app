@@ -1,0 +1,87 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Monthly Summary | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Monthly summary</p>
+      <h2>{{ month_value|month_label }}</h2>
+    </div>
+    <div class="hero-actions">
+      <form method="get" class="inline-form">
+        <input type="month" name="month" value="{{ month_value }}">
+        <button class="button subtle" type="submit">Load Month</button>
+      </form>
+      <div class="monthly-summary-actions">
+        <a class="button primary" href="{{ url_for('gritting.export_monthly_summary', month=month_value) }}">Export CSV</a>
+        <form method="post" action="{{ url_for('gritting.email_monthly_summary') }}" class="inline-form">
+          <input type="hidden" name="month" value="{{ month_value }}">
+          <button class="button primary" type="submit">Email summary</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats-grid">
+    <article class="stat-card">
+      <p>Total jobs</p>
+      <strong>{{ rows|length }}</strong>
+    </article>
+    <article class="stat-card">
+      <p>Completed jobs</p>
+      <strong>{{ completed_jobs }}</strong>
+    </article>
+    <article class="stat-card">
+      <p>Net value</p>
+      <strong>{{ total_revenue|currency_display }}</strong>
+    </article>
+    <article class="stat-card">
+      <p>Total incl. VAT</p>
+      <strong>{{ total_revenue_inc_vat|currency_display }}</strong>
+    </article>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Month-End Register</p>
+        <h3>Recorded jobs</h3>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Customer</th>
+            <th>Site</th>
+            <th>Called Out</th>
+            <th>Status</th>
+            <th>Pricing</th>
+            <th>VAT</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td><a href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">#{{ row.id }}</a></td>
+              <td>{{ row.customer_name }}</td>
+              <td>{{ row.site_name }}</td>
+              <td>{{ row.called_out_at|date_display }}</td>
+              <td><span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span></td>
+              <td>{% if row.pricing_label %}{{ row.pricing_label }} · {{ row.pricing_amount|currency_display }}{% else %}-{% endif %}</td>
+              <td>{{ row.pricing_amount|vat_amount|currency_display if row.pricing_amount is not none else "-" }}</td>
+              <td>{{ row.pricing_amount|gross_amount|currency_display if row.pricing_amount is not none else "-" }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="8">No work logged for this month.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

@@ -1,0 +1,387 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}New Call-Out | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Overnight dispatch</p>
+      <h2>Send a call-out</h2>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h3>All customers</h3>
+      <p class="muted">
+        {{ eligible_sites|length }} {{ 'site' if eligible_sites|length == 1 else 'sites' }} will be emailed for {{ preview_called_out_at|datetime_display }}{% if excluded_sites %}, {{ excluded_sites|length }} skipped by their service days{% endif %}.
+        {% if not smtp_ready %}Email is not set up yet, so messages are only logged.{% endif %}
+      </p>
+    </div>
+
+    <form method="post" action="{{ url_for('gritting.bulk_callouts') }}" class="form-grid" id="bulk-callout-form">
+      <label class="full-width">
+        Weather conditions
+        <input type="text" name="weather_conditions" id="bulk-weather-conditions" placeholder="Heavy frost, low road temperature, sleet risk overnight..." required>
+      </label>
+      <div class="full-width">
+        <span class="field-label">Overnight timing</span>
+        <div class="timing-range-grid">
+          <label>
+            From
+            <select name="planned_attendance_from" id="bulk-planned-attendance-from" required>
+              {% for time_option in time_options %}
+                <option value="{{ time_option }}" {% if time_option == default_planned_attendance_start %}selected{% endif %}>{{ time_option }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            To
+            <select name="planned_attendance_to" id="bulk-planned-attendance-to" required>
+              {% for time_option in time_options %}
+                <option value="{{ time_option }}" {% if time_option == default_planned_attendance_end %}selected{% endif %}>{{ time_option }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+      </div>
+      <label class="full-width">
+        Call-out time
+        <input type="datetime-local" name="called_out_at" id="bulk-called-out-at" value="{{ preview_called_out_at }}" required>
+      </label>
+      <label class="full-width">
+        Extra note for customers (optional)
+        <textarea name="service_notes" id="bulk-service-notes" rows="3" placeholder="Anything extra to include in the email"></textarea>
+      </label>
+
+      <details class="sub-disclosure full-width">
+        <summary>Sites included ({{ eligible_sites|length }})</summary>
+        <div class="disclosure-body">
+          <div class="stack-list compact-stack">
+            {% for site in eligible_sites %}
+              <label class="check-card">
+                <input
+                  type="checkbox"
+                  name="selected_site_ids"
+                  value="{{ site.id }}"
+                  checked
+                  data-customer="{{ site.customer_name }}"
+                  data-contact="{{ site.contact_name }}"
+                  data-email="{{ site.email or '' }}"
+                  data-site="{{ site.site_name }}"
+                >
+                <span>
+                  <strong>{{ site.customer_name }} · {{ site.site_name }}</strong>
+                  <span class="muted">{{ site.email or "No email set" }} · {{ site.service_days|service_days_display }}</span>
+                  {% if site.pricing_options_list %}
+                    <select name="pricing_label_{{ site.id }}">
+                      <option value="">Choose pricing</option>
+                      {% for option in site.pricing_options_list %}
+                        <option value="{{ option.label }}" {% if option.label == site.suggested_pricing_label %}selected{% endif %}>
+                          {{ option.label }} · {{ option.amount|price_plus_vat_display }}
+                        </option>
+                      {% endfor %}
+                    </select>
+                  {% else %}
+                    <span class="muted">No pricing set for this site</span>
+                  {% endif %}
+                </span>
+              </label>
+            {% else %}
+              <p class="muted">No sites are due a call-out on this day. Add sites under Customers.</p>
+            {% endfor %}
+          </div>
+          {% if excluded_sites %}
+            <div class="sub-panel">
+              <h4>Skipped today (service days)</h4>
+              {% for site in excluded_sites[:6] %}
+                <p class="job-meta">{{ site.customer_name }} · {{ site.site_name }} · {{ site.service_days|service_days_display }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </details>
+
+      <details class="sub-disclosure full-width">
+        <summary>Edit the email wording (optional)</summary>
+        <div class="disclosure-body">
+          <label>
+            Subject
+            <input type="text" name="subject" id="bulk-subject" placeholder="Leave blank to use the saved wording">
+            <input type="hidden" name="subject_override_enabled" id="bulk-subject-override-enabled" value="0">
+          </label>
+          <label>
+            Message
+            <textarea name="message" id="bulk-message" rows="6" placeholder="Leave blank to use the saved wording"></textarea>
+            <input type="hidden" name="message_override_enabled" id="bulk-message-override-enabled" value="0">
+          </label>
+        </div>
+      </details>
+
+      <button class="button primary big full-width" type="submit" {% if not eligible_sites %}disabled{% endif %}>Send call-out to {{ eligible_sites|length }} {{ 'site' if eligible_sites|length == 1 else 'sites' }}</button>
+    </form>
+  </section>
+
+  <details class="disclosure" style="margin-top: 14px;">
+    <summary><span>One site only</span></summary>
+    <div class="disclosure-body">
+      <form method="post" class="form-grid" id="callout-form">
+        <label class="full-width">
+          Site
+          <select name="site_id" id="site-select" required>
+            {% for site in sites %}
+              <option
+                value="{{ site.id }}"
+                data-customer="{{ site.customer_name }}"
+                data-contact="{{ site.contact_name }}"
+                data-email="{{ site.email or '' }}"
+                data-site="{{ site.name }}"
+                data-pricing='{{ site.pricing_options_list|tojson }}'
+                data-suggested-pricing='{{ site.suggested_pricing_label }}'
+              >
+                {{ site.customer_name }} · {{ site.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="full-width">
+          Weather conditions
+          <input type="text" name="weather_conditions" id="single-weather-conditions" placeholder="Icy conditions, snow forecast, low road temperature..." required>
+        </label>
+        <div class="full-width">
+          <span class="field-label">Overnight timing</span>
+          <div class="timing-range-grid">
+            <label>
+              From
+              <select name="planned_attendance_from" id="single-planned-attendance-from" required>
+                {% for time_option in time_options %}
+                  <option value="{{ time_option }}" {% if time_option == default_planned_attendance_start %}selected{% endif %}>{{ time_option }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              To
+              <select name="planned_attendance_to" id="single-planned-attendance-to" required>
+                {% for time_option in time_options %}
+                  <option value="{{ time_option }}" {% if time_option == default_planned_attendance_end %}selected{% endif %}>{{ time_option }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+        </div>
+        <label>
+          Call-out time
+          <input type="datetime-local" name="called_out_at" id="single-called-out-at" value="{{ now_value }}" required>
+        </label>
+        <label>
+          Pricing
+          <select name="pricing_label" id="pricing-label">
+            <option value="">Choose pricing</option>
+          </select>
+        </label>
+        <label class="full-width">
+          Send to
+          <input type="text" name="recipient" id="recipient" required>
+        </label>
+        <label class="full-width">
+          Notes (optional)
+          <textarea name="service_notes" id="single-service-notes" rows="3" placeholder="Dispatch notes, access instructions, route priorities..."></textarea>
+        </label>
+        <details class="sub-disclosure full-width">
+          <summary>Edit the email wording (optional)</summary>
+          <div class="disclosure-body">
+            <label>
+              Subject
+              <input type="text" name="subject" id="subject" placeholder="Leave blank to use the saved wording">
+            </label>
+            <label>
+              Message
+              <textarea name="message" id="message" rows="6" placeholder="Leave blank to use the saved wording"></textarea>
+            </label>
+          </div>
+        </details>
+        <button class="button primary big full-width" type="submit">Send to this site</button>
+      </form>
+    </div>
+  </details>
+
+  <script>
+    const siteSelect = document.getElementById("site-select");
+    const recipientInput = document.getElementById("recipient");
+    const pricingSelect = document.getElementById("pricing-label");
+    const subjectInput = document.getElementById("subject");
+    const messageInput = document.getElementById("message");
+    const calledOutAtInput = document.getElementById("single-called-out-at");
+    const plannedAttendanceFromSelect = document.getElementById("single-planned-attendance-from");
+    const plannedAttendanceToSelect = document.getElementById("single-planned-attendance-to");
+    const weatherConditionsInput = document.getElementById("single-weather-conditions");
+    const serviceNotesInput = document.getElementById("single-service-notes");
+    const bulkCalledOutAtInput = document.getElementById("bulk-called-out-at");
+    const bulkPlannedAttendanceFromSelect = document.getElementById("bulk-planned-attendance-from");
+    const bulkPlannedAttendanceToSelect = document.getElementById("bulk-planned-attendance-to");
+    const bulkWeatherConditionsInput = document.getElementById("bulk-weather-conditions");
+    const bulkServiceNotesInput = document.getElementById("bulk-service-notes");
+    const bulkSubjectInput = document.getElementById("bulk-subject");
+    const bulkMessageInput = document.getElementById("bulk-message");
+    const bulkSubjectOverrideEnabledInput = document.getElementById("bulk-subject-override-enabled");
+    const bulkMessageOverrideEnabledInput = document.getElementById("bulk-message-override-enabled");
+    const bulkSiteCheckboxes = Array.from(document.querySelectorAll('input[name="selected_site_ids"]'));
+    const emailTemplates = {{ email_templates|tojson }};
+    let subjectTouched = false;
+    let messageTouched = false;
+    let bulkSubjectTouched = false;
+    let bulkMessageTouched = false;
+
+    function formatDateTime(value) {
+      if (!value) {
+        return "";
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return value;
+      }
+      return parsed.toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+
+    function renderTemplate(template, context) {
+      return template.replace(/\{(\w+)\}/g, (match, key) => context[key] ?? "");
+    }
+
+    function plannedAttendanceWindow(start, end) {
+      const from = start || "";
+      const to = end || "";
+      if (!from && !to) {
+        return "";
+      }
+      if (from === to) {
+        return from;
+      }
+      return `Between ${from} and ${to}`;
+    }
+
+    function templateContext(option, fields) {
+      const windowText = plannedAttendanceWindow(fields.start?.value, fields.end?.value);
+      return {
+        company_name: "Norwich Gritting Services",
+        contact_name: option?.dataset.contact || "",
+        customer_name: option?.dataset.customer || "",
+        site_name: option?.dataset.site || "",
+        weather_conditions: fields.weather?.value || "",
+        service_window: windowText,
+        planned_attendance: windowText,
+        called_out_at: formatDateTime(fields.calledOutAt?.value),
+        service_notes: fields.serviceNotes?.value || "",
+      };
+    }
+
+    function firstSelectedBulkSite() {
+      return bulkSiteCheckboxes.find((checkbox) => checkbox.checked) || bulkSiteCheckboxes[0] || null;
+    }
+
+    function syncBulkCalloutDefaults() {
+      const option = firstSelectedBulkSite();
+      const context = templateContext(option, {
+        calledOutAt: bulkCalledOutAtInput,
+        start: bulkPlannedAttendanceFromSelect,
+        end: bulkPlannedAttendanceToSelect,
+        weather: bulkWeatherConditionsInput,
+        serviceNotes: bulkServiceNotesInput,
+      });
+      if (!bulkSubjectTouched) {
+        bulkSubjectInput.value = renderTemplate(emailTemplates.callout_subject, context);
+      }
+      if (!bulkMessageTouched) {
+        bulkMessageInput.value = renderTemplate(emailTemplates.callout_body, context);
+      }
+      bulkSubjectOverrideEnabledInput.value = bulkSubjectTouched ? "1" : "0";
+      bulkMessageOverrideEnabledInput.value = bulkMessageTouched ? "1" : "0";
+    }
+
+    function bulkOverrideActive(input, touchedFlagSetter, enabledField) {
+      return () => {
+        const hasCustomValue = input.value.trim() !== "";
+        touchedFlagSetter(hasCustomValue);
+        enabledField.value = hasCustomValue ? "1" : "0";
+        if (!hasCustomValue) {
+          syncBulkCalloutDefaults();
+        }
+      };
+    }
+
+    function singleTemplateContext(option) {
+      return templateContext(option, {
+        calledOutAt: calledOutAtInput,
+        start: plannedAttendanceFromSelect,
+        end: plannedAttendanceToSelect,
+        weather: weatherConditionsInput,
+        serviceNotes: serviceNotesInput,
+      });
+    }
+
+    function syncCalloutDefaults() {
+      const option = siteSelect.options[siteSelect.selectedIndex];
+      if (!option) {
+        return;
+      }
+      const email = option.dataset.email;
+      const pricingOptions = JSON.parse(option.dataset.pricing || "[]");
+      const suggestedPricing = option.dataset.suggestedPricing;
+      const context = singleTemplateContext(option);
+      recipientInput.value = email;
+      if (!subjectTouched) {
+        subjectInput.value = renderTemplate(emailTemplates.callout_subject, context);
+      }
+      if (!messageTouched) {
+        messageInput.value = renderTemplate(emailTemplates.callout_body, context);
+      }
+      pricingSelect.innerHTML = '<option value="">Choose pricing</option>';
+      pricingOptions.forEach((pricingOption) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = pricingOption.label;
+        const netAmount = Number(pricingOption.amount);
+        optionElement.textContent = `${pricingOption.label} · £${netAmount.toFixed(2)}`;
+        if (pricingOption.label === suggestedPricing) {
+          optionElement.selected = true;
+        }
+        pricingSelect.appendChild(optionElement);
+      });
+    }
+
+    subjectInput.addEventListener("input", () => {
+      subjectTouched = subjectInput.value.trim() !== "";
+    });
+    messageInput.addEventListener("input", () => {
+      messageTouched = messageInput.value.trim() !== "";
+    });
+    bulkSubjectInput.addEventListener("input", bulkOverrideActive(
+      bulkSubjectInput,
+      (value) => { bulkSubjectTouched = value; },
+      bulkSubjectOverrideEnabledInput,
+    ));
+    bulkMessageInput.addEventListener("input", bulkOverrideActive(
+      bulkMessageInput,
+      (value) => { bulkMessageTouched = value; },
+      bulkMessageOverrideEnabledInput,
+    ));
+    siteSelect.addEventListener("change", syncCalloutDefaults);
+    calledOutAtInput.addEventListener("input", syncCalloutDefaults);
+    plannedAttendanceFromSelect.addEventListener("change", syncCalloutDefaults);
+    plannedAttendanceToSelect.addEventListener("change", syncCalloutDefaults);
+    weatherConditionsInput.addEventListener("input", syncCalloutDefaults);
+    serviceNotesInput.addEventListener("input", syncCalloutDefaults);
+    bulkCalledOutAtInput.addEventListener("input", syncBulkCalloutDefaults);
+    bulkPlannedAttendanceFromSelect.addEventListener("change", syncBulkCalloutDefaults);
+    bulkPlannedAttendanceToSelect.addEventListener("change", syncBulkCalloutDefaults);
+    bulkWeatherConditionsInput.addEventListener("input", syncBulkCalloutDefaults);
+    bulkServiceNotesInput.addEventListener("input", syncBulkCalloutDefaults);
+    bulkSiteCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", syncBulkCalloutDefaults));
+    syncCalloutDefaults();
+    syncBulkCalloutDefaults();
+  </script>
+{% endblock %}

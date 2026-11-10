@@ -1,0 +1,103 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Call-Out #{{ call_out.id }} | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="detail-header">
+    <div>
+      <p class="eyebrow">Call-out #{{ call_out.id }}</p>
+      <h2>{{ call_out.site_name }}</h2>
+      <p class="muted">{{ call_out.customer_name }} · {{ call_out.address }}</p>
+    </div>
+    <span class="status status-{{ call_out.status }}">{{ call_out.status|replace('_', ' ') }}</span>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h3>{% if call_out.status == 'cancelled' %}Cancelled{% elif draft_list %}On the draft list{% elif call_out.status != 'completed' %}Finish this job{% else %}Completed{% endif %}</h3>
+    </div>
+    {% if call_out.status == 'cancelled' %}
+        <p class="muted">The customer did not need us to attend{% if call_out.cancelled_at %} (cancelled {{ call_out.cancelled_at|datetime_display }}){% endif %}. This job is not counted in the totals.</p>
+        <form method="post" action="{{ url_for('gritting.reopen_callout', call_out_id=call_out.id) }}" style="margin-top: 14px;">
+          <button class="button subtle" type="submit">Reopen this job</button>
+        </form>
+      {% elif draft_list %}
+        <p class="muted">This job is on a draft list, so it cannot be completed yet. Finalise the list on the Live jobs page, then complete jobs from it through the night.</p>
+        <p style="margin-top: 12px;"><a class="button subtle" href="{{ url_for('gritting.live_jobs') }}">Go to the list</a></p>
+        <form method="post" action="{{ url_for('gritting.cancel_callout', call_out_id=call_out.id) }}" style="margin-top: 12px;" data-confirm="Cancel this job? The customer does not need us to attend.">
+          <button class="button subtle big" type="submit">Customer doesn't need us – cancel</button>
+        </form>
+      {% elif call_out.status != 'completed' %}
+        <form method="post" action="{{ url_for('gritting.complete_callout', call_out_id=call_out.id) }}" class="form-grid">
+          <label>
+            Completed at
+            <input type="datetime-local" name="completed_at" value="{{ now_value }}" required>
+          </label>
+          <label>
+            Pricing option
+            <select name="pricing_label">
+              <option value="">Choose pricing</option>
+              {% for option in pricing_options %}
+                <option value="{{ option.label }}" {% if option.label == suggested_pricing_label %}selected{% endif %}>
+                  {{ option.label }} · {{ option.amount|price_plus_vat_display }}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="full-width">
+            Job notes
+            <textarea name="service_notes" rows="4">{{ call_out.service_notes or "" }}</textarea>
+          </label>
+          <button class="button primary big full-width" type="submit">Complete job and email confirmation</button>
+        </form>
+        {% if not final_list %}
+          <form method="post" action="{{ url_for('gritting.cancel_callout', call_out_id=call_out.id) }}" style="margin-top: 12px;" data-confirm="Cancel this job? The customer does not need us to attend.">
+            <button class="button subtle big" type="submit">Customer doesn't need us – cancel</button>
+          </form>
+        {% endif %}
+      {% else %}
+        <p class="muted">This job is already completed and the confirmation email has been logged.</p>
+      {% endif %}
+  </section>
+
+  <details class="disclosure" style="margin-top: 14px;" open>
+    <summary><span>Job details</span></summary>
+    <div class="disclosure-body">
+      <dl class="detail-list">
+        <div><dt>Called out</dt><dd>{{ call_out.called_out_at|datetime_display }}</dd></div>
+        <div><dt>Overnight timing</dt><dd>{{ call_out.planned_attendance or "Not set" }}</dd></div>
+        <div><dt>Weather</dt><dd>{{ call_out.weather_conditions }}</dd></div>
+        <div><dt>Route notes</dt><dd>{{ call_out.route_notes or "None" }}</dd></div>
+        <div><dt>Service notes</dt><dd>{{ call_out.service_notes or "None yet" }}</dd></div>
+        <div><dt>Customer contact</dt><dd>{{ call_out.contact_name }}</dd></div>
+        <div><dt>Notification email</dt><dd>{{ call_out.email or "No email on record" }}</dd></div>
+        <div><dt>Emergency phone</dt><dd>{{ call_out.emergency_phone or "No emergency phone on record" }}</dd></div>
+        <div><dt>Service days</dt><dd>{{ call_out.service_days|service_days_display }}</dd></div>
+        <div><dt>Dispatch batch</dt><dd>{{ call_out.dispatch_batch_id if call_out.dispatch_batch_id else "Single call-out" }}</dd></div>
+        <div><dt>Selected pricing</dt><dd>{% if call_out.pricing_label %}{{ call_out.pricing_label }} · {{ call_out.pricing_amount|price_plus_vat_display }}{% else %}Not selected{% endif %}</dd></div>
+        <div><dt>Completed</dt><dd>{{ call_out.completed_at|datetime_display if call_out.completed_at else "Open" }}</dd></div>
+      </dl>
+    </div>
+  </details>
+
+  <details class="disclosure" style="margin-top: 14px;">
+    <summary><span>Emails sent <small>({{ notifications|length }})</small></span></summary>
+    <div class="disclosure-body">
+      <div class="stack-list">
+        {% for message in notifications %}
+          <article class="list-card">
+            <strong>{{ message.channel }} to {{ message.recipient }}</strong>
+            {% if message.subject %}
+              <p>{{ message.subject }}</p>
+            {% endif %}
+            <p>{{ message.sent_at|datetime_display }}</p>
+            <p class="muted">Status: {{ message.delivery_status|replace('_', ' ') }}{% if message.delivery_details %} · {{ message.delivery_details }}{% endif %}</p>
+            <p>{{ message.message }}</p>
+          </article>
+        {% else %}
+          <p class="muted">No notifications logged yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </details>
+{% endblock %}

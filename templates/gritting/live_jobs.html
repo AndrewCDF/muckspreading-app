@@ -1,0 +1,106 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Live Jobs | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Tonight's list</p>
+      <h2>Live jobs{% if live_count %} ({{ live_count }}){% endif %}</h2>
+    </div>
+  </section>
+
+  {% for group in lists %}
+    <section class="panel night-list" id="list-{{ group.batch_id if group.batch_id else 'single' }}">
+      <div class="night-list-head">
+        <div>
+          <p class="eyebrow">{% if group.batch_id %}Call-out list{% else %}Single call-outs{% endif %}</p>
+          <h3>{{ group.called_out_at|datetime_display }}</h3>
+          <p class="job-meta">{% if group.planned_attendance %}Overnight {{ group.planned_attendance }}{% endif %}{% if group.weather %} · {{ group.weather }}{% endif %}</p>
+        </div>
+        {% if group.batch_id %}
+          {% if group.finalised_at %}
+            <span class="status status-completed">Final · {{ group.finalised_at|datetime_display }}</span>
+          {% else %}
+            <span class="status">Draft</span>
+          {% endif %}
+        {% endif %}
+      </div>
+      <p class="night-counts"><strong>{{ group.counts.to_grit }}</strong> to grit · {{ group.counts.cancelled }} not needed · {{ group.counts.done }} done</p>
+      {% if group.batch_id and not group.finalised_at %}
+        <p class="rf-advice">Draft list: you can open a job or mark it not needed. Finalise the list to get the list to grit from, and complete jobs from it through the night.</p>
+      {% endif %}
+
+      <div class="stack-list">
+        {% for row in group.rows %}
+          {% if row.status == 'cancelled' %}
+            <article class="job-card is-cancelled">
+              <div class="job-head">
+                <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+                <span class="status status-cancelled">Not needed</span>
+              </div>
+              <div class="job-actions">
+                <form method="post" action="{{ url_for('gritting.reopen_callout', call_out_id=row.id) }}">
+                  <input type="hidden" name="next" value="live_jobs">
+                  <button class="button subtle" type="submit">Put back on the list</button>
+                </form>
+              </div>
+            </article>
+          {% elif row.status == 'completed' %}
+            <article class="job-card is-done">
+              <div class="job-head">
+                <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+                <span class="status status-completed">Done</span>
+              </div>
+              <p class="job-meta">Completed {{ row.completed_at|datetime_display }}</p>
+            </article>
+          {% else %}
+            <article class="job-card">
+              <div class="job-head">
+                <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+                <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
+              </div>
+              <p class="job-meta">{{ row.address }}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
+              <div class="job-actions">
+                {% if not group.finalised_at %}
+                  <form method="post" action="{{ url_for('gritting.cancel_callout', call_out_id=row.id) }}" data-confirm="Not needed tonight? The customer does not need us to attend.">
+                    <input type="hidden" name="next" value="live_jobs">
+                    <button class="button subtle" type="submit">Not needed</button>
+                  </form>
+                {% endif %}
+                <a class="button subtle" href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">Open</a>
+                {% if group.finalised_at or not group.batch_id %}
+                  <form method="post" action="{{ url_for('gritting.quick_complete_callout', call_out_id=row.id) }}">
+                    <input type="hidden" name="next" value="live_jobs">
+                    <button class="button primary" type="submit">Mark complete</button>
+                  </form>
+                {% endif %}
+              </div>
+            </article>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      {% if group.batch_id %}
+        <div class="night-list-actions">
+          {% if group.finalised_at %}
+            <a class="button primary big" href="{{ url_for('gritting.run_sheet', batch_id=group.batch_id) }}" target="_blank" rel="noopener">Open the final list to print</a>
+            {% if not group.counts.done %}
+              <form method="post" action="{{ url_for('gritting.reopen_batch', batch_id=group.batch_id) }}">
+                <button class="button subtle" type="submit">Reopen the list</button>
+              </form>
+            {% endif %}
+          {% else %}
+            <form method="post" action="{{ url_for('gritting.finalise_batch', batch_id=group.batch_id) }}" data-confirm="Finalise this list? {{ group.counts.to_grit }} to grit, {{ group.counts.cancelled }} not needed.">
+              <button class="button primary big" type="submit" {% if not group.counts.to_grit %}disabled{% endif %}>Finalise the list ({{ group.counts.to_grit }} to grit)</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+  {% else %}
+    <section class="panel">
+      <p class="muted">No live jobs right now.</p>
+    </section>
+  {% endfor %}
+{% endblock %}

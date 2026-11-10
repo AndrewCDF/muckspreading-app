@@ -1,0 +1,25 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Email Signature Preview | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="panel" style="max-width: 860px;">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Preview</p>
+        <h1>Email signature</h1>
+      </div>
+    </div>
+    <div style="padding: 24px; border: 1px solid rgba(17, 39, 93, 0.12); border-radius: 24px; background: #ffffff; color: #11275d;">
+      <div style="font-family: Arial, sans-serif; color: #11275d; font-size: 14px; line-height: 1.6;">
+        <p style="margin: 0 0 14px;">Dear Client,</p>
+        <p style="margin: 0 0 14px;">This is a preview of how your HTML email signature will appear underneath the message body.</p>
+        <div>{{ signature_html|safe }}</div>
+      </div>
+    </div>
+    <div style="margin-top: 20px;">
+      <p class="muted">Plain-text fallback preview:</p>
+      <pre style="margin: 0; padding: 18px; border-radius: 20px; background: #eef4ff; color: #11275d; white-space: pre-wrap;">{{ signature_text }}</pre>
+    </div>
+  </section>
+{% endblock %}

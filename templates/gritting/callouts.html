@@ -1,0 +1,40 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Call-Outs | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Register</p>
+      <h2>Call-outs</h2>
+    </div>
+    <div class="hero-actions">
+      <a class="button primary" href="{{ url_for('gritting.new_callout') }}">Send a call-out</a>
+    </div>
+  </section>
+
+  <div class="stack-list">
+    {% for row in call_outs %}
+      <a class="job-card" href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">
+        <div class="job-head">
+          <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+          <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
+        </div>
+        <p class="job-meta">{{ row.called_out_at|datetime_display }}{% if row.planned_attendance %} · {{ row.planned_attendance }}{% endif %}</p>
+      </a>
+    {% else %}
+      <section class="panel"><p class="muted">No call-outs yet.</p></section>
+    {% endfor %}
+  </div>
+
+  <details class="disclosure" style="margin-top: 18px;">
+    <summary><span>Bulk call-out batches <small>({{ dispatch_batches|length }})</small></span></summary>
+    <div class="disclosure-body">
+      {% for batch in dispatch_batches %}
+        <p class="job-meta"><strong>#{{ batch.id }}</strong> · {{ batch.called_out_at|datetime_display }} · {{ batch.planned_attendance }} · {{ batch.created_call_outs }} sites</p>
+      {% else %}
+        <p class="muted">No bulk call-outs recorded yet.</p>
+      {% endfor %}
+    </div>
+  </details>
+{% endblock %}

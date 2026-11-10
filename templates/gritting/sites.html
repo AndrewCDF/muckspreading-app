@@ -1,0 +1,79 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Sites | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="split-layout">
+    <div class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Setup</p>
+          <h2>Add site</h2>
+        </div>
+      </div>
+      <form method="post" class="form-grid">
+        <label>
+          Customer
+          <select name="customer_id" required>
+            {% for customer in customers %}
+              <option value="{{ customer.id }}">{{ customer.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Site name
+          <input type="text" name="name" required>
+        </label>
+        <label class="full-width">
+          Address
+          <input type="text" name="address" required>
+        </label>
+        <label class="full-width">
+          Route notes
+          <textarea name="route_notes" rows="4"></textarea>
+        </label>
+        <div class="full-width">
+          <span class="field-label">Service days</span>
+          <div class="day-grid">
+            <label class="day-check"><input type="checkbox" name="service_day_monday" checked> Mon</label>
+            <label class="day-check"><input type="checkbox" name="service_day_tuesday" checked> Tue</label>
+            <label class="day-check"><input type="checkbox" name="service_day_wednesday" checked> Wed</label>
+            <label class="day-check"><input type="checkbox" name="service_day_thursday" checked> Thu</label>
+            <label class="day-check"><input type="checkbox" name="service_day_friday" checked> Fri</label>
+            <label class="day-check"><input type="checkbox" name="service_day_saturday" checked> Sat</label>
+            <label class="day-check"><input type="checkbox" name="service_day_sunday" checked> Sun</label>
+          </div>
+        </div>
+        <label class="full-width">
+          Pricing options
+          <textarea name="pricing_options" rows="5" placeholder="Weekday Night | 145&#10;Friday Night | 165&#10;Saturday Night | 185"></textarea>
+        </label>
+        <p class="muted full-width">Enter site pricing as net amounts. The app adds VAT at 20% in displays and reporting.</p>
+        <button class="button primary" type="submit">Save Site</button>
+      </form>
+    </div>
+
+    <div class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Coverage</p>
+          <h2>Registered sites</h2>
+        </div>
+      </div>
+      <div class="stack-list">
+        {% for site in sites %}
+          <article class="list-card">
+            <strong>{{ site.site_name if site.site_name is defined else site.name }}</strong>
+            <p>{{ site.customer_name }}</p>
+            <p>{{ site.address }}</p>
+            <p>{{ site.service_days|service_days_display }}</p>
+            <p>{{ site.pricing_options|pricing_options_display }}</p>
+            <p class="muted">{{ site.route_notes }}</p>
+          </article>
+        {% else %}
+          <p class="muted">No sites yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+{% endblock %}

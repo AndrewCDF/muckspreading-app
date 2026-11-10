@@ -1,0 +1,241 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Customers & Sites | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Setup</p>
+      <h2>Customers &amp; sites</h2>
+    </div>
+  </section>
+
+  <details class="disclosure" id="add-customer-site">
+    <summary><span>＋ Add a customer and site</span></summary>
+    <div class="disclosure-body">
+      <form method="post" class="form-grid" id="customer-site-form">
+        <input type="hidden" name="form_type" value="customer_site">
+        <label class="full-width">
+          Customer
+          <select name="customer_choice" id="customer-choice">
+            <option value="new">New customer</option>
+            {% for customer in customers %}
+              <option value="{{ customer.id }}">Add a site to {{ customer.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="full-width form-grid" id="new-customer-fields">
+          <label>
+            Customer name
+            <input type="text" name="customer_name" required>
+          </label>
+          <label>
+            Contact name
+            <input type="text" name="contact_name" required>
+          </label>
+          <label>
+            Notification email
+            <input type="email" name="email" placeholder="ops@client.co.uk" required>
+          </label>
+          <label>
+            Emergency phone
+            <input type="text" name="emergency_phone" placeholder="+44 7...">
+          </label>
+        </div>
+        <label>
+          Site name
+          <input type="text" name="site_name" required>
+        </label>
+        <label class="full-width">
+          Address
+          <input type="text" name="address" required>
+        </label>
+        <label class="full-width">
+          Route notes
+          <textarea name="route_notes" rows="3"></textarea>
+        </label>
+        <div class="full-width">
+          <span class="field-label">Service days</span>
+          <div class="day-grid">
+            <label class="day-check"><input type="checkbox" name="service_day_monday" checked> Mon</label>
+            <label class="day-check"><input type="checkbox" name="service_day_tuesday" checked> Tue</label>
+            <label class="day-check"><input type="checkbox" name="service_day_wednesday" checked> Wed</label>
+            <label class="day-check"><input type="checkbox" name="service_day_thursday" checked> Thu</label>
+            <label class="day-check"><input type="checkbox" name="service_day_friday" checked> Fri</label>
+            <label class="day-check"><input type="checkbox" name="service_day_saturday" checked> Sat</label>
+            <label class="day-check"><input type="checkbox" name="service_day_sunday" checked> Sun</label>
+          </div>
+        </div>
+        <div class="full-width">
+          <span class="field-label">Pricing options</span>
+          <div class="pricing-grid">
+            <label>
+              Option 1
+              <input type="text" name="pricing_label_1" placeholder="Weekday Night">
+            </label>
+            <label>
+              Figure ex VAT
+              <input type="number" name="pricing_amount_1" min="0" step="0.01" placeholder="145.00">
+            </label>
+            <label>
+              Option 2
+              <input type="text" name="pricing_label_2" placeholder="Friday Night">
+            </label>
+            <label>
+              Figure ex VAT
+              <input type="number" name="pricing_amount_2" min="0" step="0.01" placeholder="165.00">
+            </label>
+            <label>
+              Option 3
+              <input type="text" name="pricing_label_3" placeholder="Saturday Night">
+            </label>
+            <label>
+              Figure ex VAT
+              <input type="number" name="pricing_amount_3" min="0" step="0.01" placeholder="185.00">
+            </label>
+          </div>
+        </div>
+        <p class="muted full-width">Enter up to three site prices as ex-VAT figures. The app adds VAT at 20% in displays and reporting.</p>
+        <button class="button primary" type="submit">Save customer and site</button>
+      </form>
+    </div>
+  </details>
+
+  <h3 style="margin: 22px 4px 12px;">Customer list ({{ directory_rows|length }})</h3>
+  <div class="stack-list">
+    {% for row in directory_rows %}
+            <details class="list-card directory-card" id="customer-{{ row.customer_id }}{% if row.site_id %}-site-{{ row.site_id }}{% endif %}">
+              <summary class="directory-summary">
+                <strong>{{ row.customer_name }}</strong>
+                <span>{{ row.site_name or "No site added yet" }}</span>
+                <span>{{ row.email or "No email set" }}</span>
+              </summary>
+              <div class="directory-body">
+                <div class="sub-panel">
+                  <h4>Edit customer</h4>
+                  <form method="post" class="form-grid">
+                    <input type="hidden" name="form_type" value="edit_customer">
+                    <input type="hidden" name="customer_id" value="{{ row.customer_id }}">
+                    <label>
+                      Customer name
+                      <input type="text" name="name" value="{{ row.customer_name }}" required>
+                    </label>
+                    <label>
+                      Contact name
+                      <input type="text" name="contact_name" value="{{ row.contact_name }}" required>
+                    </label>
+                    <label>
+                      Notification email
+                      <input type="email" name="email" value="{{ row.email }}" placeholder="ops@client.co.uk" required>
+                    </label>
+                    <label>
+                      Emergency phone
+                      <input type="text" name="emergency_phone" value="{{ row.emergency_phone }}" placeholder="+44 7...">
+                    </label>
+                    <button class="button primary" type="submit">Save Customer Changes</button>
+                  </form>
+                </div>
+
+                {% if row.site_id %}
+                  <div class="sub-panel" id="customer-site-{{ row.site_id }}">
+                    <h4>Edit site</h4>
+                    <form method="post" class="form-grid">
+                      <input type="hidden" name="form_type" value="edit_site">
+                      <input type="hidden" name="site_id" value="{{ row.site_id }}">
+                      <label>
+                        Site name
+                        <input type="text" name="name" value="{{ row.site_name }}" required>
+                      </label>
+                      <label class="full-width">
+                        Address
+                        <input type="text" name="address" value="{{ row.address }}" required>
+                      </label>
+                      <label class="full-width">
+                        Route notes
+                        <textarea name="route_notes" rows="4">{{ row.route_notes }}</textarea>
+                      </label>
+                      <div class="full-width">
+                        <span class="field-label">Service days</span>
+                        <div class="day-grid">
+                          <label class="day-check"><input type="checkbox" name="service_day_monday" {% if 'monday' in row.service_days_list %}checked{% endif %}> Mon</label>
+                          <label class="day-check"><input type="checkbox" name="service_day_tuesday" {% if 'tuesday' in row.service_days_list %}checked{% endif %}> Tue</label>
+                          <label class="day-check"><input type="checkbox" name="service_day_wednesday" {% if 'wednesday' in row.service_days_list %}checked{% endif %}> Wed</label>
+                          <label class="day-check"><input type="checkbox" name="service_day_thursday" {% if 'thursday' in row.service_days_list %}checked{% endif %}> Thu</label>
+                          <label class="day-check"><input type="checkbox" name="service_day_friday" {% if 'friday' in row.service_days_list %}checked{% endif %}> Fri</label>
+                          <label class="day-check"><input type="checkbox" name="service_day_saturday" {% if 'saturday' in row.service_days_list %}checked{% endif %}> Sat</label>
+                          <label class="day-check"><input type="checkbox" name="service_day_sunday" {% if 'sunday' in row.service_days_list %}checked{% endif %}> Sun</label>
+                        </div>
+                      </div>
+                      <div class="full-width">
+                        <span class="field-label">Pricing options</span>
+                        <div class="pricing-grid">
+                          {% for pricing_field in row.pricing_fields %}
+                            <label>
+                              Option {{ pricing_field.index }}
+                              <input type="text" name="pricing_label_{{ pricing_field.index }}" value="{{ pricing_field.label }}" placeholder="Weekday Night">
+                            </label>
+                            <label>
+                              Figure ex VAT
+                              <input type="number" name="pricing_amount_{{ pricing_field.index }}" min="0" step="0.01" value="{{ pricing_field.amount }}" placeholder="145.00">
+                            </label>
+                          {% endfor %}
+                        </div>
+                      </div>
+                      <button class="button primary" type="submit">Save Site Changes</button>
+                    </form>
+                  </div>
+                {% else %}
+                  <p><strong>Site</strong>: No site added yet for this customer.</p>
+                {% endif %}
+              </div>
+            </details>
+          {% else %}
+            <p class="muted">No customers yet.</p>
+          {% endfor %}
+  </div>
+
+  <details class="disclosure" style="margin-top: 22px;">
+    <summary><span>Importing from a spreadsheet</span></summary>
+    <div class="disclosure-body">
+      <p class="muted">The app reads <code>data/gritting/data/customer_database.xlsx</code> when it starts, so customers and sites can also be loaded from a sheet.</p>
+      <p class="muted">Columns: <code>customer_name</code>, <code>contact_name</code>, <code>email</code>, <code>emergency_phone</code>, <code>site_name</code>, <code>site_address</code>, <code>route_notes</code>, <code>service_days</code>, <code>pricing_options</code>.</p>
+    </div>
+  </details>
+
+  <script>
+    if (window.location.hash) {
+      const target = document.querySelector(window.location.hash);
+      if (target && target.tagName === "DETAILS") {
+        target.open = true;
+        target.scrollIntoView({ block: "start" });
+      } else if (target) {
+        const parentCard = target.closest("details");
+        if (parentCard) {
+          parentCard.open = true;
+          target.scrollIntoView({ block: "start" });
+        }
+      }
+    }
+  </script>
+
+  <script>
+    (function () {
+      const choice = document.getElementById("customer-choice");
+      const fields = document.getElementById("new-customer-fields");
+      if (!choice || !fields) {
+        return;
+      }
+      const required = ["customer_name", "contact_name", "email"];
+      function sync() {
+        const isNew = choice.value === "new";
+        fields.hidden = !isNew;
+        required.forEach(function (name) {
+          const input = fields.querySelector('[name="' + name + '"]');
+          if (input) { input.required = isNew; }
+        });
+      }
+      choice.addEventListener("change", sync);
+      sync();
+    })();
+  </script>
+{% endblock %}

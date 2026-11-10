@@ -22,6 +22,8 @@ Standalone web app for the office Raspberry Pi.
 - Optional weekly summary email
 - Customer master spreadsheet import for address, email, and pricing
 - Machinery maintenance records with service dates, work completed, parts, costs and next-service dates
+- A **Weather** page (`/weather`) with a detailed 14-day forecast: right now, a night-by-night gritting outlook, hour-by-hour charts (temperature, road surface, rain, chance of rain, wind, pressure, cloud and humidity) and a day-by-day breakdown with an hourly table. Road surface temperature is the model surface temperature, a guide and not a sensor reading. It uses the same Open-Meteo setup and `OPEN_METEO_API_KEY` as the gritting forecast.
+- Norwich Gritting Services (customers, sites, call-outs, live jobs and the monthly summary) at `/gritting`, from the **Gritting** button on the home screen
 
 ## Data files
 
@@ -65,6 +67,23 @@ Email Settings uses `setting` and `value` columns. Boolean values are `1` or `0`
 The Timesheet button opens a staff selector. If a staff member has no PIN, the app asks them to choose one the first time they open their name. They can later use Change PIN inside their timesheet. The app limits entries, exports, print reports and completed-month emails to the unlocked person. The calendar has controls below each month to export a complete Excel workbook, open a printable report that can be saved as PDF, and complete and email the month. Overnight hours are assigned to the calendar date on which they were worked, including shifts crossing month-end.
 
 The Hay & Straw home screen has a **+** button for recording delivered lorry or trailer loads. The weight can be left blank initially, and saved deliveries can be reopened later to add or correct it.
+
+### Gritting
+
+**The night\'s list.** Send a call-out to create the list for the night; it opens on **Live jobs**. While the list is a draft you can only open a job or press **Not needed** on a site whose customer does not need us (it leaves the list and the totals, and can be put back); jobs on a draft list cannot be completed. When it is right, press **Finalise the list**: that is the list to grit from, and **Mark complete** appears on each job to complete them through the night. **Open the final list to print** gives the sheet to take out: sites to grit with address, route notes and contact, then anything already done and anything not needed. A late cancellation still works after finalising and reminds you to print the list again. **Reopen the list** to make changes, until the first job is completed.
+
+The gritting app is part of this app now, under `/gritting`. It keeps its own look and its own customers and sites, separate from the muck customers, and everything it stores is in `data/gritting/`. That folder is laid out like the old standalone app's folder, so the old data can be copied straight in. On the office Pi, with the old app stopped:
+
+```bash
+cd /home/pi/muckspreading-app && mkdir -p data/gritting
+cp /home/pi/Gritting-app/gritting.db data/gritting/
+cp -r /home/pi/Gritting-app/data /home/pi/Gritting-app/exports data/gritting/
+sudo systemctl restart muckspreading-app.service
+```
+
+The road surface forecast on the gritting home page comes from the Met Office UK model through Open-Meteo, for Norwich (change `FORECAST_LATITUDE` and `FORECAST_LONGITUDE` at the top of the forecast section of `gritting.py` to move it). The Weather page has its own location, postcode NR15 1BE at Bergh Apton (`WEATHER_LATITUDE` and `WEATHER_LONGITUDE` in `weather.py`), so the two can differ a little. It is a model figure, not a road sensor reading. The verdicts are: GRITTING REQUIRED at a road surface of 0.5°C or lower (or 2°C or lower with rain or snow, or near freezing on a humid night), "Keep an eye on it" at 2°C or lower, and NO Gritting above that (`WATCH_SURFACE_C` in `gritting.py`). Open-Meteo's free service is for non-commercial use, so for the business buy an Open-Meteo plan and set the key in the service environment as `OPEN_METEO_API_KEY` (add `Environment=OPEN_METEO_API_KEY=...` to `muckspreading-app.service`); the app then uses their commercial endpoint.
+
+The gritting SMTP settings, email templates and the automatic monthly summary schedule are stored in `gritting.db`, so they come across with it. Stop the old gritting app first (it used port 8093 as well), otherwise two copies could send the same monthly summary.
 
 ### Moving data from the old Straw app
 

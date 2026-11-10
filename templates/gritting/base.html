@@ -1,0 +1,87 @@
+{% set page = request.endpoint %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#3f62af">
+    <title>{% block title %}Gritting{% endblock %}</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='gritting/brand/ngs-logo.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='gritting/gritting.css') }}">
+  </head>
+  <body class="gr">
+    <div class="gr-shell">
+      <header class="gr-top">
+        <a class="gr-brand" href="{{ url_for('gritting.dashboard') }}" aria-label="Gritting home">
+          <img src="{{ url_for('static', filename='gritting/brand/ngs-logo.png') }}" alt="Norwich Gritting Services">
+          <span>Gritting</span>
+        </a>
+        <div class="gr-top-links">
+          <a href="/" aria-label="Back to the main app">⌂</a>
+          <a href="{{ url_for('gritting.settings') }}" aria-label="Gritting settings">⚙</a>
+        </div>
+      </header>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for message in messages %}
+              <div class="flash">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <main>
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <nav class="gr-nav" aria-label="Gritting navigation">
+      <a href="{{ url_for('gritting.live_jobs') }}" {% if page == 'gritting.live_jobs' %}aria-current="page"{% endif %}><strong aria-hidden="true">◉</strong>Live</a>
+      <a href="{{ url_for('gritting.new_callout') }}" {% if page == 'gritting.new_callout' %}aria-current="page"{% endif %}><strong aria-hidden="true">＋</strong>New</a>
+      <a href="{{ url_for('gritting.callouts') }}" {% if page in ('gritting.callouts', 'gritting.callout_detail') %}aria-current="page"{% endif %}><strong aria-hidden="true">≡</strong>Call-Outs</a>
+      <a href="{{ url_for('gritting.customers') }}" {% if page == 'gritting.customers' %}aria-current="page"{% endif %}><strong aria-hidden="true">☷</strong>Customers</a>
+      <a href="{{ url_for('gritting.monthly_summary') }}" {% if page == 'gritting.monthly_summary' %}aria-current="page"{% endif %}><strong aria-hidden="true">▤</strong>Summary</a>
+    </nav>
+    <script>
+      // Ask "are you sure?" on the page itself. Browser pop-up boxes are blocked in some phone browsers, which made buttons do nothing.
+      document.addEventListener("submit", function (event) {
+        const form = event.target;
+        const message = form.dataset ? form.dataset.confirm : "";
+        if (!message || form.querySelector(".inline-confirm")) {
+          return;
+        }
+        event.preventDefault();
+        const box = document.createElement("div");
+        box.className = "inline-confirm";
+        box.setAttribute("role", "alertdialog");
+        const text = document.createElement("p");
+        text.textContent = message;
+        const row = document.createElement("div");
+        row.className = "inline-confirm-buttons";
+        const yes = document.createElement("button");
+        yes.type = "button";
+        yes.className = "button primary";
+        yes.textContent = "Yes";
+        const no = document.createElement("button");
+        no.type = "button";
+        no.className = "button subtle";
+        no.textContent = "No, go back";
+        row.append(yes, no);
+        box.append(text, row);
+        form.classList.add("is-confirming");
+        form.append(box);
+        yes.addEventListener("click", function () {
+          delete form.dataset.confirm;
+          form.submit();
+        });
+        no.addEventListener("click", function () {
+          box.remove();
+          form.classList.remove("is-confirming");
+        });
+        yes.focus();
+      });
+    </script>
+  </body>
+</html>

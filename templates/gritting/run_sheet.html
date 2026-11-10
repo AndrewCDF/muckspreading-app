@@ -1,0 +1,56 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Final list | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero run-sheet-head">
+    <div>
+      <p class="eyebrow">{% if batch.finalised_at %}Final list{% else %}Draft list, not finalised yet{% endif %}</p>
+      <h2>{{ batch.called_out_at|datetime_display }}</h2>
+      <p class="muted">{% if batch.planned_attendance %}Overnight {{ batch.planned_attendance }}{% endif %}{% if batch.weather_conditions %} · {{ batch.weather_conditions }}{% endif %}</p>
+    </div>
+    <div class="hero-actions no-print">
+      <button class="button primary" type="button" onclick="window.print()">Print</button>
+      <a class="button subtle" href="{{ url_for('gritting.live_jobs') }}">Back to the list</a>
+    </div>
+  </section>
+
+  <section class="panel run-sheet">
+    <h3>To grit ({{ to_grit|length }})</h3>
+    {% if to_grit %}
+      <ol class="run-list">
+        {% for row in to_grit %}
+          <li>
+            <span class="run-box" aria-hidden="true"></span>
+            <div>
+              <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+              <p>{{ row.address }}</p>
+              {% if row.route_notes %}<p>{{ row.route_notes }}</p>{% endif %}
+              <p class="job-meta">{% if row.pricing_label %}{{ row.pricing_label }} · {% endif %}{{ row.contact_name }}{% if row.emergency_phone %} · {{ row.emergency_phone }}{% endif %}</p>
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="muted">Nothing left to grit on this list.</p>
+    {% endif %}
+  </section>
+
+  {% if done %}
+    <section class="panel run-sheet">
+      <h3>Already done ({{ done|length }})</h3>
+      <ul class="run-plain">
+        {% for row in done %}<li>{{ row.customer_name }} · {{ row.site_name }}</li>{% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if cancelled %}
+    <section class="panel run-sheet">
+      <h3>Not needed ({{ cancelled|length }})</h3>
+      <ul class="run-plain">
+        {% for row in cancelled %}<li>{{ row.customer_name }} · {{ row.site_name }}</li>{% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+{% endblock %}

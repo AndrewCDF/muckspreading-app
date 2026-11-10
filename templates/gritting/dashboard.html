@@ -1,0 +1,282 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Gritting | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">{{ season.status_label }}</p>
+      <h2>{{ season.label }}</h2>
+    </div>
+  </section>
+
+  <section class="hero-actions" style="margin-bottom: 14px;">
+    <a class="button primary big" href="{{ url_for('gritting.new_callout') }}">Send a call-out</a>
+    <a class="button subtle big" href="{{ url_for('gritting.live_jobs') }}">Live jobs{% if stats.live_jobs %} ({{ stats.live_jobs }}){% endif %}</a>
+  </section>
+
+  <section class="panel road-forecast" id="road-forecast" aria-labelledby="rf-heading">
+    <div class="panel-heading">
+      <p class="eyebrow">Road surface forecast · next 7 nights</p>
+      <h3 id="rf-heading">Loading forecast…</h3>
+    </div>
+    <div id="rf-nights" class="stack-list compact-stack"></div>
+    <p class="rf-rain-now job-meta" id="rf-next-rain"></p>
+    <figure class="rf-chart" id="rf-chart" hidden>
+      <figcaption class="job-meta">Next 7 days, hour by hour: road surface <span class="rf-key rf-key-surface"></span> air <span class="rf-key rf-key-air"></span> rain <span class="rf-key rf-key-rain"></span>. Later days are less certain.</figcaption>
+      <div id="rf-svg"></div>
+    </figure>
+    <p class="job-meta" id="rf-updated"></p>
+    <p class="job-meta">A guide from the Met Office UK model for {{ forecast_place }}, not a road sensor reading. Real road temperatures can differ by a few degrees, especially on clear, calm nights and on bridges and exposed routes, so use your own judgement.</p>
+  </section>
+
+  <section class="stats-grid">
+    <article class="stat-card">
+      <p>Live jobs</p>
+      <strong>{{ stats.live_jobs }}</strong>
+    </article>
+    <article class="stat-card">
+      <p>Jobs this season</p>
+      <strong>{{ stats.season_call_outs }}</strong>
+      <small>{{ stats.season_completed_jobs }} completed</small>
+    </article>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h3>Latest jobs</h3>
+    </div>
+    <div class="stack-list">
+      {% for row in season_rows[:12] %}
+        <a class="job-card" href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">
+          <div class="job-head">
+            <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+            <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
+          </div>
+          <p class="job-meta">{{ row.called_out_at|datetime_display }}{% if row.weather_conditions %} · {{ row.weather_conditions }}{% endif %}</p>
+          {% if row.pricing_label %}
+            <p class="job-meta"><span class="job-price">{{ row.pricing_amount|gross_amount|currency_display }}</span> incl. VAT · {{ row.pricing_label }}</p>
+          {% endif %}
+        </a>
+      {% else %}
+        <p class="muted">No jobs recorded for this season yet.</p>
+      {% endfor %}
+    </div>
+    {% if season_rows|length > 12 %}
+      <p style="margin-top: 14px;"><a class="button subtle" href="{{ url_for('gritting.callouts') }}">See all {{ season_rows|length }} jobs</a></p>
+    {% endif %}
+  </section>
+
+  <script>
+    (function () {
+      const heading = document.getElementById("rf-heading");
+      const nights = document.getElementById("rf-nights");
+      const chart = document.getElementById("rf-chart");
+      const chartSvg = document.getElementById("rf-svg");
+      const updated = document.getElementById("rf-updated");
+      const nextRain = document.getElementById("rf-next-rain");
+      const levelText = { grit: "GRITTING REQUIRED", watch: "Keep an eye on it", ok: "NO Gritting" };
+      let forecast = null;
+
+      function degrees(value) {
+        return (Math.round(value * 10) / 10).toFixed(1) + "°C";
+      }
+
+      // The 24 hours of one gritting day, 09:00 to 09:00 the next morning, from the hourly series.
+      function nightHours(night) {
+        const start = new Date(night.date + "T12:00:00");
+        start.setDate(start.getDate() + 1);
+        const nextDate = start.getFullYear() + "-" + String(start.getMonth() + 1).padStart(2, "0") + "-" + String(start.getDate()).padStart(2, "0");
+        return (forecast ? forecast.hourly : []).filter(function (hour) {
+          return (hour.date === night.date && hour.hour >= "09:00") || (hour.date === nextDate && hour.hour < "09:00");
+        });
+      }
+
+      // A simple hour-by-hour view: one coloured block per hour with its road surface temperature.
+      function renderNightHours(night, host) {
+        const hours = nightHours(night);
+        host.replaceChildren();
+        if (!hours.length) {
+          const none = document.createElement("p");
+          none.className = "job-meta";
+          none.textContent = "No hourly forecast is available for this day.";
+          host.append(none);
+          return;
+        }
+        let coldest = hours[0];
+        hours.forEach(function (hour) { if (hour.surface < coldest.surface) { coldest = hour; } });
+        const summary = document.createElement("p");
+        summary.className = "rf-min";
+        summary.textContent = "Minimum road surface " + degrees(coldest.surface) + " at " + coldest.day + " " + coldest.hour + " (09:00 to 09:00)";
+        const grid = document.createElement("div");
+        grid.className = "rf-hour-grid";
+        hours.forEach(function (hour) {
+          const block = document.createElement("div");
+          const overnight = hour.hour >= "18:00" || hour.hour < "06:00";
+          const past = new Date(hour.date + "T" + hour.hour + ":00") < new Date();
+          block.className = "rf-hour rf-hour-" + hour.level + (hour === coldest ? " rf-hour-min" : "") + (overnight ? " rf-hour-night" : "") + (past ? " rf-hour-past" : "");
+          block.title = hour.day + " " + hour.hour + ": road surface " + degrees(hour.surface) + ", air " + degrees(hour.air);
+          const time = document.createElement("span");
+          time.className = "rf-hour-time";
+          time.textContent = hour.hour;
+          const temp = document.createElement("strong");
+          temp.textContent = degrees(hour.surface);
+          block.append(time, temp);
+          if (hour.rain > 0) {
+            const rain = document.createElement("span");
+            rain.className = "rf-hour-rain";
+            rain.textContent = "💧 " + hour.rain;
+            block.append(rain);
+          }
+          grid.append(block);
+        });
+        host.append(summary, grid);
+      }
+
+      function renderNights(list) {
+        nights.replaceChildren();
+        list.forEach(function (night) {
+          const card = document.createElement("div");
+          card.className = "rf-night rf-" + night.level;
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "rf-night-toggle";
+          toggle.setAttribute("aria-expanded", "false");
+          const top = document.createElement("span");
+          top.className = "rf-night-head";
+          const name = document.createElement("strong");
+          name.textContent = night.label;
+          const badge = document.createElement("span");
+          badge.className = "rf-badge rf-badge-" + night.level;
+          badge.textContent = levelText[night.level] || night.headline;
+          const chevron = document.createElement("span");
+          chevron.className = "rf-night-chevron";
+          chevron.setAttribute("aria-hidden", "true");
+          chevron.textContent = "＋";
+          top.append(name, badge, chevron);
+          const detail = document.createElement("span");
+          detail.className = "job-meta rf-night-line";
+          let text = "Road surface low " + degrees(night.min_surface) + " at " + night.min_surface_day + " " + night.min_surface_time + " (air " + degrees(night.min_air) + ")";
+          if (night.grit_from) {
+            text += " · below the grit threshold " + night.grit_from + " to " + night.grit_until;
+          } else if (night.reason) {
+            text += " · " + night.reason;
+          }
+          if (night.hours_covered < 12) {
+            text += " · the forecast only covers part of this night";
+          }
+          detail.textContent = text;
+          toggle.append(top, detail);
+          if (night.rain_mm > 0) {
+            const rain = document.createElement("span");
+            rain.className = "job-meta rf-rain-line rf-night-line";
+            rain.textContent = "Rain " + night.rain_from + " to " + night.rain_until + " (" + night.rain_mm + " mm)";
+            toggle.append(rain);
+          }
+          if (night.rain_advice) {
+            const advice = document.createElement("span");
+            advice.className = "rf-advice rf-night-line";
+            advice.textContent = night.rain_advice;
+            toggle.append(advice);
+          }
+          const hoursHost = document.createElement("div");
+          hoursHost.className = "rf-night-hours";
+          hoursHost.hidden = true;
+          toggle.addEventListener("click", function () {
+            const open = hoursHost.hidden;
+            if (open) { renderNightHours(night, hoursHost); }
+            hoursHost.hidden = !open;
+            toggle.setAttribute("aria-expanded", String(open));
+            chevron.textContent = open ? "－" : "＋";
+          });
+          card.append(toggle, hoursHost);
+          nights.append(card);
+        });
+      }
+
+      // Surface and air temperature as lines, rain as bars along the bottom, freezing level marked.
+      function renderChart() {
+        const hours = forecast ? forecast.week : [];
+        if (!hours.length) {
+          chart.hidden = true;
+          return;
+        }
+        const width = 340, height = 150, left = 30, right = 8, top = 8, bottom = 34;
+        const plotHeight = height - top - bottom;
+        const values = hours.flatMap(function (hour) { return [hour.surface, hour.air]; });
+        const low = Math.min(-2, Math.floor(Math.min.apply(null, values)));
+        const high = Math.max(6, Math.ceil(Math.max.apply(null, values)));
+        const rainMax = Math.max(2, Math.max.apply(null, hours.map(function (hour) { return hour.rain; })));
+        const x = function (index) { return left + (index / Math.max(1, hours.length - 1)) * (width - left - right); };
+        const y = function (value) { return top + (1 - (value - low) / (high - low)) * plotHeight; };
+        const line = function (key) { return hours.map(function (hour, index) { return x(index).toFixed(1) + "," + y(hour[key]).toFixed(1); }).join(" "); };
+        const barWidth = Math.max(1.2, (width - left - right) / hours.length * 0.8);
+        const baseline = height - bottom;
+        const parts = [];
+        parts.push('<svg viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="Forecast road surface temperature, air temperature and rain for the next 7 days">');
+        if (low < 0) {
+          parts.push('<rect x="' + left + '" y="' + y(0).toFixed(1) + '" width="' + (width - left - right) + '" height="' + (baseline - y(0)).toFixed(1) + '" class="rf-freeze"/>');
+        }
+        // day labels centred under each day: weekday over the date number
+        let groupStart = 0;
+        hours.forEach(function (hour, index) {
+          if (hour.hour === "00:00") {
+            parts.push('<line x1="' + x(index).toFixed(1) + '" x2="' + x(index).toFixed(1) + '" y1="' + top + '" y2="' + baseline + '" class="rf-grid"/>');
+          }
+          if (index === hours.length - 1 || hours[index + 1].date !== hour.date) {
+            if (index - groupStart >= 7) {
+              const centre = ((x(groupStart) + x(index)) / 2).toFixed(1);
+              parts.push('<text x="' + centre + '" y="' + (baseline + 12) + '" text-anchor="middle" class="rf-axis rf-axis-day">' + hours[groupStart].day + "</text>");
+              parts.push('<text x="' + centre + '" y="' + (baseline + 24) + '" text-anchor="middle" class="rf-axis rf-axis-date">' + Number(hours[groupStart].date.slice(8, 10)) + "</text>");
+            }
+            groupStart = index + 1;
+          }
+          if (hour.rain > 0) {
+            const barHeight = Math.max(2, (hour.rain / rainMax) * plotHeight * 0.35);
+            parts.push('<rect x="' + (x(index) - barWidth / 2).toFixed(1) + '" y="' + (baseline - barHeight).toFixed(1) + '" width="' + barWidth.toFixed(1) + '" height="' + barHeight.toFixed(1) + '" class="rf-rain"/>');
+          }
+        });
+        parts.push('<line x1="' + left + '" x2="' + (width - right) + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" class="rf-zero"/>');
+        [low, 0, high].forEach(function (tick) {
+          parts.push('<text x="' + (left - 4) + '" y="' + (y(tick) + 3).toFixed(1) + '" text-anchor="end" class="rf-axis">' + tick + "°</text>");
+        });
+        parts.push('<polyline points="' + line("air") + '" class="rf-line-air"/>');
+        parts.push('<polyline points="' + line("surface") + '" class="rf-line-surface"/>');
+        parts.push("</svg>");
+        chartSvg.innerHTML = parts.join("");
+        chart.hidden = false;
+      }
+
+      function load() {
+        fetch("{{ url_for('gritting.road_forecast_json') }}", { cache: "no-store" })
+          .then(function (response) { return response.json(); })
+          .then(function (data) {
+            if (!data.ok) {
+              heading.textContent = "Forecast unavailable";
+              nights.replaceChildren();
+              chart.hidden = true;
+              nextRain.textContent = "";
+              updated.textContent = data.message || "";
+              return;
+            }
+            forecast = data;
+            const first = data.nights[0];
+            heading.textContent = first ? first.label + ": " + (levelText[first.level] || first.headline) : "No forecast for tonight";
+            nextRain.textContent = data.next_rain
+              ? "Next rain: " + data.next_rain.from + " to " + data.next_rain.until + " (" + data.next_rain.mm + " mm)."
+              : "No rain forecast in the next 7 days.";
+            renderNights(data.nights);
+            renderChart();
+            updated.textContent = "Updated " + data.updated + (data.stale ? " (the forecast service did not answer, so this may be a little out of date)" : "") + ".";
+          })
+          .catch(function () {
+            heading.textContent = "Forecast unavailable";
+            updated.textContent = "The forecast could not be loaded just now.";
+          });
+      }
+
+      load();
+      window.setInterval(load, 15 * 60 * 1000);
+    })();
+  </script>
+{% endblock %}
