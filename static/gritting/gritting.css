@@ -260,3 +260,15 @@ details.sub-disclosure > .disclosure-body { padding: 0 14px 14px; display: grid;
 .inline-confirm p { margin: 0; line-height: 1.4; }
 .inline-confirm-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .inline-confirm-buttons .button { flex: 1 1 120px; }
+
+/* Extras on a site */
+.extra-item { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #fff; display: grid; gap: 4px; }
+.extra-item p { margin: 0; }
+.extra-amount { margin-left: 8px; font-weight: 800; color: var(--green); }
+.extra-later { border-left: 4px solid #c98a1b; }
+.extra-active { border-left: 4px solid #2f7a4f; }
+.extra-ended { opacity: 0.6; }
+.extra-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-top: 4px; }
+.extra-end-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.extra-end-form label { font-size: 13px; }
+.extra-add-form { margin-top: 12px; }

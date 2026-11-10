@@ -74,7 +74,7 @@
         <div><dt>Emergency phone</dt><dd>{{ call_out.emergency_phone or "No emergency phone on record" }}</dd></div>
         <div><dt>Service days</dt><dd>{{ call_out.service_days|service_days_display }}</dd></div>
         <div><dt>Dispatch batch</dt><dd>{{ call_out.dispatch_batch_id if call_out.dispatch_batch_id else "Single call-out" }}</dd></div>
-        <div><dt>Selected pricing</dt><dd>{% if call_out.pricing_label %}{{ call_out.pricing_label }} · {{ call_out.pricing_amount|price_plus_vat_display }}{% else %}Not selected{% endif %}</dd></div>
+        <div><dt>Selected pricing</dt><dd>{% if call_out.pricing_label %}{{ call_out.pricing_label }} · {{ call_out.pricing_amount|price_plus_vat_display }}{% if extras_items %}<br><small class="muted">Site price {{ (call_out.pricing_amount - call_out.extras_amount)|currency_display }} + extras: {{ call_out.extras_json|extras_summary }}</small>{% endif %}{% else %}Not selected{% endif %}</dd></div>
         <div><dt>Completed</dt><dd>{{ call_out.completed_at|datetime_display if call_out.completed_at else "Open" }}</dd></div>
       </dl>
     </div>

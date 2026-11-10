@@ -1039,6 +1039,22 @@ def init_db() -> None:
     ensure_column("call_outs", "pricing_label", "TEXT")
     ensure_column("call_outs", "pricing_amount", "REAL")
     ensure_column("call_outs", "cancelled_at", "TEXT")
+    ensure_column("call_outs", "extras_amount", "REAL NOT NULL DEFAULT 0")
+    ensure_column("call_outs", "extras_json", "TEXT")
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS site_extras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id INTEGER NOT NULL,
+            description TEXT NOT NULL,
+            amount REAL NOT NULL,
+            effective_from TEXT NOT NULL,
+            effective_to TEXT,
+            note TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     had_finalised = "finalised_at" in {row[1] for row in db.execute("PRAGMA table_info(dispatch_batches)").fetchall()}
     ensure_column("dispatch_batches", "finalised_at", "TEXT")
     if not had_finalised:
@@ -1718,6 +1734,143 @@ def log_notification(
     return delivery_status, delivery_details
 
 
+def extras_on(db: sqlite3.Connection, site_id: int, night: str) -> tuple[float, list[dict[str, Any]]]:
+    """Extras charged on every visit to the site on the given night (YYYY-MM-DD): the total and each item.
+
+    An extra applies from its first night to its last night inclusive, or from its first night onward if it has no end."""
+    rows = db.execute(
+        """
+        SELECT description, amount FROM site_extras
+        WHERE site_id = ? AND effective_from <= ? AND (effective_to IS NULL OR effective_to = '' OR effective_to >= ?)
+        ORDER BY effective_from, id
+        """,
+        (site_id, night, night),
+    ).fetchall()
+    items = [{"description": row["description"], "amount": round(float(row["amount"]), 2)} for row in rows]
+    return round(sum(item["amount"] for item in items), 2), items
+
+
+def load_extras_items(raw: str | None) -> list[dict[str, Any]]:
+    try:
+        items = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [item for item in items if isinstance(item, dict) and "description" in item and "amount" in item] if isinstance(items, list) else []
+
+
+def reprice_open_jobs(db: sqlite3.Connection, site_id: int) -> int:
+    """Re-work the price of the site's jobs that are not done yet after its extras change. Completed jobs keep their price."""
+    count = 0
+    for row in db.execute(
+        "SELECT id, called_out_at, pricing_amount, extras_amount, extras_json FROM call_outs WHERE site_id = ? AND status = 'called_out' AND pricing_amount IS NOT NULL",
+        (site_id,),
+    ).fetchall():
+        base = round(float(row["pricing_amount"]) - float(row["extras_amount"] or 0), 2)
+        extras_total, items = extras_on(db, site_id, (row["called_out_at"] or "")[:10])
+        total = round(base + extras_total, 2)
+        if total != round(float(row["pricing_amount"]), 2) or json.dumps(items) != row["extras_json"]:
+            db.execute(
+                "UPDATE call_outs SET pricing_amount = ?, extras_amount = ?, extras_json = ? WHERE id = ?",
+                (total, extras_total, json.dumps(items), row["id"]),
+            )
+            count += 1
+    return count
+
+
+def extras_summary(raw: str | None) -> str:
+    """The extras on a job in words, for example "Rear bay +£20.00"."""
+    return ", ".join(
+        f"{item['description']} {'+' if item['amount'] >= 0 else '-'}£{abs(item['amount']):.2f}" for item in load_extras_items(raw)
+    )
+
+
+TEMPLATE_FILTERS["extras_summary"] = extras_summary
+
+
+def site_extras_redirect(site_id: int) -> Any:
+    return redirect(url_for("gritting.customers") + f"#site-extras-{site_id}")
+
+
+def parse_night(value: str, default: str = "") -> str | None:
+    """A date typed as YYYY-MM-DD, or the default when blank; None if it is not a real date."""
+    text = (value or "").strip() or default
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+@bp.post("/sites/<int:site_id>/extras")
+def add_site_extra(site_id: int):
+    """Log something the customer has added to the site: it adds to the price of every visit from the first night onward."""
+    db = get_db()
+    site = db.execute("SELECT id FROM sites WHERE id = ?", (site_id,)).fetchone()
+    if site is None:
+        flash("Site not found.")
+        return redirect(url_for("gritting.customers"))
+    description = request.form.get("description", "").strip()
+    try:
+        amount = round(float(request.form.get("amount", "").strip()), 2)
+    except ValueError:
+        amount = 0.0
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    first_night = parse_night(request.form.get("effective_from", ""), tomorrow)
+    if not description or len(description) > 160:
+        flash("Describe what was added, for example 'rear loading bay'.")
+    elif amount == 0.0 or abs(amount) > 100000:
+        flash("Enter the extra price per visit, ex VAT. Use a minus for a reduction.")
+    elif first_night is None:
+        flash("Choose a valid first night.")
+    else:
+        db.execute(
+            "INSERT INTO site_extras (site_id, description, amount, effective_from, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (site_id, description, amount, first_night, request.form.get("note", "").strip()[:500], now_iso()),
+        )
+        changed = reprice_open_jobs(db, site_id)
+        db.commit()
+        flash(
+            f"Added {description} ({'+' if amount >= 0 else '-'}£{abs(amount):.2f} per visit) from the night of {format_date_from_iso(first_night)}."
+            + (f" {changed} open {'job was' if changed == 1 else 'jobs were'} repriced." if changed else "")
+        )
+    return site_extras_redirect(site_id)
+
+
+@bp.post("/extras/<int:extra_id>/end")
+def end_site_extra(extra_id: int):
+    """Stop charging an extra after the last night it applies. The entry stays as the record."""
+    db = get_db()
+    extra = db.execute("SELECT * FROM site_extras WHERE id = ?", (extra_id,)).fetchone()
+    if extra is None:
+        flash("Extra not found.")
+        return redirect(url_for("gritting.customers"))
+    last_night = parse_night(request.form.get("last_night", ""), datetime.now().strftime("%Y-%m-%d"))
+    if last_night is None:
+        flash("Choose a valid last night.")
+    elif last_night < extra["effective_from"]:
+        flash("The last night cannot be before the first night. Remove the extra instead if it was entered by mistake.")
+    else:
+        db.execute("UPDATE site_extras SET effective_to = ? WHERE id = ?", (last_night, extra_id))
+        changed = reprice_open_jobs(db, extra["site_id"])
+        db.commit()
+        flash(f"{extra['description']} now ends after the night of {format_date_from_iso(last_night)}." + (f" {changed} open {'job was' if changed == 1 else 'jobs were'} repriced." if changed else ""))
+    return site_extras_redirect(extra["site_id"])
+
+
+@bp.post("/extras/<int:extra_id>/delete")
+def delete_site_extra(extra_id: int):
+    """Remove an extra that was entered by mistake. Jobs already done keep their price."""
+    db = get_db()
+    extra = db.execute("SELECT * FROM site_extras WHERE id = ?", (extra_id,)).fetchone()
+    if extra is None:
+        flash("Extra not found.")
+        return redirect(url_for("gritting.customers"))
+    db.execute("DELETE FROM site_extras WHERE id = ?", (extra_id,))
+    changed = reprice_open_jobs(db, extra["site_id"])
+    db.commit()
+    flash(f"Removed {extra['description']}." + (f" {changed} open {'job was' if changed == 1 else 'jobs were'} repriced." if changed else ""))
+    return site_extras_redirect(extra["site_id"])
+
+
 def create_call_out(
     *,
     site_id: int,
@@ -1729,7 +1882,13 @@ def create_call_out(
     pricing_amount: float | None = None,
     dispatch_batch_id: int | None = None,
 ) -> int:
-    cursor = get_db().execute(
+    db = get_db()
+    extras_total, extras_items = (0.0, [])
+    if pricing_amount is not None:
+        # the price for the night is the site price plus the extras in force on that night
+        extras_total, extras_items = extras_on(db, site_id, (called_out_at or "")[:10])
+        pricing_amount = round(pricing_amount + extras_total, 2)
+    cursor = db.execute(
         """
         INSERT INTO call_outs (
             site_id,
@@ -1740,10 +1899,12 @@ def create_call_out(
             service_notes,
             pricing_label,
             pricing_amount,
+            extras_amount,
+            extras_json,
             status,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'called_out', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'called_out', ?)
         """,
         (
             site_id,
@@ -1754,6 +1915,8 @@ def create_call_out(
             service_notes,
             pricing_label,
             pricing_amount,
+            extras_total,
+            json.dumps(extras_items),
             now_iso(),
         ),
     )
@@ -1841,6 +2004,8 @@ def complete_call_out_record(
     service_notes: str,
     pricing_label: str | None,
     pricing_amount: float | None,
+    extras_amount: float = 0.0,
+    extras_json: str = "[]",
 ) -> tuple[sqlite3.Row | None, str, str]:
     db = get_db()
     call_out = fetch_call_out(call_out_id)
@@ -1853,6 +2018,8 @@ def complete_call_out_record(
         SET status = 'completed',
             pricing_label = ?,
             pricing_amount = ?,
+            extras_amount = ?,
+            extras_json = ?,
             service_notes = ?,
             completed_at = ?
         WHERE id = ?
@@ -1860,6 +2027,8 @@ def complete_call_out_record(
         (
             pricing_label,
             pricing_amount,
+            extras_amount if pricing_amount is not None else 0.0,
+            extras_json if pricing_amount is not None else "[]",
             service_notes,
             completed_at,
             call_out_id,
@@ -2306,6 +2475,7 @@ def fetch_night_lists() -> list[dict[str, Any]]:
             call_outs.planned_attendance,
             call_outs.weather_conditions,
             call_outs.pricing_label,
+            call_outs.extras_json,
             call_outs.completed_at,
             call_outs.cancelled_at,
             sites.name AS site_name,
@@ -2402,7 +2572,7 @@ def run_sheet(batch_id: int) -> str:
         return redirect(url_for("gritting.live_jobs"))
     rows = db.execute(
         """
-        SELECT call_outs.id, call_outs.status, call_outs.pricing_label, call_outs.planned_attendance,
+        SELECT call_outs.id, call_outs.status, call_outs.pricing_label, call_outs.extras_json, call_outs.planned_attendance,
                sites.name AS site_name, sites.address, sites.route_notes,
                customers.name AS customer_name, customers.contact_name, customers.emergency_phone
         FROM call_outs
@@ -2480,6 +2650,23 @@ def new_callout() -> str:
         return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))
 
     return render_template("gritting/new_callout.html", **build_new_callout_page_data())
+
+
+def fetch_extras_by_site() -> dict[int, list[dict[str, Any]]]:
+    """Every extra for each site, newest first, with whether it is charged today, starts later or has ended."""
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for row in db.execute("SELECT * FROM site_extras ORDER BY effective_from DESC, id DESC").fetchall():
+        item = dict(row)
+        if item["effective_to"] and item["effective_to"] < today:
+            item["state"] = "ended"
+        elif item["effective_from"] > today:
+            item["state"] = "later"
+        else:
+            item["state"] = "active"
+        grouped.setdefault(int(row["site_id"]), []).append(item)
+    return grouped
 
 
 def add_customer_and_site() -> Any:
@@ -2634,6 +2821,9 @@ def customers() -> str:
         customers=fetch_customers(),
         sites=fetch_sites(),
         directory_rows=fetch_customer_directory_rows(),
+        extras_by_site=fetch_extras_by_site(),
+        today=datetime.now().strftime("%Y-%m-%d"),
+        tomorrow=(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
     )
 
 
@@ -2876,6 +3066,7 @@ def callout_detail(call_out_id: int) -> str:
         suggested_pricing_label=suggested_label,
         draft_list=on_draft_list(call_out),
         final_list=on_finalised_list(call_out),
+        extras_items=load_extras_items(call_out["extras_json"]),
     )
 
 
@@ -2899,10 +3090,13 @@ def complete_callout(call_out_id: int):
     pricing_options = load_pricing_options(call_out["pricing_options"] if call_out else None)
     selected_label = request.form.get("pricing_label", "").strip()
     selected_amount = None
+    extras_total, extras_items = float(call_out["extras_amount"] or 0), load_extras_items(call_out["extras_json"])
     if selected_label:
         matched = next((option for option in pricing_options if option["label"] == selected_label), None)
         if matched:
-            selected_amount = matched["amount"]
+            # a price chosen now is the site price: add the extras in force on the night
+            extras_total, extras_items = extras_on(db, call_out["site_id"], (call_out["called_out_at"] or "")[:10])
+            selected_amount = round(matched["amount"] + extras_total, 2)
     elif call_out["pricing_label"] and call_out["pricing_amount"] is not None:
         selected_label = call_out["pricing_label"]
         selected_amount = call_out["pricing_amount"]
@@ -2913,6 +3107,8 @@ def complete_callout(call_out_id: int):
         service_notes=request.form["service_notes"].strip(),
         pricing_label=selected_label or None,
         pricing_amount=selected_amount,
+        extras_amount=extras_total,
+        extras_json=json.dumps(extras_items),
     )
     db.commit()
     flash_completion_message(delivery_status)
@@ -2980,10 +3176,12 @@ def quick_complete_callout(call_out_id: int):
     pricing_options = load_pricing_options(call_out["pricing_options"])
     selected_label = call_out["pricing_label"] or suggested_pricing_label(call_out["called_out_at"], pricing_options)
     selected_amount = call_out["pricing_amount"]
+    extras_total, extras_items = float(call_out["extras_amount"] or 0), load_extras_items(call_out["extras_json"])
     if selected_label and selected_amount is None:
         matched = next((option for option in pricing_options if option["label"] == selected_label), None)
         if matched:
-            selected_amount = matched["amount"]
+            extras_total, extras_items = extras_on(db, call_out["site_id"], (call_out["called_out_at"] or "")[:10])
+            selected_amount = round(matched["amount"] + extras_total, 2)
 
     _, delivery_status, _ = complete_call_out_record(
         call_out_id=call_out_id,
@@ -2991,6 +3189,8 @@ def quick_complete_callout(call_out_id: int):
         service_notes=(call_out["service_notes"] or "").strip(),
         pricing_label=selected_label or None,
         pricing_amount=selected_amount,
+        extras_amount=extras_total,
+        extras_json=json.dumps(extras_items),
     )
     db.commit()
     flash_completion_message(delivery_status)
@@ -3011,6 +3211,7 @@ def fetch_monthly_rows(month_value: str) -> list[sqlite3.Row]:
             call_outs.weather_conditions,
             call_outs.pricing_label,
             call_outs.pricing_amount,
+            call_outs.extras_json,
             call_outs.service_notes,
             sites.name AS site_name,
             customers.name AS customer_name,
@@ -3088,7 +3289,7 @@ def monthly_summary_export_rows(rows: list[sqlite3.Row]) -> list[list[Any]]:
                 row["site_name"],
                 format_date_from_iso(row["called_out_at"]),
                 row["status"],
-                row["pricing_label"] or "",
+                ((row["pricing_label"] or "") + (f" + {extras_summary(row['extras_json'])}" if extras_summary(row["extras_json"]) else "")),
                 row["pricing_amount"] if row["pricing_amount"] is not None else "",
                 vat_amount(row["pricing_amount"]) if row["pricing_amount"] is not None else "",
                 gross_amount(row["pricing_amount"]) if row["pricing_amount"] is not None else "",

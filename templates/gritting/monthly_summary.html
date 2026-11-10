@@ -71,7 +71,7 @@
               <td>{{ row.site_name }}</td>
               <td>{{ row.called_out_at|date_display }}</td>
               <td><span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span></td>
-              <td>{% if row.pricing_label %}{{ row.pricing_label }} · {{ row.pricing_amount|currency_display }}{% else %}-{% endif %}</td>
+              <td>{% if row.pricing_label %}{{ row.pricing_label }} · {{ row.pricing_amount|currency_display }}{% if row.extras_json|extras_summary %}<br><small>incl. {{ row.extras_json|extras_summary }}</small>{% endif %}{% else %}-{% endif %}</td>
               <td>{{ row.pricing_amount|vat_amount|currency_display if row.pricing_amount is not none else "-" }}</td>
               <td>{{ row.pricing_amount|gross_amount|currency_display if row.pricing_amount is not none else "-" }}</td>
             </tr>

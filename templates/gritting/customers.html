@@ -184,6 +184,58 @@
                       <button class="button primary" type="submit">Save Site Changes</button>
                     </form>
                   </div>
+                  <div class="sub-panel" id="site-extras-{{ row.site_id }}">
+                    <h4>Extras on this site</h4>
+                    <p class="muted">When the customer adds something to the site, log it here. It is charged on every visit from the first night you choose, on top of the site price. Jobs already done keep the price they were done at.</p>
+                    {% set extras = extras_by_site.get(row.site_id, []) %}
+                    {% if extras %}
+                      <div class="stack-list compact-stack">
+                        {% for extra in extras %}
+                          <div class="extra-item extra-{{ extra.state }}">
+                            <p>
+                              <strong>{{ extra.description }}</strong>
+                              <span class="extra-amount">{{ '+' if extra.amount >= 0 else '-' }}£{{ '%.2f'|format(extra.amount|abs) }} per visit</span>
+                            </p>
+                            <p class="job-meta">
+                              From the night of {{ extra.effective_from|date_display }}{% if extra.effective_to %} to the night of {{ extra.effective_to|date_display }}{% else %}, ongoing{% endif %}
+                              · {% if extra.state == 'active' %}Charged now{% elif extra.state == 'later' %}Starts later{% else %}Ended{% endif %}
+                              {% if extra.note %}· {{ extra.note }}{% endif %}
+                            </p>
+                            <div class="extra-actions">
+                              {% if extra.state != 'ended' %}
+                                <form method="post" action="{{ url_for('gritting.end_site_extra', extra_id=extra.id) }}" class="extra-end-form">
+                                  <label>Last night charged <input type="date" name="last_night" value="{{ today }}"></label>
+                                  <button class="button subtle" type="submit">End this extra</button>
+                                </form>
+                              {% endif %}
+                              <form method="post" action="{{ url_for('gritting.delete_site_extra', extra_id=extra.id) }}" data-confirm="Remove {{ extra.description }}? Only do this if it was entered by mistake.">
+                                <button class="button subtle" type="submit">Remove</button>
+                              </form>
+                            </div>
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
+                    <form method="post" action="{{ url_for('gritting.add_site_extra', site_id=row.site_id) }}" class="form-grid extra-add-form">
+                      <label class="full-width">
+                        What was added
+                        <input type="text" name="description" placeholder="Rear loading bay" required>
+                      </label>
+                      <label>
+                        Extra per visit, ex VAT (£)
+                        <input type="number" name="amount" step="0.01" placeholder="20.00" required>
+                      </label>
+                      <label>
+                        First night charged
+                        <input type="date" name="effective_from" value="{{ tomorrow }}" required>
+                      </label>
+                      <label class="full-width">
+                        Note (optional)
+                        <input type="text" name="note" placeholder="Agreed with the manager by phone">
+                      </label>
+                      <button class="button primary" type="submit">Add extra</button>
+                    </form>
+                  </div>
                 {% else %}
                   <p><strong>Site</strong>: No site added yet for this customer.</p>
                 {% endif %}

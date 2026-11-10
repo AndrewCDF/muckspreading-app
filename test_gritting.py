@@ -392,6 +392,170 @@ class GrittingModuleTests(unittest.TestCase):
         db.close()
         self.assertEqual(len(gritting.load_service_days(days)), 7)
 
+    # ---- extras on a site: charged per visit from a chosen night ---------------------------------------------
+
+    def make_priced_site(self, price="100"):
+        self.client.post("/gritting/customers", data={
+            "form_type": "customer_site", "customer_choice": "new", "customer_name": "Delta Ltd", "contact_name": "Kim", "email": "kim@delta.test",
+            "site_name": "Yard", "address": "5 Mill Rd", "pricing_label_1": "Weekday Night", "pricing_amount_1": price})
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        site_id = db.execute("SELECT id FROM sites WHERE name='Yard'").fetchone()[0]
+        db.close()
+        return site_id
+
+    def call_out_night(self, site_id, night):
+        response = self.client.post("/gritting/new-callout", data={
+            "site_id": site_id, "called_out_at": night + "T18:00", "weather_conditions": "Frost", "service_notes": "",
+            "planned_attendance": "After midnight", "recipient": "kim@delta.test", "pricing_label": "Weekday Night"})
+        return int(response.headers["Location"].rsplit("/", 1)[1])
+
+    def job(self, call_out_id):
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        db.row_factory = gritting.sqlite3.Row
+        row = db.execute("SELECT * FROM call_outs WHERE id=?", (call_out_id,)).fetchone()
+        db.close()
+        return row
+
+    def test_extra_added_on_night_11_is_charged_from_night_12(self):
+        site_id = self.make_priced_site("100")
+        nights = ["2026-01-%02d" % day for day in range(1, 11)]
+        first_ten = [self.call_out_night(site_id, night) for night in nights]
+        self.assertEqual([self.job(call_out_id)["pricing_amount"] for call_out_id in first_ten], [100.0] * 10)
+        night_11 = self.call_out_night(site_id, "2026-01-11")
+        # on the 11th night the customer adds an area worth 20 a visit, charged from the 12th night
+        added = self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Rear loading bay", "amount": "20", "effective_from": "2026-01-12"}, follow_redirects=True)
+        self.assertIn("Added Rear loading bay (+£20.00 per visit) from the night of", added.get_data(as_text=True))
+        self.assertEqual(self.job(night_11)["pricing_amount"], 100.0)  # the 11th night is still the old price
+        night_12, night_13 = self.call_out_night(site_id, "2026-01-12"), self.call_out_night(site_id, "2026-01-13")
+        for call_out_id in (night_12, night_13):
+            row = self.job(call_out_id)
+            self.assertEqual((row["pricing_amount"], row["extras_amount"]), (120.0, 20.0))
+            self.assertEqual(gritting.load_extras_items(row["extras_json"]), [{"description": "Rear loading bay", "amount": 20.0}])
+        self.assertEqual(self.job(first_ten[0])["pricing_amount"], 100.0)  # earlier nights never change
+        # the monthly summary totals the whole month: 11 nights at 100 and 2 at 120, and says what the extra was
+        summary = self.client.get("/gritting/monthly-summary?month=2026-01").get_data(as_text=True)
+        self.assertIn("£1340.00", summary)
+        self.assertIn("incl. Rear loading bay +£20.00", summary)
+        export = self.client.get("/gritting/monthly-summary/export?month=2026-01").get_data(as_text=True)
+        self.assertIn("Weekday Night + Rear loading bay +£20.00", export)
+
+    def test_extras_have_first_and_last_nights_and_reprice_only_open_jobs(self):
+        site_id = self.make_priced_site("100")
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Side path", "amount": "20", "effective_from": "2026-02-10"})
+        first_night, before = self.call_out_night(site_id, "2026-02-10"), self.call_out_night(site_id, "2026-02-09")
+        self.assertEqual((self.job(before)["pricing_amount"], self.job(first_night)["pricing_amount"]), (100.0, 120.0))  # the first night counts
+        done = self.call_out_night(site_id, "2026-02-11")
+        self.client.post("/gritting/callouts/%d/complete-quick" % done)
+        self.assertEqual(self.job(done)["status"], "completed")
+        open_job = self.call_out_night(site_id, "2026-02-12")
+        # a second extra and then the first one ending: open jobs follow, the finished job keeps its price
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Bin store", "amount": "5.50", "effective_from": "2026-02-11"})
+        self.assertEqual((self.job(open_job)["pricing_amount"], self.job(done)["pricing_amount"]), (125.5, 120.0))
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        side_path = db.execute("SELECT id FROM site_extras WHERE description='Side path'").fetchone()[0]
+        db.close()
+        ended = self.client.post("/gritting/extras/%d/end" % side_path, data={"last_night": "2026-02-11"}, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("Side path now ends after the night of", ended)
+        self.assertIn("1 open job was repriced.", ended)
+        self.assertEqual(self.job(open_job)["pricing_amount"], 105.5)  # 100 + the bin store; the side path stopped after the 11th
+        self.assertEqual(self.job(first_night)["pricing_amount"], 120.0)
+        self.assertEqual(self.job(done)["pricing_amount"], 120.0)
+        # a job on a later night, made after the extra ended, never gets it
+        self.assertEqual(self.job(self.call_out_night(site_id, "2026-02-20"))["pricing_amount"], 105.5)
+        # removing an extra entered by mistake takes it off open jobs as well
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        bin_store = db.execute("SELECT id FROM site_extras WHERE description='Bin store'").fetchone()[0]
+        db.close()
+        self.assertIn("Removed Bin store.", self.client.post("/gritting/extras/%d/delete" % bin_store, follow_redirects=True).get_data(as_text=True))
+        self.assertEqual(self.job(open_job)["pricing_amount"], 100.0)
+
+    def test_completing_a_job_keeps_the_extras_in_its_price(self):
+        site_id = self.make_priced_site("100")
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Rear bay", "amount": "20", "effective_from": "2026-03-01"})
+        call_out_id = self.call_out_night(site_id, "2026-03-02")
+        done = self.client.post("/gritting/callouts/%d/complete" % call_out_id, data={"completed_at": "2026-03-03T04:00", "service_notes": "ok", "pricing_label": "Weekday Night"})
+        self.assertEqual(done.status_code, 302)
+        row = self.job(call_out_id)
+        self.assertEqual((row["status"], row["pricing_amount"], row["extras_amount"]), ("completed", 120.0, 20.0))
+        detail = self.client.get("/gritting/callouts/%d" % call_out_id).get_data(as_text=True)
+        self.assertIn("Site price £100.00 + extras: Rear bay +£20.00", detail)
+        # a reduction is allowed with a minus; a job with no price chosen carries no extras
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Gate no longer needed", "amount": "-5", "effective_from": "2026-03-10"})
+        self.assertEqual(self.job(self.call_out_night(site_id, "2026-03-10"))["pricing_amount"], 115.0)
+        unpriced = self.client.post("/gritting/new-callout", data={
+            "site_id": site_id, "called_out_at": "2026-03-11T18:00", "weather_conditions": "Frost", "service_notes": "",
+            "planned_attendance": "x", "recipient": "kim@delta.test", "pricing_label": ""})
+        self.assertIsNone(self.job(int(unpriced.headers["Location"].rsplit("/", 1)[1]))["pricing_amount"])
+
+    def test_extras_show_on_the_live_list_and_the_final_list(self):
+        site_id = self.make_priced_site("100")
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Rear bay", "amount": "20", "effective_from": "2026-04-01"})
+        response = self.bulk_callout([site_id])
+        self.assertEqual(response.status_code, 302)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        db.execute("UPDATE call_outs SET called_out_at='2026-04-02T18:00'")  # bulk_callout uses 12 January
+        db.execute("UPDATE call_outs SET pricing_amount=100, extras_amount=0, extras_json=NULL")
+        db.commit()
+        batch_id = db.execute("SELECT id FROM dispatch_batches").fetchone()[0]
+        db.close()
+        site = self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Bin store", "amount": "5", "effective_from": "2026-04-02"}, follow_redirects=True)
+        self.assertIn("1 open job was repriced.", site.get_data(as_text=True))
+        live = self.client.get("/gritting/live-jobs").get_data(as_text=True)
+        self.assertIn("Includes extras: Rear bay +£20.00, Bin store +£5.00", live)
+        self.client.post("/gritting/batches/%d/finalise" % batch_id)
+        sheet = self.client.get("/gritting/batches/%d/run-sheet" % batch_id).get_data(as_text=True)
+        self.assertIn("Includes:", sheet)
+        self.assertIn("Rear bay +£20.00, Bin store +£5.00", sheet)
+
+    def test_the_customer_page_shows_and_manages_extras(self):
+        site_id = self.make_priced_site("100")
+        page = self.client.get("/gritting/customers").get_data(as_text=True)
+        self.assertIn("Extras on this site", page)
+        self.assertIn('action="/gritting/sites/%d/extras"' % site_id, page)
+        self.assertIn("First night charged", page)
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Rear bay", "amount": "20", "effective_from": "2020-01-01", "note": "Agreed by phone"})
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Future gate", "amount": "10", "effective_from": "2099-01-01"})
+        page = self.client.get("/gritting/customers").get_data(as_text=True)
+        self.assertIn("+£20.00 per visit", page)
+        self.assertIn("Agreed by phone", page)
+        self.assertIn("Charged now", page)
+        self.assertIn("Starts later", page)
+        self.assertIn("End this extra", page)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        rear = db.execute("SELECT id FROM site_extras WHERE description='Rear bay'").fetchone()[0]
+        db.close()
+        self.client.post("/gritting/extras/%d/end" % rear, data={"last_night": "2020-06-30"})
+        page = self.client.get("/gritting/customers").get_data(as_text=True)
+        self.assertIn("Ended", page)
+        self.assertIn("to the night of", page)
+
+    def test_extras_reject_bad_entries(self):
+        site_id = self.make_priced_site("100")
+        for data, message in [({"description": "", "amount": "20"}, "Describe what was added"), ({"description": "Bay", "amount": ""}, "Enter the extra price per visit"),
+                              ({"description": "Bay", "amount": "0"}, "Enter the extra price per visit"), ({"description": "Bay", "amount": "x"}, "Enter the extra price per visit"),
+                              ({"description": "Bay", "amount": "20", "effective_from": "not-a-date"}, "Choose a valid first night")]:
+            with self.subTest(data=data):
+                self.assertIn(message, self.client.post("/gritting/sites/%d/extras" % site_id, data=data, follow_redirects=True).get_data(as_text=True))
+        self.assertIn("Site not found", self.client.post("/gritting/sites/999/extras", data={"description": "Bay", "amount": "5"}, follow_redirects=True).get_data(as_text=True))
+        self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Bay", "amount": "5", "effective_from": "2026-05-10"})
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        extra_id = db.execute("SELECT id FROM site_extras").fetchone()[0]
+        count = db.execute("SELECT COUNT(*) FROM site_extras").fetchone()[0]
+        db.close()
+        self.assertEqual(count, 1)  # nothing half-saved from the bad entries
+        before_first = self.client.post("/gritting/extras/%d/end" % extra_id, data={"last_night": "2026-05-01"}, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("The last night cannot be before the first night", before_first)
+        self.assertIn("Choose a valid last night", self.client.post("/gritting/extras/%d/end" % extra_id, data={"last_night": "xx"}, follow_redirects=True).get_data(as_text=True))
+        self.assertIn("Extra not found", self.client.post("/gritting/extras/999/end", follow_redirects=True).get_data(as_text=True))
+        self.assertIn("Extra not found", self.client.post("/gritting/extras/999/delete", follow_redirects=True).get_data(as_text=True))
+        default_day = self.client.post("/gritting/sites/%d/extras" % site_id, data={"description": "Tomorrow's", "amount": "1"})
+        self.assertEqual(default_day.status_code, 302)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        first_night = db.execute("SELECT effective_from FROM site_extras WHERE description=?", ("Tomorrow's",)).fetchone()[0]
+        db.close()
+        from datetime import datetime, timedelta
+        self.assertEqual(first_night, (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"))  # a blank first night means tomorrow
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):

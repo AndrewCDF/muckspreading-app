@@ -61,6 +61,7 @@
                 <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
               </div>
               <p class="job-meta">{{ row.address }}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
+              {% if row.extras_json|extras_summary %}<p class="job-meta rf-rain-line">Includes extras: {{ row.extras_json|extras_summary }}</p>{% endif %}
               <div class="job-actions">
                 {% if not group.finalised_at %}
                   <form method="post" action="{{ url_for('gritting.cancel_callout', call_out_id=row.id) }}" data-confirm="Not needed tonight? The customer does not need us to attend.">
