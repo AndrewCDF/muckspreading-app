@@ -17,7 +17,8 @@
           <span>Gritting</span>
         </a>
         <div class="gr-top-links">
-          <a href="/" aria-label="Back to the main app">⌂</a>
+          <a href="{{ url_for('gritting.dashboard') }}" aria-label="Back" title="Back" onclick="if (window.history.length > 1) { window.history.back(); return false; }">←</a>
+          <a href="/" aria-label="Home: back to the main app" title="Home">⌂</a>
           <a href="{{ url_for('gritting.settings') }}" aria-label="Gritting settings">⚙</a>
         </div>
       </header>

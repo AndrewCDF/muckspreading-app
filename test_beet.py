@@ -24,6 +24,7 @@ class BeetTests(unittest.TestCase):
         self.assertIn(b"Sugar Beet</a>", self.client.get("/").data)
         page = self.client.get("/beet")
         self.assertEqual(page.status_code, 200)
+        self.assertIn(b"window.history.back()", page.data)
         for text in (b"Diesel Used", b"Area (ha)", b"Customer", b"Field"):
             self.assertIn(text, page.data)
         for path in ["/static/beet.js", "/static/beet.css"]:

@@ -37,6 +37,7 @@ class MaintenanceTests(unittest.TestCase):
         page = self.client.get("/maintenance")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Machinery Maintenance", page.data)
+        self.assertIn(b"window.history.back()", page.data)  # Back goes back, with Home as the fallback
         self.assertIn(b"Notes / Job Done", page.data)
         self.assertIn(b'<select id="machinery-choice"', page.data)
         self.assertIn(b"Add new machinery", page.data)

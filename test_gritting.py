@@ -25,7 +25,9 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIn(b'href="/gritting/">Gritting</a>', self.client.get("/").data)
         page = self.client.get("/gritting/")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b'<a href="/" aria-label="Back to the main app">', page.data)
+        self.assertIn(b'aria-label="Home: back to the main app"', page.data)
+        self.assertIn(b'aria-label="Back" title="Back" onclick="if (window.history.length &gt; 1)', page.data.replace(b"> 1)", b"&gt; 1)"))
+        self.assertLess(page.data.index(b'aria-label="Back"'), page.data.index(b'aria-label="Home'))  # Back sits beside Home, before it
         self.assertIn(b"/static/gritting/gritting.css", page.data)
         self.assertIn(b"/gritting/live-jobs", page.data)
 
@@ -34,7 +36,11 @@ class GrittingModuleTests(unittest.TestCase):
                      "/gritting/callouts", "/gritting/monthly-summary", "/gritting/email-signature-preview",
                      "/gritting/monthly-summary/export?month=2026-01"]:
             with self.subTest(path=path):
-                self.assertEqual(self.client.get(path).status_code, 200)
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                if "export" not in path:  # every page has Back beside Home
+                    self.assertIn(b'aria-label="Back"', response.data)
+                    self.assertIn(b'window.history.back()', response.data)
         sites = self.client.get("/gritting/sites")  # the old Sites page now forwards to Customers & Sites
         self.assertEqual((sites.status_code, sites.headers["Location"].endswith("/gritting/customers")), (302, True))
         for path in ["/static/gritting/gritting.css", "/static/gritting/brand/ngs-logo.png"]:

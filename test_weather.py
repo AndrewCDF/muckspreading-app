@@ -221,6 +221,7 @@ class WeatherPageTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         for text in (b"Weather", b"Daily forecast", b"class=\"wx-rows\"", b"/weather/forecast.json"):
             self.assertIn(text, page.data)
+        self.assertIn(b"window.history.back()", page.data)
         self.assertNotIn(b"About this forecast", page.data)
         self.assertNotIn(b"Gritting outlook", page.data)
         self.assertNotIn(b"Day by day", page.data)

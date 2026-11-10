@@ -35,7 +35,7 @@
     </main>
   </div>
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
-    <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">←</strong>Back</a>
+    <a class="bottom-nav-btn" href="{{ url_for('home') }}" onclick="if (window.history.length > 1) { window.history.back(); return false; }"><strong aria-hidden="true">←</strong>Back</a>
     <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">⌂</strong>Home</a>
     <a class="bottom-nav-btn" href="{{ url_for('gritting.dashboard') }}"><strong aria-hidden="true">❄</strong>Gritting</a>
   </nav>
