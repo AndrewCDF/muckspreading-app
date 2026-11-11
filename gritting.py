@@ -2556,6 +2556,19 @@ def rain_for_night(wet_hours: list[dict[str, Any]], risky_hours: list[dict[str, 
     return info
 
 
+def night_summary(level: str, wet_hours: list[dict[str, Any]], rain_info: dict[str, Any]) -> str:
+    """A plain sentence about the night for the call-out wording. No temperatures in it."""
+    sky = {"grit": "Frost expected overnight, icy roads likely.",
+           "watch": "Cold overnight, a chance of frost on the roads.",
+           "ok": "No frost expected overnight."}[level]
+    if not wet_hours:
+        wet = "Dry."
+    else:
+        kind = "Snow" if any(float(row["snow"] or 0) > 0 for row in wet_hours) else "Rain"
+        wet = f"{kind} from {rain_info['rain_from']} to {rain_info['rain_until']}."
+    return f"{sky} {wet}"
+
+
 def next_rain_spell(upcoming: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The first run of wet hours from now: when it starts, when it stops and how much falls."""
     spell: list[dict[str, Any]] = []
@@ -2660,6 +2673,7 @@ def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_coun
         wet_hours = [row for row in window if is_wet_hour(row)]
         rain_info = rain_for_night(wet_hours, risky_hours)
         nights.append({
+            "summary": night_summary(worst["level"], wet_hours, rain_info),
             "label": night_label(start, now),
             "date": start.strftime("%Y-%m-%d"),
             "level": worst["level"],

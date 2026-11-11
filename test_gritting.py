@@ -868,6 +868,18 @@ class RoadForecastTests(unittest.TestCase):
         for model in ("ukmo_seamless", "ecmwf_ifs025", "icon_seamless"):
             self.assertIn(model, gritting.forecast_request_url())
 
+    def test_each_night_has_a_plain_summary_without_temperatures(self):
+        now = datetime(2026, 11, 10, 19, 0)
+        freezing = lambda stamp: -1.0 if datetime(2026, 11, 10, 22) <= stamp < datetime(2026, 11, 11, 6) else 6.0
+        night = gritting.road_forecast_from_open_meteo(raw_forecast(freezing, hours=24 * 12), now)["nights"][0]
+        self.assertEqual(night["summary"], "Frost expected overnight, icy roads likely. Dry.")
+        mild = gritting.road_forecast_from_open_meteo(raw_forecast(lambda stamp: 8.0, hours=24 * 12), now)["nights"][0]
+        self.assertEqual(mild["summary"], "No frost expected overnight. Dry.")
+        wet = gritting.road_forecast_from_open_meteo(raw_forecast(lambda stamp: 8.0, rain=0.5, hours=24 * 12), now)["nights"][0]
+        self.assertRegex(wet["summary"], r"^No frost expected overnight\. Rain from 18:00 to 06:00\.$")
+        for text in (night["summary"], mild["summary"], wet["summary"]):
+            self.assertNotRegex(text, r"\d+(\.\d+)?\s*°|degrees|\bC\b")
+
     def test_nights_and_labels(self):
         freezing = lambda stamp: -1.0 if datetime(2026, 11, 10, 22) <= stamp < datetime(2026, 11, 11, 6) else 6.0
         data = gritting.road_forecast_from_open_meteo(raw_forecast(freezing, hours=24 * 12), datetime(2026, 11, 10, 20, 15))

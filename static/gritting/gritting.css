@@ -292,3 +292,6 @@ details.sub-disclosure > .disclosure-body { padding: 0 14px 14px; display: grid;
 .price-days { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .price-days .day-check { padding: 8px 6px; font-size: 14px; gap: 6px; }
 @media (min-width: 720px) { .price-days { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
+
+/* Anything marked hidden must really disappear, even where a card style sets its own display */
+[hidden] { display: none !important; }

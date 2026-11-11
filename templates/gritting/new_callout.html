@@ -444,5 +444,27 @@
 
     syncCalloutDefaults();
     syncBulkCalloutDefaults();
+    // Fill "weather conditions" with a plain sentence about the night, from the forecast, unless it has been typed over.
+    let forecastNights = null;
+    function fillWeatherFromForecast() {
+      if (!forecastNights) { return; }
+      [[bulkCalledOutAtInput, bulkWeatherConditionsInput], [calledOutAtInput, weatherConditionsInput]].forEach(function (pair) {
+        const input = pair[1];
+        if (input.dataset.typed) { return; }
+        const night = forecastNights.find(function (item) { return item.date === (pair[0].value || "").slice(0, 10); });
+        if (night) {
+          input.value = night.summary;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      });
+    }
+    [bulkWeatherConditionsInput, weatherConditionsInput].forEach(function (input) {
+      input.addEventListener("keydown", function () { input.dataset.typed = "1"; });
+    });
+    bulkCalledOutAtInput.addEventListener("input", fillWeatherFromForecast);
+    calledOutAtInput.addEventListener("input", fillWeatherFromForecast);
+    fetch({{ url_for('gritting.road_forecast_json')|tojson }}).then(function (response) { return response.json(); }).then(function (data) {
+      if (data.ok) { forecastNights = data.nights; fillWeatherFromForecast(); }
+    }).catch(function () {});
   </script>
 {% endblock %}
