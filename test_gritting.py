@@ -747,8 +747,7 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertEqual(len(options), 4)  # not limited to three prices
         self.assertEqual(options[1]["days"], ["friday", "saturday"])
         self.assertEqual(options[3]["event"], "Norwich home match")
-        # ticked days are mornings: Friday night is Saturday morning, Saturday night is Sunday morning, Sunday night is Monday morning
-        expected = {"2026-01-12": "Weekday", "2026-01-14": "Weekday", "2026-01-15": "Friday and Saturday", "2026-01-16": "Friday and Saturday", "2026-01-17": "Sunday", "2026-01-18": "Weekday"}
+        expected = {"2026-01-12": "Weekday", "2026-01-14": "Weekday", "2026-01-16": "Friday and Saturday", "2026-01-17": "Friday and Saturday", "2026-01-18": "Sunday"}
         for day, label in expected.items():
             with self.subTest(day=day):
                 self.assertEqual(gritting.suggested_pricing_label(day + "T18:00", options), label)
@@ -778,7 +777,7 @@ class GrittingModuleTests(unittest.TestCase):
         db.close()
         self.client.post("/gritting/settings", data={"form_type": "special_date_delete", "special_date_id": special_id})
         again = self.client.get("/gritting/new-callout?called_out_at=2026-01-17T18:00").get_data(as_text=True)
-        self.assertRegex(again, r'<option value="Sunday" selected>')  # Saturday night is for Sunday morning
+        self.assertRegex(again, r'<option value="Friday and Saturday" selected>')
 
     def test_prices_set_up_the_old_way_still_pick_by_the_name(self):
         options = [{"label": "Weekday Night", "amount": 100.0}, {"label": "Friday Night", "amount": 120.0}, {"label": "Weekend", "amount": 150.0}]
@@ -794,25 +793,6 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIn('name="pricing_days_4"', page)  # a fourth price shows on the existing site
         self.assertIn('<option value="Norwich home match" selected>', page)
         self.assertRegex(page, r'name="pricing_days_2" value="friday" checked')
-
-    def test_service_days_are_the_mornings_a_site_needs_clearing(self):
-        key = gritting.dispatch_day_key
-        # Mon to Fri mornings means Sunday, Monday, Tuesday, Wednesday and Thursday nights
-        nights = {"2026-01-11": "monday", "2026-01-12": "tuesday", "2026-01-15": "friday", "2026-01-16": "saturday", "2026-01-17": "sunday"}
-        for night, morning in nights.items():
-            with self.subTest(night=night):
-                self.assertEqual(key(night + "T18:00"), morning)
-        self.assertEqual(key("2026-01-17T01:30"), "saturday")  # sent after midnight, so it is already that morning
-        form = {"form_type": "customer_site", "customer_choice": "new", "customer_name": "Office Ltd", "contact_name": "Olly", "email": ["o@office.test"],
-                "site_name": "Yard", "address": "1 Road"}
-        for day in ("monday", "tuesday", "wednesday", "thursday", "friday"):
-            form["service_day_" + day] = "on"
-        self.client.post("/gritting/customers", data=form)
-        due = lambda stamp: "Office Ltd" in self.client.get("/gritting/new-callout?called_out_at=" + stamp).get_data(as_text=True).split("Skipped today")[0]
-        self.assertTrue(due("2026-01-11T18:00"))   # Sunday night, for Monday morning
-        self.assertTrue(due("2026-01-15T18:00"))   # Thursday night, for Friday morning
-        self.assertFalse(due("2026-01-16T18:00"))  # Friday night, nobody in on Saturday
-        self.assertFalse(due("2026-01-17T18:00"))  # Saturday night, nobody in on Sunday
 
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()

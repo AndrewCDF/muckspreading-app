@@ -283,13 +283,7 @@ def parse_bool(value: str | None, default: bool = True) -> bool:
 
 
 def dispatch_day_key(called_out_at: str) -> str:
-    """The weekday a site needs to be clear: the morning after the night being gritted.
-
-    A call-out sent in the afternoon or evening is for that night, so the morning is the next day (Sunday night is
-    for Monday morning). One sent in the small hours is already inside the night, so its morning is the same day."""
-    moment = datetime.fromisoformat(called_out_at)
-    morning = moment if moment.hour < 6 else moment + timedelta(days=1)
-    return morning.strftime("%A").lower()
+    return datetime.fromisoformat(called_out_at).strftime("%A").lower()
 
 
 def normalize_email(value: str) -> str:
@@ -642,7 +636,7 @@ def special_event_names(date_text: str) -> list[str]:
 
 
 def suggested_pricing_label(called_out_at: str, options: list[dict[str, Any]], event_names: Any = ()) -> str:
-    """The price for the night: a price tied to a special date that falls on it, then one ticked for that morning,
+    """The price for the night: a price tied to a special date that falls on it, then one ticked for that weekday,
     then (for prices set up the old way) one whose name mentions the day, and finally the first ordinary price."""
     if not options:
         return ""
@@ -652,11 +646,10 @@ def suggested_pricing_label(called_out_at: str, options: list[dict[str, Any]], e
             return option["label"]
 
     ordinary = [option for option in options if not option.get("event")] or options
-    morning_name = dispatch_day_key(called_out_at)  # ticked days are mornings, like a site's service days
+    weekday_name = datetime.fromisoformat(called_out_at).strftime("%A").lower()
     for option in ordinary:
-        if morning_name in option.get("days", []):
+        if weekday_name in option.get("days", []):
             return option["label"]
-    weekday_name = datetime.fromisoformat(called_out_at).strftime("%A").lower()  # names like "Friday Night" mean the night itself
 
     undated = [option for option in ordinary if not option.get("days")] or ordinary
     for option in undated:
