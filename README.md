@@ -70,6 +70,8 @@ The Hay & Straw home screen has a **+** button for recording delivered lorry or 
 
 ### Gritting
 
+**Service days.** The days ticked on a site are the days its call-outs go out, so the nights it is gritted. Ticking Mon to Fri grits Monday to Friday nights, not Saturday or Sunday night. The ticks on a price row work the same way: a Saturday call-out gets the price ticked for Saturday.
+
 **Prices by night.** A site can have as many prices as it needs. Tick the weekdays each one applies on (a 7-day site can have a price per day), or tie a price to a special date. Add special dates such as home matches under Settings > Special dates (match days). When a night's list is built, each site gets the special-date price if the night is one, otherwise the price ticked for that weekday; you can still change it by hand, and the job keeps the price it was created at. Prices without ticked days still pick by name (Weekday, Friday, Weekend).
 
 **Contacts.** A customer can have several notification emails and several emergency contacts (a name and a phone number each), and a site has a postcode and can have extra notification emails of its own. Use **Add another** on the form. Call-out and completion emails go to the customer's addresses plus the site's, with no repeats. The postcode, notification emails and emergency contacts show on the job, the live list and the final list. In a spreadsheet import, put several addresses in the `email` or `site_emails` cell separated by commas, and use `emergency_contact_name`, `emergency_phone` and `postcode` columns.

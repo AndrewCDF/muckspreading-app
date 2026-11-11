@@ -21,7 +21,7 @@
 {% macro price_rows(fields, event_names) %}
   <div class="full-width price-list">
     <span class="field-label">Prices ex VAT</span>
-    <p class="muted">Tick the days each price applies on, so the right one is picked for the night. A site that runs 7 days a week can have a price per day, or one price with every day ticked. Pick a special date (a match day, say) to use a price on those dates instead.</p>
+    <p class="muted">Tick the call-out days each price applies on, the same as service days (a Saturday call-out is Saturday night). A site that runs 7 days a week can have a price per day, or one price with every day ticked. Pick a special date (a match day, say) to use a price on those dates instead.</p>
     <div class="price-rows">
       {% for field in fields %}
         <div class="price-row" data-index="{{ field.index }}">
@@ -113,7 +113,7 @@
           <textarea name="route_notes" rows="3"></textarea>
         </label>
         <div class="full-width">
-          <span class="field-label">Service days</span>
+          <span class="field-label">Service days: the nights we grit, by the day the call-out is sent</span>
           <div class="day-grid">
             <label class="day-check"><input type="checkbox" name="service_day_monday" checked> Mon</label>
             <label class="day-check"><input type="checkbox" name="service_day_tuesday" checked> Tue</label>
@@ -183,7 +183,7 @@
                         <textarea name="route_notes" rows="4">{{ row.route_notes }}</textarea>
                       </label>
                       <div class="full-width">
-                        <span class="field-label">Service days</span>
+                        <span class="field-label">Service days: the nights we grit, by the day the call-out is sent</span>
                         <div class="day-grid">
                           <label class="day-check"><input type="checkbox" name="service_day_monday" {% if 'monday' in row.service_days_list %}checked{% endif %}> Mon</label>
                           <label class="day-check"><input type="checkbox" name="service_day_tuesday" {% if 'tuesday' in row.service_days_list %}checked{% endif %}> Tue</label>
