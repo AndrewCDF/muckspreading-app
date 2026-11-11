@@ -113,7 +113,7 @@
         </div>
       </details>
 
-      <button class="button primary big full-width" type="submit" {% if not eligible_sites %}disabled{% endif %}>Send call-out to {{ eligible_sites|length }} {{ 'site' if eligible_sites|length == 1 else 'sites' }}</button>
+      <button class="button primary big full-width" id="bulk-send-button" type="submit" {% if not eligible_sites %}disabled{% endif %}>Send call-out to {{ eligible_sites|length }} {{ 'site' if eligible_sites|length == 1 else 'sites' }}</button>
     </form>
   </section>
 
@@ -437,8 +437,17 @@
       document.getElementById("bulk-skipped-list").innerHTML = skipped.slice(0, 6).map(function (name) { return '<p class="job-meta"></p>'; }).join("");
       document.querySelectorAll("#bulk-skipped-list p").forEach(function (line, index) { line.textContent = skipped[index]; });
       document.getElementById("bulk-summary").textContent = due + (due === 1 ? " site" : " sites") + " will be emailed for " + stamp.replace("T", " ") + (skipped.length ? ", " + skipped.length + " skipped by their service days" : "") + ".";
+      updateSendButton();
       syncBulkCalloutDefaults();
     }
+    // The send button counts the sites that are ticked and due, so it always says what will be sent.
+    function updateSendButton() {
+      const ticked = document.querySelectorAll('input[name="selected_site_ids"]:checked:not(:disabled)').length;
+      const button = document.getElementById("bulk-send-button");
+      button.textContent = "Send call-out to " + ticked + (ticked === 1 ? " site" : " sites");
+      button.disabled = ticked === 0;
+    }
+    bulkSiteCheckboxes.forEach(function (box) { box.addEventListener("change", updateSendButton); });
     bulkCalledOutAtInput.addEventListener("input", applyServiceDays);
     applyServiceDays();
 
