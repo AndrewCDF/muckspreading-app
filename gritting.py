@@ -547,20 +547,29 @@ def imported_pricing_options(row: dict[str, str], source_row: dict[str, str] | N
     return parse_pricing_options(row.get("pricing_options", ""))
 
 
+MAX_PRICE_ROWS = 30
+
+
 def pricing_options_from_form(form: Any) -> list[dict[str, Any]]:
+    """Every price row on the form: a name, a price ex VAT, the days it applies on and an optional special-date event."""
     structured_options: list[dict[str, Any]] = []
-    for index in range(1, 4):
+    for index in range(1, MAX_PRICE_ROWS + 1):
         label = form.get(f"pricing_label_{index}", "").strip()
         amount_text = form.get(f"pricing_amount_{index}", "").strip()
-        if not label and not amount_text:
-            continue
         if not label or not amount_text:
             continue
         try:
             amount = round(float(amount_text), 2)
         except ValueError:
             continue
-        structured_options.append({"label": label, "amount": amount})
+        option: dict[str, Any] = {"label": label, "amount": amount}
+        days = [day for day in form.getlist(f"pricing_days_{index}") if day in DAY_KEYS]
+        if days:
+            option["days"] = [day for day in DAY_KEYS if day in days]
+        event = form.get(f"pricing_event_{index}", "").strip()
+        if event:
+            option["event"] = event
+        structured_options.append(option)
 
     if structured_options:
         return structured_options
@@ -590,7 +599,14 @@ def load_pricing_options(raw_value: str | None) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             continue
         if label:
-            normalized.append({"label": label, "amount": amount})
+            option: dict[str, Any] = {"label": label, "amount": amount}
+            days = [day for day in DAY_KEYS if day in (item.get("days") or [])]
+            if days:
+                option["days"] = days
+            event = str(item.get("event", "") or "").strip()
+            if event:
+                option["event"] = event
+            normalized.append(option)
     return normalized
 
 
@@ -604,26 +620,52 @@ def pricing_options_display(raw_value: str | None) -> str:
     )
 
 
-def suggested_pricing_label(called_out_at: str, options: list[dict[str, Any]]) -> str:
+def special_dates_by_day() -> dict[str, list[str]]:
+    """Every special date, as {date: [names]}, for the call-out page to price by the chosen night."""
+    found: dict[str, list[str]] = {}
+    rows = get_db().execute("SELECT event_date, name FROM special_dates ORDER BY event_date, name").fetchall()
+    for row in rows:
+        found.setdefault(row["event_date"], []).append(row["name"])
+    return found
+
+
+def special_event_names(date_text: str) -> list[str]:
+    """Names of the special dates (football matches and the like) on this date."""
+    rows = get_db().execute("SELECT name FROM special_dates WHERE event_date = ? ORDER BY name", ((date_text or "")[:10],)).fetchall()
+    return [row["name"] for row in rows]
+
+
+def suggested_pricing_label(called_out_at: str, options: list[dict[str, Any]], event_names: Any = ()) -> str:
+    """The price for the night: a price tied to a special date that falls on it, then one ticked for that weekday,
+    then (for prices set up the old way) one whose name mentions the day, and finally the first ordinary price."""
     if not options:
         return ""
 
-    weekday_name = datetime.fromisoformat(called_out_at).strftime("%A").lower()
     for option in options:
-        label = option["label"].lower()
-        if weekday_name in label:
+        if option.get("event") and option["event"] in event_names:
+            return option["label"]
+
+    ordinary = [option for option in options if not option.get("event")] or options
+    weekday_name = datetime.fromisoformat(called_out_at).strftime("%A").lower()
+    for option in ordinary:
+        if weekday_name in option.get("days", []):
+            return option["label"]
+
+    undated = [option for option in ordinary if not option.get("days")] or ordinary
+    for option in undated:
+        if weekday_name in option["label"].lower():
             return option["label"]
 
     if weekday_name in {"saturday", "sunday"}:
-        for option in options:
+        for option in undated:
             if "weekend" in option["label"].lower():
                 return option["label"]
 
-    for option in options:
+    for option in undated:
         if "weekday" in option["label"].lower():
             return option["label"]
 
-    return options[0]["label"]
+    return undated[0]["label"]
 
 
 def selected_pricing_details(
@@ -647,7 +689,7 @@ def decorate_site_for_callout(site: sqlite3.Row, called_out_at: str) -> dict[str
         "service_days_list": service_days,
         "pricing_options_list": pricing_options,
         "pricing_options_json": json.dumps(pricing_options),
-        "suggested_pricing_label": suggested_pricing_label(called_out_at, pricing_options),
+        "suggested_pricing_label": suggested_pricing_label(called_out_at, pricing_options, special_event_names(called_out_at)),
     }
 
 
@@ -1135,6 +1177,16 @@ def init_db() -> None:
     ensure_column("call_outs", "cancelled_at", "TEXT")
     ensure_column("call_outs", "extras_amount", "REAL NOT NULL DEFAULT 0")
     ensure_column("call_outs", "extras_json", "TEXT")
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS special_dates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_date TEXT NOT NULL,
+            name TEXT NOT NULL,
+            UNIQUE (event_date, name)
+        )
+        """
+    )
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS site_extras (
@@ -1632,13 +1684,15 @@ def fetch_customer_directory_rows() -> list[sqlite3.Row]:
         row_data = dict(row)
         pricing_options_list = load_pricing_options(row_data.get("pricing_options"))
         pricing_fields = []
-        for index in range(3):
+        for index in range(max(3, len(pricing_options_list))):
             option = pricing_options_list[index] if index < len(pricing_options_list) else {}
             pricing_fields.append(
                 {
                     "index": index + 1,
                     "label": option.get("label", ""),
                     "amount": option.get("amount", ""),
+                    "days": option.get("days", []),
+                    "event": option.get("event", ""),
                 }
             )
         row_data["contacts_list"] = load_emergency_contacts(row_data.get("emergency_contacts"), row_data.get("emergency_phone"))
@@ -2363,6 +2417,7 @@ def build_new_callout_page_data() -> dict[str, Any]:
         "time_options": time_options,
         "eligible_sites": eligible_sites,
         "excluded_sites": excluded_sites,
+        "special_dates_by_day": special_dates_by_day(),
     }
 
 
@@ -3075,6 +3130,7 @@ def customers() -> str:
         sites=fetch_sites(),
         directory_rows=fetch_customer_directory_rows(),
         extras_by_site=fetch_extras_by_site(),
+        event_names=[row["name"] for row in get_db().execute("SELECT DISTINCT name FROM special_dates ORDER BY name").fetchall()],
         today=datetime.now().strftime("%Y-%m-%d"),
         tomorrow=(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
     )
@@ -3088,6 +3144,17 @@ def settings() -> str:
         if form_type == "email_setup":
             save_email_templates(db, request.form)
             flash("Email setup updated.")
+        elif form_type == "special_date_add":
+            event_date = parse_night(request.form.get("event_date", ""))
+            name = request.form.get("event_name", "").strip()
+            if not event_date or not name:
+                flash("Enter a date and a name, for example Norwich home match.")
+            else:
+                db.execute("INSERT OR IGNORE INTO special_dates (event_date, name) VALUES (?, ?)", (event_date, name))
+                flash(f"{name} added on {event_date}.")
+        elif form_type == "special_date_delete":
+            db.execute("DELETE FROM special_dates WHERE id = ?", (request.form.get("special_date_id", "0"),))
+            flash("Special date removed.")
         elif form_type == "season_rollover":
             archived_season, archive_path = start_new_gritting_season_rollover()
             flash(
@@ -3103,6 +3170,7 @@ def settings() -> str:
     return render_template(
         "gritting/settings.html",
         email_settings=fetch_email_settings(),
+        special_dates=db.execute("SELECT id, event_date, name FROM special_dates WHERE event_date >= ? ORDER BY event_date, name", (datetime.now().date().isoformat(),)).fetchall(),
         smtp_settings=fetch_smtp_settings(),
         report_settings=fetch_report_settings(),
         report_state=fetch_report_state(),

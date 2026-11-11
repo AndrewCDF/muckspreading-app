@@ -74,7 +74,7 @@
                   <strong>{{ site.customer_name }} · {{ site.site_name }}</strong>
                   <span class="muted">{{ site.email or "No email set" }} · {{ site.service_days|service_days_display }}</span>
                   {% if site.pricing_options_list %}
-                    <select name="pricing_label_{{ site.id }}">
+                    <select name="pricing_label_{{ site.id }}" class="bulk-pricing" data-pricing='{{ site.pricing_options_list|tojson }}'>
                       <option value="">Choose pricing</option>
                       {% for option in site.pricing_options_list %}
                         <option value="{{ option.label }}" {% if option.label == site.suggested_pricing_label %}selected{% endif %}>
@@ -324,6 +324,42 @@
       });
     }
 
+    const specialDates = {{ special_dates_by_day|tojson }};
+    const weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+    // The same rule as the server: a special date's price, then the ticked weekday, then a price named for the day.
+    function suggestedPriceLabel(dateTime, options) {
+      if (!options.length || !dateTime) {
+        return "";
+      }
+      const day = dateTime.slice(0, 10);
+      const weekday = weekdayNames[new Date(day + "T12:00:00").getDay()];
+      const events = specialDates[day] || [];
+      const byEvent = options.find(function (option) { return option.event && events.includes(option.event); });
+      if (byEvent) { return byEvent.label; }
+      const ordinary = options.filter(function (option) { return !option.event; });
+      const pool = ordinary.length ? ordinary : options;
+      const byDay = pool.find(function (option) { return (option.days || []).includes(weekday); });
+      if (byDay) { return byDay.label; }
+      const undated = pool.filter(function (option) { return !(option.days || []).length; });
+      const named = undated.length ? undated : pool;
+      const byName = named.find(function (option) { return option.label.toLowerCase().includes(weekday); })
+        || (["saturday", "sunday"].includes(weekday) ? named.find(function (option) { return option.label.toLowerCase().includes("weekend"); }) : null)
+        || named.find(function (option) { return option.label.toLowerCase().includes("weekday"); });
+      return (byName || named[0]).label;
+    }
+
+    function repriceBulkSites() {
+      document.querySelectorAll("select.bulk-pricing").forEach(function (select) {
+        if (select.dataset.touched) { return; }
+        const label = suggestedPriceLabel(bulkCalledOutAtInput.value, JSON.parse(select.dataset.pricing || "[]"));
+        if (label) { select.value = label; }
+      });
+    }
+    document.addEventListener("change", function (event) {
+      if (event.target.matches && event.target.matches("select.bulk-pricing")) { event.target.dataset.touched = "1"; }
+    });
+
     function syncCalloutDefaults() {
       const option = siteSelect.options[siteSelect.selectedIndex];
       if (!option) {
@@ -331,7 +367,7 @@
       }
       const email = option.dataset.email;
       const pricingOptions = JSON.parse(option.dataset.pricing || "[]");
-      const suggestedPricing = option.dataset.suggestedPricing;
+      const suggestedPricing = suggestedPriceLabel(calledOutAtInput.value, pricingOptions) || option.dataset.suggestedPricing;
       const context = singleTemplateContext(option);
       recipientInput.value = email;
       if (!subjectTouched) {
@@ -376,6 +412,7 @@
     weatherConditionsInput.addEventListener("input", syncCalloutDefaults);
     serviceNotesInput.addEventListener("input", syncCalloutDefaults);
     bulkCalledOutAtInput.addEventListener("input", syncBulkCalloutDefaults);
+    bulkCalledOutAtInput.addEventListener("input", repriceBulkSites);
     bulkPlannedAttendanceFromSelect.addEventListener("change", syncBulkCalloutDefaults);
     bulkPlannedAttendanceToSelect.addEventListener("change", syncBulkCalloutDefaults);
     bulkWeatherConditionsInput.addEventListener("input", syncBulkCalloutDefaults);

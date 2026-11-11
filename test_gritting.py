@@ -723,6 +723,77 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertEqual((site["postcode"], site["notify_emails"]), ("NR3 1AB", "depot@fox.test"))
         self.assertEqual(len(gritting.load_emergency_contacts(customer["emergency_contacts"])), 1)
 
+    # ---- prices that depend on the night: weekdays, 7-day sites and special dates (match days) ----------------
+
+    def seven_day_form(self):
+        form = {"form_type": "customer_site", "customer_choice": "new", "customer_name": "Stadium Ltd", "contact_name": "Sam", "email": ["ops@stadium.test"],
+                "site_name": "Car park", "address": "1 Ground Rd"}
+        for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"):
+            form["service_day_" + day] = "on"
+        form.update({
+            "pricing_label_1": "Weekday", "pricing_amount_1": "100", "pricing_days_1": ["monday", "tuesday", "wednesday", "thursday"],
+            "pricing_label_2": "Friday and Saturday", "pricing_amount_2": "150", "pricing_days_2": ["friday", "saturday"],
+            "pricing_label_3": "Sunday", "pricing_amount_3": "180", "pricing_days_3": ["sunday"],
+            "pricing_label_4": "Match day", "pricing_amount_4": "250", "pricing_event_4": "Norwich home match",
+        })
+        return form
+
+    def test_the_price_follows_the_night_for_a_site_that_runs_seven_days_a_week(self):
+        self.client.post("/gritting/customers", data=self.seven_day_form())
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        stored = db.execute("SELECT pricing_options FROM sites").fetchone()[0]
+        db.close()
+        options = gritting.load_pricing_options(stored)
+        self.assertEqual(len(options), 4)  # not limited to three prices
+        self.assertEqual(options[1]["days"], ["friday", "saturday"])
+        self.assertEqual(options[3]["event"], "Norwich home match")
+        expected = {"2026-01-12": "Weekday", "2026-01-14": "Weekday", "2026-01-16": "Friday and Saturday", "2026-01-17": "Friday and Saturday", "2026-01-18": "Sunday"}
+        for day, label in expected.items():
+            with self.subTest(day=day):
+                self.assertEqual(gritting.suggested_pricing_label(day + "T18:00", options), label)
+
+    def test_a_special_date_overrides_the_weekday_price(self):
+        self.client.post("/gritting/customers", data=self.seven_day_form())
+        self.assertIn("Norwich home match added on 2026-01-17.", self.client.post("/gritting/settings", data={
+            "form_type": "special_date_add", "event_date": "2026-01-17", "event_name": "Norwich home match"}, follow_redirects=True).get_data(as_text=True))
+        self.assertIn("Enter a date and a name", self.client.post("/gritting/settings", data={"form_type": "special_date_add", "event_date": "nope", "event_name": "x"}, follow_redirects=True).get_data(as_text=True))
+        # the picker on the call-out page chooses the match day price for that night only
+        saturday = self.client.get("/gritting/new-callout?called_out_at=2026-01-17T18:00").get_data(as_text=True)
+        self.assertRegex(saturday, r'<option value="Match day" selected>')
+        friday = self.client.get("/gritting/new-callout?called_out_at=2026-01-16T18:00").get_data(as_text=True)
+        self.assertRegex(friday, r'<option value="Friday and Saturday" selected>')
+        self.assertIn('"2026-01-17": ["Norwich home match"]', saturday)
+        # and the job keeps the price it was created at
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        site_id = db.execute("SELECT id FROM sites").fetchone()[0]
+        db.close()
+        data = {"called_out_at": "2026-01-17T18:00", "planned_attendance_from": "22:00", "planned_attendance_to": "04:00", "weather_conditions": "Frost",
+                "service_notes": "", "subject": "", "message": "", "subject_override_enabled": "0", "message_override_enabled": "0",
+                "selected_site_ids": [str(site_id)], "pricing_label_%d" % site_id: "Match day"}
+        self.client.post("/gritting/callouts/bulk", data=data)
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        self.assertEqual(db.execute("SELECT pricing_label, pricing_amount FROM call_outs").fetchone(), ("Match day", 250.0))
+        special_id = db.execute("SELECT id FROM special_dates").fetchone()[0]
+        db.close()
+        self.client.post("/gritting/settings", data={"form_type": "special_date_delete", "special_date_id": special_id})
+        again = self.client.get("/gritting/new-callout?called_out_at=2026-01-17T18:00").get_data(as_text=True)
+        self.assertRegex(again, r'<option value="Friday and Saturday" selected>')
+
+    def test_prices_set_up_the_old_way_still_pick_by_the_name(self):
+        options = [{"label": "Weekday Night", "amount": 100.0}, {"label": "Friday Night", "amount": 120.0}, {"label": "Weekend", "amount": 150.0}]
+        pick = lambda day: gritting.suggested_pricing_label(day + "T18:00", options)
+        self.assertEqual((pick("2026-01-12"), pick("2026-01-16"), pick("2026-01-17"), pick("2026-01-18")), ("Weekday Night", "Friday Night", "Weekend", "Weekend"))
+        self.assertEqual(gritting.suggested_pricing_label("2026-01-12T18:00", []), "")
+
+    def test_the_site_form_offers_day_ticks_special_dates_and_more_rows(self):
+        self.client.post("/gritting/customers", data=self.seven_day_form())
+        self.client.post("/gritting/settings", data={"form_type": "special_date_add", "event_date": "2026-01-17", "event_name": "Norwich home match"})
+        page = self.client.get("/gritting/customers").get_data(as_text=True)
+        self.assertIn("Add another price", page)
+        self.assertIn('name="pricing_days_4"', page)  # a fourth price shows on the existing site
+        self.assertIn('<option value="Norwich home match" selected>', page)
+        self.assertRegex(page, r'name="pricing_days_2" value="friday" checked')
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):

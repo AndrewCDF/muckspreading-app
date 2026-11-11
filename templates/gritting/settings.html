@@ -153,6 +153,37 @@
       </div>
     </details>
 
+      <details class="disclosure" {% if special_dates %}open{% endif %}>
+    <summary><span>Special dates (match days)</span></summary>
+    <div class="disclosure-body">
+      <p class="muted">Add dates that have their own price, such as a home match. On a site, set a price to apply on that special date and the night's list will pick it automatically.</p>
+      <form method="post" class="form-grid">
+        <input type="hidden" name="form_type" value="special_date_add">
+        <label>
+          Date
+          <input type="date" name="event_date" required>
+        </label>
+        <label>
+          Name
+          <input type="text" name="event_name" placeholder="Norwich home match" required>
+        </label>
+        <button class="button primary full-width" type="submit">Add special date</button>
+      </form>
+      <div class="stack-list" style="margin-top: 14px;">
+        {% for item in special_dates %}
+          <form method="post" class="inline-form" data-confirm="Remove {{ item.name }} on {{ item.event_date }}?">
+            <input type="hidden" name="form_type" value="special_date_delete">
+            <input type="hidden" name="special_date_id" value="{{ item.id }}">
+            <span><strong>{{ item.event_date }}</strong> · {{ item.name }}</span>
+            <button class="button subtle" type="submit">Remove</button>
+          </form>
+        {% else %}
+          <p class="muted">No upcoming special dates.</p>
+        {% endfor %}
+      </div>
+    </div>
+    </details>
+
       <details class="disclosure">
     <summary><span>Start new gritting season</span></summary>
     <div class="disclosure-body">

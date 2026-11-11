@@ -18,6 +18,34 @@
   </div>
 {% endmacro %}
 
+{% macro price_rows(fields, event_names) %}
+  <div class="full-width price-list">
+    <span class="field-label">Prices ex VAT</span>
+    <p class="muted">Tick the days each price applies on, so the right one is picked for the night. A site that runs 7 days a week can have a price per day, or one price with every day ticked. Pick a special date (a match day, say) to use a price on those dates instead.</p>
+    <div class="price-rows">
+      {% for field in fields %}
+        <div class="price-row" data-index="{{ field.index }}">
+          <div class="price-row-main">
+            <input type="text" name="pricing_label_{{ field.index }}" value="{{ field.label }}" placeholder="Weekday night" aria-label="Price name">
+            <input type="number" name="pricing_amount_{{ field.index }}" min="0" step="0.01" value="{{ field.amount }}" placeholder="145.00" aria-label="Price ex VAT">
+          </div>
+          <div class="price-days">
+            {% for key, short in [('monday','Mon'),('tuesday','Tue'),('wednesday','Wed'),('thursday','Thu'),('friday','Fri'),('saturday','Sat'),('sunday','Sun')] %}
+              <label class="day-check"><input type="checkbox" name="pricing_days_{{ field.index }}" value="{{ key }}" {% if key in field.days %}checked{% endif %}> {{ short }}</label>
+            {% endfor %}
+          </div>
+          <select name="pricing_event_{{ field.index }}" aria-label="Special date">
+            <option value="">No special date</option>
+            {% for name in event_names %}<option value="{{ name }}" {% if name == field.event %}selected{% endif %}>On special dates: {{ name }}</option>{% endfor %}
+            {% if field.event and field.event not in event_names %}<option value="{{ field.event }}" selected>On special dates: {{ field.event }}</option>{% endif %}
+          </select>
+        </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="button subtle price-add">＋ Add another price</button>
+  </div>
+{% endmacro %}
+
 {% macro contact_list(contacts) %}
   <div class="full-width contact-list">
     <span class="field-label">Emergency contacts</span>
@@ -96,36 +124,7 @@
             <label class="day-check"><input type="checkbox" name="service_day_sunday" checked> Sun</label>
           </div>
         </div>
-        <div class="full-width">
-          <span class="field-label">Pricing options</span>
-          <div class="pricing-grid">
-            <label>
-              Option 1
-              <input type="text" name="pricing_label_1" placeholder="Weekday Night">
-            </label>
-            <label>
-              Figure ex VAT
-              <input type="number" name="pricing_amount_1" min="0" step="0.01" placeholder="145.00">
-            </label>
-            <label>
-              Option 2
-              <input type="text" name="pricing_label_2" placeholder="Friday Night">
-            </label>
-            <label>
-              Figure ex VAT
-              <input type="number" name="pricing_amount_2" min="0" step="0.01" placeholder="165.00">
-            </label>
-            <label>
-              Option 3
-              <input type="text" name="pricing_label_3" placeholder="Saturday Night">
-            </label>
-            <label>
-              Figure ex VAT
-              <input type="number" name="pricing_amount_3" min="0" step="0.01" placeholder="185.00">
-            </label>
-          </div>
-        </div>
-        <p class="muted full-width">Enter up to three site prices as ex-VAT figures. The app adds VAT at 20% in displays and reporting.</p>
+        {{ price_rows([{'index': 1, 'label': '', 'amount': '', 'days': [], 'event': ''}, {'index': 2, 'label': '', 'amount': '', 'days': [], 'event': ''}], event_names) }}
         <button class="button primary" type="submit">Save customer and site</button>
       </form>
     </div>
@@ -195,21 +194,7 @@
                           <label class="day-check"><input type="checkbox" name="service_day_sunday" {% if 'sunday' in row.service_days_list %}checked{% endif %}> Sun</label>
                         </div>
                       </div>
-                      <div class="full-width">
-                        <span class="field-label">Pricing options</span>
-                        <div class="pricing-grid">
-                          {% for pricing_field in row.pricing_fields %}
-                            <label>
-                              Option {{ pricing_field.index }}
-                              <input type="text" name="pricing_label_{{ pricing_field.index }}" value="{{ pricing_field.label }}" placeholder="Weekday Night">
-                            </label>
-                            <label>
-                              Figure ex VAT
-                              <input type="number" name="pricing_amount_{{ pricing_field.index }}" min="0" step="0.01" value="{{ pricing_field.amount }}" placeholder="145.00">
-                            </label>
-                          {% endfor %}
-                        </div>
-                      </div>
+                      {{ price_rows(row.pricing_fields, event_names) }}
                       <button class="button primary" type="submit">Save Site Changes</button>
                     </form>
                   </div>
@@ -299,6 +284,26 @@
     }
   </script>
 
+  <script>
+    // "Add another price": copy the last price row with the next number, cleared.
+    document.addEventListener("click", function (event) {
+      const add = event.target.closest(".price-add");
+      if (!add) {
+        return;
+      }
+      const rows = add.closest(".price-list").querySelector(".price-rows");
+      const last = rows.lastElementChild;
+      const next = Number(last.dataset.index) + 1;
+      const row = last.cloneNode(true);
+      row.dataset.index = next;
+      row.querySelectorAll("input, select").forEach(function (field) {
+        field.name = field.name.replace(/_\d+$/, "_" + next);
+        if (field.type === "checkbox") { field.checked = false; } else { field.value = ""; }
+      });
+      rows.append(row);
+      row.querySelector("input").focus();
+    });
+  </script>
   <script>
     // "Add another" for the email and emergency contact lists: copy the last row, clear it, and give it a remove button.
     document.addEventListener("click", function (event) {
