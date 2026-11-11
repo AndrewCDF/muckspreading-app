@@ -334,12 +334,15 @@
       }
       const day = dateTime.slice(0, 10);
       const weekday = weekdayNames[new Date(day + "T12:00:00").getDay()];
+      const morningDate = new Date(day + "T12:00:00");
+      if (Number(dateTime.slice(11, 13)) >= 6) { morningDate.setDate(morningDate.getDate() + 1); }
+      const morning = weekdayNames[morningDate.getDay()];
       const events = specialDates[day] || [];
       const byEvent = options.find(function (option) { return option.event && events.includes(option.event); });
       if (byEvent) { return byEvent.label; }
       const ordinary = options.filter(function (option) { return !option.event; });
       const pool = ordinary.length ? ordinary : options;
-      const byDay = pool.find(function (option) { return (option.days || []).includes(weekday); });
+      const byDay = pool.find(function (option) { return (option.days || []).includes(morning); });
       if (byDay) { return byDay.label; }
       const undated = pool.filter(function (option) { return !(option.days || []).length; });
       const named = undated.length ? undated : pool;
