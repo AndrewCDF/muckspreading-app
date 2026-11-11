@@ -794,6 +794,17 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIn('<option value="Norwich home match" selected>', page)
         self.assertRegex(page, r'name="pricing_days_2" value="friday" checked')
 
+    def test_the_call_out_list_carries_every_sites_service_days_so_it_can_follow_the_chosen_day(self):
+        form = {"form_type": "customer_site", "customer_choice": "new", "customer_name": "Office Ltd", "contact_name": "Olly", "email": ["o@office.test"],
+                "site_name": "Yard", "address": "1 Road", "service_day_sunday": "on", "service_day_monday": "on"}
+        self.client.post("/gritting/customers", data=form)
+        page = self.client.get("/gritting/new-callout?called_out_at=2026-01-16T18:00").get_data(as_text=True)  # a Friday: not due
+        self.assertIn('data-service-days=\'["monday", "sunday"]\'', page.replace('["sunday", "monday"]', '["monday", "sunday"]'))
+        self.assertIn('data-due="0"', page)
+        self.assertIn('id="bulk-skipped"', page)
+        due = self.client.get("/gritting/new-callout?called_out_at=2026-01-18T18:00").get_data(as_text=True)  # a Sunday: due
+        self.assertIn('data-due="1"', due)
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):

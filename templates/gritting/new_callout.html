@@ -14,7 +14,7 @@
     <div class="panel-heading">
       <h3>All customers</h3>
       <p class="muted">
-        {{ eligible_sites|length }} {{ 'site' if eligible_sites|length == 1 else 'sites' }} will be emailed for {{ preview_called_out_at|datetime_display }}{% if excluded_sites %}, {{ excluded_sites|length }} skipped by their service days{% endif %}.
+        <span id="bulk-summary">{{ eligible_sites|length }} {{ 'site' if eligible_sites|length == 1 else 'sites' }} will be emailed for {{ preview_called_out_at|datetime_display }}{% if excluded_sites %}, {{ excluded_sites|length }} skipped by their service days{% endif %}.</span>
         {% if not smtp_ready %}Email is not set up yet, so messages are only logged.{% endif %}
       </p>
     </div>
@@ -55,16 +55,16 @@
       </label>
 
       <details class="sub-disclosure full-width">
-        <summary>Sites included ({{ eligible_sites|length }})</summary>
+        <summary>Sites included (<span id="bulk-included-count">{{ eligible_sites|length }}</span>)</summary>
         <div class="disclosure-body">
           <div class="stack-list compact-stack">
-            {% for site in eligible_sites %}
-              <label class="check-card">
+            {% for site in eligible_sites + excluded_sites %}
+              <label class="check-card bulk-site-card" data-service-days='{{ site.service_days_list|tojson }}' data-due="{{ '1' if site in eligible_sites else '0' }}">
                 <input
                   type="checkbox"
                   name="selected_site_ids"
                   value="{{ site.id }}"
-                  checked
+                  {% if site in eligible_sites %}checked{% endif %}
                   data-customer="{{ site.customer_name }}"
                   data-contact="{{ site.contact_name }}"
                   data-email="{{ site.email or '' }}"
@@ -87,18 +87,13 @@
                   {% endif %}
                 </span>
               </label>
-            {% else %}
-              <p class="muted">No sites are due a call-out on this day. Add sites under Customers.</p>
             {% endfor %}
+            <p class="muted" id="bulk-none-due" hidden>No sites are due a call-out on this day. Add sites under Customers.</p>
           </div>
-          {% if excluded_sites %}
-            <div class="sub-panel">
-              <h4>Skipped today (service days)</h4>
-              {% for site in excluded_sites[:6] %}
-                <p class="job-meta">{{ site.customer_name }} · {{ site.site_name }} · {{ site.service_days|service_days_display }}</p>
-              {% endfor %}
-            </div>
-          {% endif %}
+          <div class="sub-panel" id="bulk-skipped" hidden>
+            <h4>Skipped on this day (service days)</h4>
+            <div id="bulk-skipped-list"></div>
+          </div>
         </div>
       </details>
 
@@ -418,6 +413,35 @@
     bulkWeatherConditionsInput.addEventListener("input", syncBulkCalloutDefaults);
     bulkServiceNotesInput.addEventListener("input", syncBulkCalloutDefaults);
     bulkSiteCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", syncBulkCalloutDefaults));
+    // Keep the list to the sites that are due on the chosen call-out day, as the server does when the page loads.
+    const bulkWeekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    function applyServiceDays() {
+      const stamp = bulkCalledOutAtInput.value;
+      if (!stamp) { return; }
+      const weekday = bulkWeekdays[new Date(stamp.slice(0, 10) + "T12:00:00").getDay()];
+      let due = 0;
+      const skipped = [];
+      document.querySelectorAll(".bulk-site-card").forEach(function (card) {
+        const days = JSON.parse(card.dataset.serviceDays || "[]");
+        const isDue = days.includes(weekday);
+        const box = card.querySelector('input[name="selected_site_ids"]');
+        card.hidden = !isDue;
+        if (isDue !== (card.dataset.shown === "1")) { box.checked = isDue; }  // newly due sites start ticked
+        card.dataset.shown = isDue ? "1" : "0";
+        box.disabled = !isDue;
+        if (isDue) { due += 1; } else { skipped.push(card.querySelector("strong").textContent); }
+      });
+      document.getElementById("bulk-included-count").textContent = due;
+      document.getElementById("bulk-none-due").hidden = due > 0;
+      document.getElementById("bulk-skipped").hidden = skipped.length === 0;
+      document.getElementById("bulk-skipped-list").innerHTML = skipped.slice(0, 6).map(function (name) { return '<p class="job-meta"></p>'; }).join("");
+      document.querySelectorAll("#bulk-skipped-list p").forEach(function (line, index) { line.textContent = skipped[index]; });
+      document.getElementById("bulk-summary").textContent = due + (due === 1 ? " site" : " sites") + " will be emailed for " + stamp.replace("T", " ") + (skipped.length ? ", " + skipped.length + " skipped by their service days" : "") + ".";
+      syncBulkCalloutDefaults();
+    }
+    bulkCalledOutAtInput.addEventListener("input", applyServiceDays);
+    applyServiceDays();
+
     syncCalloutDefaults();
     syncBulkCalloutDefaults();
   </script>
