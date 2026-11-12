@@ -53,6 +53,8 @@
                 <span class="status status-completed">Done</span>
               </div>
               <p class="job-meta">Completed {{ row.completed_at|datetime_display }}</p>
+              {% if group.email_problems.get(row.id) %}<p class="email-flag">⚠ {{ group.email_problems.get(row.id) }}</p>{% endif %}
+
             </article>
           {% else %}
             <article class="job-card">
@@ -61,6 +63,8 @@
                 <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
               </div>
               <p class="job-meta">{{ row.address }}{% if row.postcode %}, {{ row.postcode }}{% endif %}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
+              {% if group.email_problems.get(row.id) %}<p class="email-flag">⚠ {{ group.email_problems.get(row.id) }}</p>{% endif %}
+
               {% if row.extras_json|extras_summary %}<p class="job-meta rf-rain-line">Includes extras: {{ row.extras_json|extras_summary }}</p>{% endif %}
               <div class="job-actions">
                 {% if not group.finalised_at %}
@@ -82,6 +86,19 @@
         {% endfor %}
       </div>
 
+      {% if group.email_problems %}
+        <div class="email-alert" role="alert">
+          <strong>⚠ {{ group.email_problems|length }} {{ 'email has' if group.email_problems|length == 1 else 'emails have' }} not been sent</strong>
+          <span>Look for the red "Email not sent" line on each job below.</span>
+          {% if group.batch_id and group.unsent_emails and not group.smtp_ready %}
+            <a class="button primary big full-width" href="{{ url_for('gritting.settings') }}">Set up the mail server, then resend</a>
+          {% elif group.batch_id and group.unsent_emails %}
+            <form method="post" action="{{ url_for('gritting.resend_batch_emails', batch_id=group.batch_id) }}" data-confirm="Send {{ group.unsent_emails }} call-out {{ 'email' if group.unsent_emails == 1 else 'emails' }} that were not sent?">
+              <button class="button primary big full-width" type="submit">Resend {{ group.unsent_emails }} unsent {{ 'email' if group.unsent_emails == 1 else 'emails' }}</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
       {% if group.batch_id %}
         <div class="night-list-actions">
           {% if group.finalised_at %}

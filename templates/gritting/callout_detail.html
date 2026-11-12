@@ -83,6 +83,12 @@
   <details class="disclosure" style="margin-top: 14px;">
     <summary><span>Emails sent <small>({{ notifications|length }})</small></span></summary>
     <div class="disclosure-body">
+      {% if email_problem %}<p class="email-flag">⚠ {{ email_problem }}{% if not smtp_ready %}. Set up the mail server under Settings, then resend.{% endif %}</p>{% endif %}
+      {% if unsent_count and smtp_ready %}
+        <form method="post" action="{{ url_for('gritting.resend_callout_emails', call_out_id=call_out.id) }}" style="margin-bottom: 12px;" data-confirm="Send the {{ unsent_count }} unsent {{ 'email' if unsent_count == 1 else 'emails' }} for this job now?">
+          <button class="button primary" type="submit">Resend {{ unsent_count }} unsent {{ 'email' if unsent_count == 1 else 'emails' }}</button>
+        </form>
+      {% endif %}
       <div class="stack-list">
         {% for message in notifications %}
           <article class="list-card">

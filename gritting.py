@@ -1915,6 +1915,93 @@ def log_notification(
     return delivery_status, delivery_details
 
 
+UNSENT_STATUSES = ("logged", "logged_only", "failed", "skipped_no_email")
+
+
+def strip_signature(message: str) -> str:
+    """A logged email has the company signature on the end already; take it off before sending it again."""
+    signature = fetch_email_signature()
+    signature_text = render_email_template(signature["email_signature_text"], {"company_name": COMPANY_NAME}).strip()
+    text = (message or "").rstrip()
+    if signature_text and text.endswith(signature_text):
+        text = text[: -len(signature_text)].rstrip()
+    return text
+
+
+def unsent_emails(db: sqlite3.Connection, call_out_ids: list[int], live_only: bool) -> list[sqlite3.Row]:
+    """Logged emails that never went out (the mail server was not set up, or it failed) for these call-outs.
+
+    Jobs that were cancelled are left alone. With live_only, so are finished jobs: their call-out is history."""
+    if not call_out_ids:
+        return []
+    marks = ",".join("?" for _ in call_out_ids)
+    statuses = ("called_out",) if live_only else ("called_out", "completed")
+    rows = db.execute(
+        f"""
+        SELECT notification_logs.*, call_outs.site_id, call_outs.status AS job_status
+        FROM notification_logs
+        JOIN call_outs ON call_outs.id = notification_logs.call_out_id
+        WHERE notification_logs.call_out_id IN ({marks})
+          AND LOWER(notification_logs.channel) = 'email'
+          AND notification_logs.delivery_status IN ({",".join("?" for _ in UNSENT_STATUSES)})
+          AND call_outs.status IN ({",".join("?" for _ in statuses)})
+          AND NOT EXISTS (
+            SELECT 1 FROM notification_logs sent
+            WHERE sent.call_out_id = notification_logs.call_out_id AND sent.subject = notification_logs.subject AND sent.delivery_status = 'sent'
+          )
+        ORDER BY notification_logs.id
+        """,
+        (*call_out_ids, *UNSENT_STATUSES, *statuses),
+    ).fetchall()
+    latest: dict[tuple[int, str], sqlite3.Row] = {}
+    for row in rows:
+        latest[(row["call_out_id"], row["subject"] or "")] = row  # the latest attempt tells why it still has not gone
+    return list(latest.values())
+
+
+def resend_unsent_emails(db: sqlite3.Connection, call_out_ids: list[int], live_only: bool = True) -> dict[str, int]:
+    """Send again the emails that were only logged. Goes to the addresses on the customer and site now."""
+    counts = {"sent": 0, "failed": 0, "no_email": 0}
+    for row in unsent_emails(db, call_out_ids, live_only):
+        current = fetch_site_notification_row(row["site_id"])
+        recipient = (current["email"] if current else "") or row["recipient"]
+        status, _ = log_notification(
+            call_out_id=row["call_out_id"], channel="Email", recipient=recipient, subject=row["subject"] or "",
+            message=strip_signature(row["message"]),
+        )
+        key = "sent" if status == "sent" else "no_email" if status == "skipped_no_email" else "failed"
+        counts[key] += 1
+    return counts
+
+
+def email_problems(db: sqlite3.Connection, call_out_ids: list[int]) -> dict[int, str]:
+    """For each call-out whose email did not go, a short reason to show on its card, so it can be sorted and resent."""
+    reasons: dict[int, str] = {}
+    for row in unsent_emails(db, call_out_ids, live_only=False):
+        status = row["delivery_status"]
+        if status == "skipped_no_email":
+            reason = "no email address on file"
+        elif status == "failed":
+            reason = "sending failed" + (f": {row['delivery_details']}" if row["delivery_details"] else "")
+        else:
+            reason = "the mail server was not set up, so it was only logged"
+        reasons.setdefault(row["call_out_id"], f"Email not sent: {reason}")
+    return reasons
+
+
+def flash_resend_result(counts: dict[str, int]) -> None:
+    total = sum(counts.values())
+    if total == 0:
+        flash("There are no unsent emails to resend.")
+        return
+    parts = [f"{counts['sent']} sent"]
+    if counts["failed"]:
+        parts.append(f"{counts['failed']} failed (see the job's notifications for the reason)")
+    if counts["no_email"]:
+        parts.append(f"{counts['no_email']} with no email address on file")
+    flash("Resent: " + ", ".join(parts) + ".")
+
+
 def extras_on(db: sqlite3.Connection, site_id: int, night: str) -> tuple[float, list[dict[str, Any]]]:
     """Extras charged on every visit to the site on the given night (YYYY-MM-DD): the total and each item.
 
@@ -2794,7 +2881,38 @@ def fetch_night_lists() -> list[dict[str, Any]]:
 def live_jobs() -> str:
     lists = fetch_night_lists()
     live_count = sum(group["counts"]["to_grit"] for group in lists)
+    for group in lists:
+        ids = [row["id"] for row in group["rows"]]
+        group["email_problems"] = email_problems(get_db(), ids)
+        group["unsent_emails"] = len(unsent_emails(get_db(), ids, live_only=True))
+        group["smtp_ready"] = smtp_configured()
     return render_template("gritting/live_jobs.html", lists=lists, live_count=live_count)
+
+
+@bp.post("/batches/<int:batch_id>/resend-emails")
+def resend_batch_emails(batch_id: int):
+    """Send the night's call-out emails again, for any that were only logged or failed."""
+    db = get_db()
+    if not smtp_configured():
+        flash("Email is not set up yet. Add the mail server under Settings first.")
+        return redirect(url_for("gritting.live_jobs"))
+    ids = [row["id"] for row in db.execute("SELECT id FROM call_outs WHERE dispatch_batch_id = ?", (batch_id,)).fetchall()]
+    counts = resend_unsent_emails(db, ids, live_only=True)
+    db.commit()
+    flash_resend_result(counts)
+    return redirect(url_for("gritting.live_jobs") + f"#list-{batch_id}")
+
+
+@bp.post("/callouts/<int:call_out_id>/resend-emails")
+def resend_callout_emails(call_out_id: int):
+    db = get_db()
+    if not smtp_configured():
+        flash("Email is not set up yet. Add the mail server under Settings first.")
+    else:
+        counts = resend_unsent_emails(db, [call_out_id], live_only=False)
+        db.commit()
+        flash_resend_result(counts)
+    return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))
 
 
 @bp.post("/batches/<int:batch_id>/finalise")
@@ -3225,7 +3343,8 @@ def sites() -> str:
 def callouts() -> str:
     return render_template(
         "gritting/callouts.html",
-        call_outs=fetch_call_out_rows(),
+        call_outs=(rows := fetch_call_out_rows()),
+        email_problems=email_problems(get_db(), [row["id"] for row in rows]),
         dispatch_batches=fetch_dispatch_batches(),
     )
 
@@ -3342,10 +3461,16 @@ def bulk_callouts() -> Any:
         f"{len(selected_sites)} customer sites included, "
         f"{max(len(eligible_sites) - len(selected_sites), 0)} unticked, "
         f"{len(excluded_sites)} excluded by site day settings, "
-        f"{status_counts.get('sent', 0)} emails sent, "
-        f"{status_counts.get('logged_only', 0)} logged only, "
-        f"{status_counts.get('skipped_no_email', 0)} missing email."
+        f"{status_counts.get('sent', 0)} emails sent."
     )
+    not_sent = len(selected_sites) - status_counts.get("sent", 0)
+    if not_sent:
+        flash(
+            f"{not_sent} {'email was' if not_sent == 1 else 'emails were'} NOT sent: "
+            f"{status_counts.get('logged_only', 0)} only logged (mail server not set up), "
+            f"{status_counts.get('failed', 0)} failed, {status_counts.get('skipped_no_email', 0)} with no email address. "
+            "They are marked on the list so you can sort them and resend."
+        )
     if first_call_out_id is not None:
         # the new night's list: cancel anyone who doesn't need us, then finalise it
         return redirect(url_for("gritting.live_jobs"))
@@ -3396,6 +3521,9 @@ def callout_detail(call_out_id: int) -> str:
         "gritting/callout_detail.html",
         call_out=call_out,
         notifications=notifications,
+        unsent_count=len(unsent_emails(db, [call_out_id], live_only=False)),
+        email_problem=email_problems(db, [call_out_id]).get(call_out_id, ""),
+        smtp_ready=smtp_configured(),
         now_value=now_iso(),
         pricing_options=pricing_options,
         suggested_pricing_label=suggested_label,

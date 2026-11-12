@@ -21,6 +21,7 @@
           <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
         </div>
         <p class="job-meta">{{ row.called_out_at|datetime_display }}{% if row.planned_attendance %} · {{ row.planned_attendance }}{% endif %}</p>
+        {% if email_problems.get(row.id) %}<p class="email-flag">⚠ {{ email_problems.get(row.id) }}</p>{% endif %}
       </a>
     {% else %}
       <section class="panel"><p class="muted">No call-outs yet.</p></section>

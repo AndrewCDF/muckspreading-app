@@ -805,6 +805,63 @@ class GrittingModuleTests(unittest.TestCase):
         due = self.client.get("/gritting/new-callout?called_out_at=2026-01-18T18:00").get_data(as_text=True)  # a Sunday: due
         self.assertIn('data-due="1"', due)
 
+    def test_emails_that_were_only_logged_can_be_sent_again_once_the_mail_server_is_set_up(self):
+        site_ids = self.make_sites()
+        self.bulk_callout(site_ids)  # no mail server yet, so both emails are only logged
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        self.assertEqual(db.execute("SELECT delivery_status, COUNT(*) FROM notification_logs GROUP BY 1").fetchall(), [("logged_only", 2)])
+        db.close()
+        live = self.client.get("/gritting/live-jobs").get_data(as_text=True)
+        self.assertIn("2 emails have not been sent", live)  # clearly flagged, with the reason on each job
+        self.assertEqual(live.count("Email not sent: the mail server was not set up"), 2)
+        self.assertNotIn("Resend 2 unsent", live)  # nothing to resend with until the mail server is configured
+        self.assertIn("Email not sent", self.client.get("/gritting/callouts").get_data(as_text=True))
+        self.assertIn("Set up the mail server under Settings", self.client.get("/gritting/callouts/1").get_data(as_text=True))
+        self.assertIn("Email is not set up", self.client.post("/gritting/batches/1/resend-emails", follow_redirects=True).get_data(as_text=True))
+        sent = []
+
+        def fake_send(recipients, subject, body, attachments=None):
+            sent.append((list(recipients), subject, body))
+            return "sent", "Email sent successfully."
+        with patch.object(gritting, "smtp_configured", return_value=True), patch.object(gritting, "send_email_message", side_effect=fake_send):
+            live = self.client.get("/gritting/live-jobs").get_data(as_text=True)
+            self.assertIn("Resend 2 unsent emails", live)
+            result = self.client.post("/gritting/batches/1/resend-emails", follow_redirects=True).get_data(as_text=True)
+            self.assertIn("Resent: 2 sent.", result)
+            self.assertEqual(len(sent), 2)
+            self.assertEqual(sent[0][0], ["pat@acme.test"])
+            with app.app.app_context():
+                signature = gritting.render_email_template(gritting.fetch_email_signature()["email_signature_text"], {"company_name": gritting.COMPANY_NAME}).strip()
+            self.assertTrue(signature)
+            self.assertNotIn(signature, sent[0][2])  # the signature is added when sending, not carried over from the log
+            again = self.client.post("/gritting/batches/1/resend-emails", follow_redirects=True).get_data(as_text=True)
+            self.assertIn("no unsent emails", again)
+            self.assertEqual(len(sent), 2)  # nothing goes out twice
+            after = self.client.get("/gritting/live-jobs").get_data(as_text=True)
+            self.assertNotIn("Resend 2 unsent", after)
+            self.assertNotIn("have not been sent", after)
+            self.assertNotIn("Email not sent", after)
+
+    def test_a_resend_goes_to_the_current_addresses_skips_cancelled_jobs_and_reports_failures(self):
+        site_ids = self.make_sites(names=("Main yard", "Loading bay", "Back gate"))
+        self.bulk_callout(site_ids)
+        self.client.post("/gritting/callouts/2/cancel")
+        self.client.post("/gritting/customers", data={"form_type": "edit_customer", "customer_id": 1, "name": "Acme Ltd", "contact_name": "Pat",
+                                                      "email": ["new@acme.test", "second@acme.test"], "emergency_contact_name": [""], "emergency_contact_phone": [""]})
+        sent = []
+        def fake_send(recipients, subject, body, attachments=None):
+            sent.append(list(recipients))
+            return ("failed", "boom") if len(sent) == 2 else ("sent", "ok")
+        with patch.object(gritting, "smtp_configured", return_value=True), patch.object(gritting, "send_email_message", side_effect=fake_send):
+            result = self.client.post("/gritting/batches/1/resend-emails", follow_redirects=True).get_data(as_text=True)
+            self.assertIn("Resent: 1 sent, 1 failed", result)  # the cancelled job's email was left alone
+            self.assertIn("Email not sent: sending failed: boom", self.client.get("/gritting/live-jobs").get_data(as_text=True))
+            self.assertEqual(sent, [["new@acme.test", "second@acme.test"]] * 2)
+            detail = self.client.post("/gritting/callouts/1/resend-emails", follow_redirects=True).get_data(as_text=True)
+            self.assertIn("no unsent emails", detail)  # job 1 already went
+            self.assertIn("Resend 1 unsent email", self.client.get("/gritting/callouts/3").get_data(as_text=True))  # the failed one can be tried again
+            self.assertIn("Resent: 1 sent", self.client.post("/gritting/callouts/3/resend-emails", follow_redirects=True).get_data(as_text=True))
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):
