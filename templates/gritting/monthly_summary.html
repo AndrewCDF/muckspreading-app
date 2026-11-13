@@ -66,7 +66,7 @@
         <tbody>
           {% for row in rows %}
             <tr>
-              <td><a href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">#{{ row.id }}</a></td>
+              <td><a href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">{% if row.job_number %}#{{ row.job_number }}{% else %}–{% endif %}</a></td>
               <td>{{ row.customer_name }}</td>
               <td>{{ row.site_name }}</td>
               <td>{{ row.called_out_at|date_display }}</td>

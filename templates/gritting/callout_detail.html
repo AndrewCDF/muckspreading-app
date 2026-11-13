@@ -1,11 +1,11 @@
 {% extends "gritting/base.html" %}
 
-{% block title %}Call-Out #{{ call_out.id }} | Norwich Gritting Services{% endblock %}
+{% block title %}{% if call_out.job_number %}Job {{ call_out.job_number }}{% else %}Call-out{% endif %} | Norwich Gritting Services{% endblock %}
 
 {% block content %}
   <section class="detail-header">
     <div>
-      <p class="eyebrow">Call-out #{{ call_out.id }}</p>
+      <p class="eyebrow">{% if call_out.job_number %}Job number {{ call_out.job_number }}{% else %}No job number{% endif %}</p>
       <h2>{{ call_out.site_name }}</h2>
       <p class="muted">{{ call_out.customer_name }} · {{ call_out.address }}{% if call_out.postcode %}, {{ call_out.postcode }}{% endif %}</p>
     </div>
@@ -14,9 +14,14 @@
 
   <section class="panel">
     <div class="panel-heading">
-      <h3>{% if call_out.status == 'cancelled' %}Cancelled{% elif draft_list %}On the draft list{% elif call_out.status != 'completed' %}Finish this job{% else %}Completed{% endif %}</h3>
+      <h3>{% if call_out.status == 'no_access' %}No access{% elif call_out.status == 'cancelled' %}Cancelled{% elif draft_list %}On the draft list{% elif call_out.status != 'completed' %}Finish this job{% else %}Completed{% endif %}</h3>
     </div>
-    {% if call_out.status == 'cancelled' %}
+    {% if call_out.status == 'no_access' %}
+        <p class="muted">We could not get in{% if call_out.no_access_at %} ({{ call_out.no_access_at|datetime_display }}){% endif %}{% if call_out.access_note %}: {{ call_out.access_note }}{% endif %}. The customer was emailed and the job is not counted as done.</p>
+        <form method="post" action="{{ url_for('gritting.reopen_callout', call_out_id=call_out.id) }}" style="margin-top: 14px;">
+          <button class="button subtle" type="submit">Put back on the list</button>
+        </form>
+      {% elif call_out.status == 'cancelled' %}
         <p class="muted">The customer did not need us to attend{% if call_out.cancelled_at %} (cancelled {{ call_out.cancelled_at|datetime_display }}){% endif %}. This job is not counted in the totals.</p>
         <form method="post" action="{{ url_for('gritting.reopen_callout', call_out_id=call_out.id) }}" style="margin-top: 14px;">
           <button class="button subtle" type="submit">Reopen this job</button>
@@ -55,6 +60,16 @@
             <button class="button subtle big" type="submit">Customer doesn't need us – cancel</button>
           </form>
         {% endif %}
+        <details class="no-access-box" style="margin-top: 12px;">
+          <summary>Couldn't access the site</summary>
+          <form method="post" action="{{ url_for('gritting.no_access_callout', call_out_id=call_out.id) }}" class="form-grid" data-confirm="Mark this job as no access, email the customer and take it off the list?">
+            <label class="full-width">
+              What stopped us (goes in the email)
+              <input type="text" name="access_note" maxlength="500" placeholder="Gate locked, vehicle blocking the entrance..." required>
+            </label>
+            <button class="button primary full-width" type="submit">Send no access email and remove</button>
+          </form>
+        </details>
       {% else %}
         <p class="muted">This job is already completed and the confirmation email has been logged.</p>
       {% endif %}

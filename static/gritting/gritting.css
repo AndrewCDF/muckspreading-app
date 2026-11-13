@@ -300,3 +300,9 @@ details.sub-disclosure > .disclosure-body { padding: 0 14px 14px; display: grid;
 .email-flag { margin: 6px 0 0; padding: 8px 12px; border-radius: 12px; background: #f8dcd7; color: #8a2a1c; font-weight: 700; font-size: 14px; line-height: 1.35; }
 .email-alert { display: grid; gap: 8px; margin: 12px 0; padding: 14px; border-radius: 16px; background: #f8dcd7; border: 1px solid #e6b3aa; color: #8a2a1c; }
 .email-alert span { font-weight: 600; }
+
+/* Couldn't access the site */
+.no-access-box { margin-top: 10px; border: 1px dashed var(--line); border-radius: 14px; padding: 10px 12px; background: #fffaf0; }
+.no-access-box summary { cursor: pointer; font-weight: 700; color: #7a5410; }
+.no-access-box form { margin-top: 10px; }
+.status-no_access { background: #faeccd; color: #7a5410; }

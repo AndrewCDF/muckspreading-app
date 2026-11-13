@@ -23,7 +23,7 @@
           <li>
             <span class="run-box" aria-hidden="true"></span>
             <div>
-              <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+              <strong>{% if row.job_number %}Job {{ row.job_number }} · {% endif %}{{ row.customer_name }} · {{ row.site_name }}</strong>
               <p>{{ row.address }}{% if row.postcode %}, {{ row.postcode }}{% endif %}</p>
               {% if row.route_notes %}<p>{{ row.route_notes }}</p>{% endif %}
               {% if row.extras_json|extras_summary %}<p><strong>Includes:</strong> {{ row.extras_json|extras_summary }}</p>{% endif %}
@@ -42,6 +42,15 @@
       <h3>Already done ({{ done|length }})</h3>
       <ul class="run-plain">
         {% for row in done %}<li>{{ row.customer_name }} · {{ row.site_name }}</li>{% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if no_access %}
+    <section class="panel run-sheet">
+      <h3>No access ({{ no_access|length }})</h3>
+      <ul class="muted-list">
+        {% for row in no_access %}<li>{{ row.customer_name }} · {{ row.site_name }}{% if row.access_note %} · {{ row.access_note }}{% endif %}</li>{% endfor %}
       </ul>
     </section>
   {% endif %}

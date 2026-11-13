@@ -144,6 +144,15 @@ DEFAULT_EMAIL_TEMPLATES = {
         "Call-out issued at: {called_out_at}\n"
         "Job notes: {service_notes}"
     ),
+    "no_access_subject": f"{COMPANY_NAME} could not access {{site_name}}",
+    "no_access_body": (
+        "Dear {contact_name},\n\n"
+        f"{COMPANY_NAME} attended your site on the night of {{called_out_at}} to carry out the gritting but was unable to gain access.\n\n"
+        "Customer: {customer_name}\n"
+        "Site: {site_name}\n"
+        "Access problem: {access_note}\n\n"
+        "Please let us know if the access can be sorted so we can attend on the next call-out."
+    ),
 }
 DAY_KEYS = [
     "monday",
@@ -703,10 +712,10 @@ def render_email_template(template_text: str, context: dict[str, Any]) -> str:
 
 def fetch_email_templates() -> dict[str, str]:
     rows = get_db().execute(
-        """
+        f"""
         SELECT key, value
         FROM app_settings
-        WHERE key IN (?, ?, ?, ?)
+        WHERE key IN ({", ".join("?" for _ in DEFAULT_EMAIL_TEMPLATES)})
         """,
         tuple(DEFAULT_EMAIL_TEMPLATES.keys()),
     ).fetchall()
@@ -1177,6 +1186,10 @@ def init_db() -> None:
     ensure_column("call_outs", "cancelled_at", "TEXT")
     ensure_column("call_outs", "extras_amount", "REAL NOT NULL DEFAULT 0")
     ensure_column("call_outs", "extras_json", "TEXT")
+    ensure_column("call_outs", "no_access_at", "TEXT")
+    ensure_column("call_outs", "access_note", "TEXT")
+    had_job_numbers = "job_number" in {row[1] for row in db.execute("PRAGMA table_info(call_outs)").fetchall()}
+    ensure_column("call_outs", "job_number", "INTEGER")
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS special_dates (
@@ -1211,9 +1224,19 @@ def init_db() -> None:
             WHERE id IN (SELECT DISTINCT dispatch_batch_id FROM call_outs WHERE status = 'completed' AND dispatch_batch_id IS NOT NULL)
             """
         )
+    if not had_job_numbers:
+        # Jobs that already exist keep the number they showed (their id). Cancelled jobs and jobs still on a draft list have none.
+        db.execute(
+            """
+            UPDATE call_outs SET job_number = id
+            WHERE status <> 'cancelled'
+              AND (dispatch_batch_id IS NULL OR dispatch_batch_id IN (SELECT id FROM dispatch_batches WHERE finalised_at IS NOT NULL))
+            """
+        )
     ensure_column("notification_logs", "subject", "TEXT")
     ensure_column("notification_logs", "delivery_status", "TEXT NOT NULL DEFAULT 'logged'")
     ensure_column("notification_logs", "delivery_details", "TEXT")
+    ensure_column("notification_logs", "kind", "TEXT")
     for key, value in DEFAULT_EMAIL_TEMPLATES.items():
         db.execute(
             "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
@@ -1877,6 +1900,7 @@ def log_notification(
     recipient: str | None,
     subject: str,
     message: str,
+    kind: str = "",
 ) -> tuple[str, str]:
     logged_message = message
     if channel.lower() == "email":
@@ -1897,9 +1921,10 @@ def log_notification(
             message,
             sent_at,
             delivery_status,
-            delivery_details
+            delivery_details,
+            kind
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             call_out_id,
@@ -1910,6 +1935,7 @@ def log_notification(
             now_iso(),
             delivery_status,
             delivery_details,
+            kind,
         ),
     )
     return delivery_status, delivery_details
@@ -1935,7 +1961,7 @@ def unsent_emails(db: sqlite3.Connection, call_out_ids: list[int], live_only: bo
     if not call_out_ids:
         return []
     marks = ",".join("?" for _ in call_out_ids)
-    statuses = ("called_out",) if live_only else ("called_out", "completed")
+    statuses = ("called_out", "no_access") if live_only else ("called_out", "no_access", "completed")
     rows = db.execute(
         f"""
         SELECT notification_logs.*, call_outs.site_id, call_outs.status AS job_status
@@ -1945,6 +1971,11 @@ def unsent_emails(db: sqlite3.Connection, call_out_ids: list[int], live_only: bo
           AND LOWER(notification_logs.channel) = 'email'
           AND notification_logs.delivery_status IN ({",".join("?" for _ in UNSENT_STATUSES)})
           AND call_outs.status IN ({",".join("?" for _ in statuses)})
+          AND (
+            (call_outs.status = 'called_out' AND COALESCE(notification_logs.kind, '') IN ('', 'callout'))
+            OR (call_outs.status = 'no_access' AND notification_logs.kind = 'no_access')
+            OR (call_outs.status = 'completed' AND notification_logs.kind = 'completion')
+          )
           AND NOT EXISTS (
             SELECT 1 FROM notification_logs sent
             WHERE sent.call_out_id = notification_logs.call_out_id AND sent.subject = notification_logs.subject AND sent.delivery_status = 'sent'
@@ -1967,7 +1998,7 @@ def resend_unsent_emails(db: sqlite3.Connection, call_out_ids: list[int], live_o
         recipient = (current["email"] if current else "") or row["recipient"]
         status, _ = log_notification(
             call_out_id=row["call_out_id"], channel="Email", recipient=recipient, subject=row["subject"] or "",
-            message=strip_signature(row["message"]),
+            message=strip_signature(row["message"]), kind=row["kind"] or "",
         )
         key = "sent" if status == "sent" else "no_email" if status == "skipped_no_email" else "failed"
         counts[key] += 1
@@ -2139,6 +2170,17 @@ def delete_site_extra(extra_id: int):
     return site_extras_redirect(extra["site_id"])
 
 
+def assign_job_numbers(db: sqlite3.Connection, call_out_ids: list[int]) -> None:
+    """Give each of these jobs the next job number, in the order given, unless it already has one.
+
+    A job only gets a number once it is on the list to grit from. A job cancelled before that never has one."""
+    for call_out_id in call_out_ids:
+        db.execute(
+            "UPDATE call_outs SET job_number = (SELECT COALESCE(MAX(job_number), 0) + 1 FROM call_outs) WHERE id = ? AND job_number IS NULL",
+            (call_out_id,),
+        )
+
+
 def create_call_out(
     *,
     site_id: int,
@@ -2188,7 +2230,10 @@ def create_call_out(
             now_iso(),
         ),
     )
-    return int(cursor.lastrowid)
+    call_out_id = int(cursor.lastrowid)
+    if dispatch_batch_id is None:
+        assign_job_numbers(db, [call_out_id])  # a single call-out goes straight onto the live list; a batch waits for its final list
+    return call_out_id
 
 
 def build_bulk_email_subject(
@@ -2230,6 +2275,20 @@ def build_bulk_email_message(
     if message_template is None:
         message_template = fetch_email_templates()["callout_body"]
     return render_email_template(message_template, context)
+
+
+def build_no_access_email(call_out: sqlite3.Row, access_note: str) -> tuple[str, str]:
+    templates = fetch_email_templates()
+    context = {
+        "company_name": COMPANY_NAME,
+        "contact_name": call_out["contact_name"],
+        "customer_name": call_out["customer_name"],
+        "site_name": call_out["site_name"],
+        "called_out_at": format_date_from_iso((call_out["called_out_at"] or "")[:10]),
+        "access_note": access_note.strip() or "We could not get in to the site.",
+        "service_notes": "",
+    }
+    return render_email_template(templates["no_access_subject"], context), render_email_template(templates["no_access_body"], context)
 
 
 def build_completion_email_subject(call_out: sqlite3.Row, completed_at: str) -> str:
@@ -2318,6 +2377,7 @@ def complete_call_out_record(
         recipient=updated_call_out["email"],
         subject=subject,
         message=message,
+        kind="completion",
     )
     return updated_call_out, delivery_status, delivery_details
 
@@ -2408,7 +2468,7 @@ def fetch_dashboard_data() -> dict[str, Any]:
             """
             SELECT COUNT(*)
             FROM call_outs
-            WHERE status NOT IN ('completed', 'cancelled')
+            WHERE status NOT IN ('completed', 'cancelled', 'no_access')
             """
         ).fetchone()[0],
     }
@@ -2416,6 +2476,7 @@ def fetch_dashboard_data() -> dict[str, Any]:
         """
         SELECT
             call_outs.id,
+            call_outs.job_number,
             call_outs.called_out_at,
             call_outs.completed_at,
             call_outs.status,
@@ -2443,6 +2504,7 @@ def fetch_season_archive_rows(start_date: str, end_date: str) -> list[sqlite3.Ro
         """
         SELECT
             call_outs.id,
+            call_outs.job_number,
             call_outs.called_out_at,
             call_outs.completed_at,
             call_outs.status,
@@ -2466,11 +2528,12 @@ def fetch_season_archive_rows(start_date: str, end_date: str) -> list[sqlite3.Ro
 
 
 def fetch_call_out_rows(*, live_only: bool = False) -> list[sqlite3.Row]:
-    where_clause = "WHERE call_outs.status NOT IN ('completed', 'cancelled')" if live_only else ""
+    where_clause = "WHERE call_outs.status NOT IN ('completed', 'cancelled', 'no_access')" if live_only else ""
     return get_db().execute(
         f"""
         SELECT
             call_outs.id,
+            call_outs.job_number,
             call_outs.dispatch_batch_id,
             call_outs.called_out_at,
             call_outs.status,
@@ -2824,6 +2887,7 @@ def fetch_night_lists() -> list[dict[str, Any]]:
         """
         SELECT
             call_outs.id,
+            call_outs.job_number,
             call_outs.dispatch_batch_id,
             call_outs.called_out_at,
             call_outs.status,
@@ -2833,6 +2897,8 @@ def fetch_night_lists() -> list[dict[str, Any]]:
             call_outs.extras_json,
             call_outs.completed_at,
             call_outs.cancelled_at,
+            call_outs.no_access_at,
+            call_outs.access_note,
             sites.name AS site_name,
             sites.address,
             sites.postcode,
@@ -2864,11 +2930,12 @@ def fetch_night_lists() -> list[dict[str, Any]]:
         group["planned_attendance"] = batch["planned_attendance"] if batch else group["rows"][0]["planned_attendance"]
         group["weather"] = batch["weather_conditions"] if batch else ""
         group["finalised_at"] = batch["finalised_at"] if batch else None
-        rank = {"called_out": 0, "cancelled": 1, "completed": 2}  # still to grit first, finished jobs last
+        rank = {"called_out": 0, "no_access": 1, "cancelled": 2, "completed": 3}  # still to grit first, finished jobs last
         group["rows"].sort(key=lambda row: (rank.get(row["status"], 3), row["customer_name"].lower(), row["site_name"].lower()))
         group["counts"] = {
             "to_grit": sum(1 for row in group["rows"] if row["status"] == "called_out"),
             "cancelled": sum(1 for row in group["rows"] if row["status"] == "cancelled"),
+            "no_access": sum(1 for row in group["rows"] if row["status"] == "no_access"),
             "done": sum(1 for row in group["rows"] if row["status"] == "completed"),
         }
         lists.append(group)
@@ -2931,6 +2998,17 @@ def finalise_batch(batch_id: int):
         flash("There is nothing left to grit on this list, so it cannot be finalised.")
         return redirect(url_for("gritting.live_jobs"))
     db.execute("UPDATE dispatch_batches SET finalised_at = ? WHERE id = ?", (now_iso(), batch_id))
+    ordered = db.execute(
+        """
+        SELECT call_outs.id FROM call_outs
+        JOIN sites ON sites.id = call_outs.site_id
+        JOIN customers ON customers.id = sites.customer_id
+        WHERE call_outs.dispatch_batch_id = ? AND call_outs.status IN ('called_out', 'no_access')
+        ORDER BY customers.name COLLATE NOCASE, sites.name COLLATE NOCASE
+        """,
+        (batch_id,),
+    ).fetchall()
+    assign_job_numbers(db, [row["id"] for row in ordered])  # job numbers are given now, to the sites we are going to
     db.commit()
     flash(f"List finalised: {to_grit} {'site' if to_grit == 1 else 'sites'} to grit" + (f", {cancelled} not needed." if cancelled else "."))
     return redirect(url_for("gritting.live_jobs") + f"#list-{batch_id}")
@@ -2945,6 +3023,7 @@ def reopen_batch(batch_id: int):
         flash("Some jobs on this list are already done, so it cannot be reopened.")
         return redirect(url_for("gritting.live_jobs") + f"#list-{batch_id}")
     db.execute("UPDATE dispatch_batches SET finalised_at = NULL WHERE id = ?", (batch_id,))
+    db.execute("UPDATE call_outs SET job_number = NULL WHERE dispatch_batch_id = ?", (batch_id,))  # numbers are given again at the next finalise
     db.commit()
     flash("List reopened. Finalise it again when the changes are done.")
     return redirect(url_for("gritting.live_jobs") + f"#list-{batch_id}")
@@ -2960,7 +3039,7 @@ def run_sheet(batch_id: int) -> str:
         return redirect(url_for("gritting.live_jobs"))
     rows = db.execute(
         """
-        SELECT call_outs.id, call_outs.status, call_outs.pricing_label, call_outs.extras_json, call_outs.planned_attendance,
+        SELECT call_outs.id, call_outs.job_number, call_outs.status, call_outs.pricing_label, call_outs.extras_json, call_outs.planned_attendance, call_outs.access_note,
                sites.name AS site_name, sites.address, sites.postcode, sites.route_notes,
                customers.name AS customer_name, customers.contact_name, customers.emergency_phone, customers.emergency_contacts
         FROM call_outs
@@ -2977,6 +3056,7 @@ def run_sheet(batch_id: int) -> str:
         to_grit=[row for row in rows if row["status"] == "called_out"],
         done=[row for row in rows if row["status"] == "completed"],
         cancelled=[row for row in rows if row["status"] == "cancelled"],
+        no_access=[row for row in rows if row["status"] == "no_access"],
     )
 
 
@@ -3022,6 +3102,7 @@ def new_callout() -> str:
                 service_notes=request.form["service_notes"].strip(),
             )
         delivery_status, _ = log_notification(
+            kind="callout",
             call_out_id=call_out_id,
             channel="Email",
             recipient=request.form["recipient"].strip() or (site_email_row["email"] if site_email_row else ""),
@@ -3432,6 +3513,7 @@ def bulk_callouts() -> Any:
         if first_call_out_id is None:
             first_call_out_id = call_out_id
         delivery_status, _ = log_notification(
+            kind="callout",
             call_out_id=call_out_id,
             channel="Email",
             recipient=site["email"],
@@ -3546,6 +3628,9 @@ def complete_callout(call_out_id: int):
     if call_out["status"] == "cancelled":
         flash("This job was cancelled. Reopen it first if we do need to attend.")
         return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))
+    if call_out["status"] == "no_access":
+        flash("This job was marked no access. Put it back on the list first if we did get in.")
+        return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))
     if on_draft_list(call_out):
         flash(DRAFT_LIST_MESSAGE)
         return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))
@@ -3590,9 +3675,11 @@ def cancel_callout(call_out_id: int):
         flash("A completed job cannot be cancelled.")
     elif call_out["status"] == "cancelled":
         flash("This job is already cancelled.")
+    elif call_out["status"] == "no_access":
+        flash("This job was marked no access. Put it back on the list first if you want to cancel it.")
     else:
         db.execute(
-            "UPDATE call_outs SET status = 'cancelled', cancelled_at = ?, pricing_label = NULL, pricing_amount = NULL WHERE id = ?",
+            "UPDATE call_outs SET status = 'cancelled', cancelled_at = ?, pricing_label = NULL, pricing_amount = NULL, job_number = NULL WHERE id = ?",
             (now_iso(), call_out_id),
         )
         db.commit()
@@ -3603,6 +3690,34 @@ def cancel_callout(call_out_id: int):
     return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))
 
 
+@bp.post("/callouts/<int:call_out_id>/no-access")
+def no_access_callout(call_out_id: int):
+    """We attended but could not get in: email the customer, and take the job off the live list without completing it."""
+    db = get_db()
+    call_out = fetch_call_out(call_out_id)
+    if call_out is None:
+        flash("Call-out not found.")
+        return redirect(url_for("gritting.callouts"))
+    back = redirect(url_for("gritting.live_jobs") if request.form.get("next", "").strip() == "live_jobs" else url_for("gritting.callout_detail", call_out_id=call_out_id))
+    if call_out["status"] != "called_out":
+        flash("Only a job still to do can be marked as no access.")
+        return back
+    if on_draft_list(call_out):
+        flash("Finalise the list first. Until then a job can only be opened or marked not needed.")
+        return back
+    note = request.form.get("access_note", "").strip()[:500]
+    db.execute("UPDATE call_outs SET status = 'no_access', no_access_at = ?, access_note = ? WHERE id = ?", (now_iso(), note, call_out_id))
+    subject, message = build_no_access_email(call_out, note)
+    delivery_status, _ = log_notification(call_out_id=call_out_id, channel="Email", recipient=call_out["email"], subject=subject, message=message, kind="no_access")
+    db.commit()
+    label = f"{call_out['customer_name']} · {call_out['site_name']}"
+    if delivery_status == "sent":
+        flash(f"{label} marked as no access and the customer has been emailed. It is off the live list and not counted as done.")
+    else:
+        flash(f"{label} marked as no access and off the live list, but the email was NOT sent ({delivery_status.replace('_', ' ')}). Open the job to resend it.")
+    return back
+
+
 @bp.post("/callouts/<int:call_out_id>/reopen")
 def reopen_callout(call_out_id: int):
     db = get_db()
@@ -3610,8 +3725,14 @@ def reopen_callout(call_out_id: int):
     if call_out is None:
         flash("Call-out not found.")
         return redirect(url_for("gritting.callouts"))
-    if call_out["status"] == "cancelled":
+    if call_out["status"] == "no_access":
+        db.execute("UPDATE call_outs SET status = 'called_out', no_access_at = NULL, access_note = NULL WHERE id = ?", (call_out_id,))
+        db.commit()
+        flash("Job put back on the list.")
+    elif call_out["status"] == "cancelled":
         db.execute("UPDATE call_outs SET status = 'called_out', cancelled_at = NULL WHERE id = ?", (call_out_id,))
+        if not on_draft_list(call_out):
+            assign_job_numbers(db, [call_out_id])  # back on a live list: it gets a number again
         db.commit()
         flash("Job reopened. Choose the pricing when you complete it.")
     if request.form.get("next", "").strip() == "live_jobs":
@@ -3631,6 +3752,9 @@ def quick_complete_callout(call_out_id: int):
         return redirect(url_for("gritting.callouts"))
     if call_out["status"] == "cancelled":
         flash("This job was cancelled. Reopen it first if we do need to attend.")
+        return redirect(url_for("gritting.callouts"))
+    if call_out["status"] == "no_access":
+        flash("This job was marked no access. Put it back on the list first if we did get in.")
         return redirect(url_for("gritting.callouts"))
     if on_draft_list(call_out):
         flash(DRAFT_LIST_MESSAGE)
@@ -3668,6 +3792,7 @@ def fetch_monthly_rows(month_value: str) -> list[sqlite3.Row]:
         """
         SELECT
             call_outs.id,
+            call_outs.job_number,
             call_outs.called_out_at,
             call_outs.completed_at,
             call_outs.status,
@@ -3693,7 +3818,7 @@ def fetch_monthly_rows(month_value: str) -> list[sqlite3.Row]:
 
 def monthly_summary_export_header() -> list[str]:
     return [
-        "Call-out ID",
+        "Job number",
         "Customer",
         "Site",
         "Called out",
@@ -3747,7 +3872,7 @@ def monthly_summary_export_rows(rows: list[sqlite3.Row]) -> list[list[Any]]:
         pricing_amount = float(row["pricing_amount"]) if row["pricing_amount"] is not None else 0.0
         export_rows.append(
             [
-                row["id"],
+                row["job_number"] or "",
                 row["customer_name"],
                 row["site_name"],
                 format_date_from_iso(row["called_out_at"]),

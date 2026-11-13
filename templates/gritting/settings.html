@@ -124,6 +124,14 @@
             Completion body
             <textarea name="completion_body" id="completion-body-template" rows="9">{{ email_settings.completion_body }}</textarea>
           </label>
+          <label class="full-width">
+            No access subject
+            <input type="text" name="no_access_subject" value="{{ email_settings.no_access_subject }}">
+          </label>
+          <label class="full-width">
+            No access body (use {access_note} for what stopped us)
+            <textarea name="no_access_body" rows="9">{{ email_settings.no_access_body }}</textarea>
+          </label>
           <div class="full-width sub-panel">
             <h4>Completion live preview</h4>
             <p class="muted">Rendered using sample template data.</p>

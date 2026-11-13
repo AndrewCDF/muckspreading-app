@@ -862,6 +862,108 @@ class GrittingModuleTests(unittest.TestCase):
             self.assertIn("Resend 1 unsent email", self.client.get("/gritting/callouts/3").get_data(as_text=True))  # the failed one can be tried again
             self.assertIn("Resent: 1 sent", self.client.post("/gritting/callouts/3/resend-emails", follow_redirects=True).get_data(as_text=True))
 
+    def job_numbers(self):
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        rows = db.execute("SELECT id, status, job_number FROM call_outs ORDER BY id").fetchall()
+        db.close()
+        return rows
+
+    def test_a_job_only_gets_its_number_when_the_list_is_finalised(self):
+        site_ids = self.make_sites(names=("Main yard", "Loading bay", "Back gate"))
+        self.bulk_callout(site_ids)
+        self.assertEqual([row[2] for row in self.job_numbers()], [None, None, None])  # a draft list has no job numbers yet
+        self.assertIn("No job number", self.client.get("/gritting/callouts/1").get_data(as_text=True))
+        self.client.post("/gritting/callouts/1/cancel")  # cancelled before the list is finalised
+        self.client.post("/gritting/batches/1/finalise")
+        numbers = self.job_numbers()
+        self.assertEqual([(row[1], row[2]) for row in numbers], [("cancelled", None), ("called_out", 1), ("called_out", 2)])  # no gap, none for the cancelled one
+        self.assertIn("No job number", self.client.get("/gritting/callouts/1").get_data(as_text=True))
+        self.assertIn("Job number 1", self.client.get("/gritting/callouts/2").get_data(as_text=True))
+        self.assertIn("Job 1", self.client.get("/gritting/live-jobs").get_data(as_text=True))
+        self.assertIn("Job 2", self.client.get("/gritting/batches/1/run-sheet").get_data(as_text=True))
+        # reopening the list takes the numbers back so a late cancellation cannot leave a numbered job behind
+        self.client.post("/gritting/batches/1/reopen")
+        self.assertEqual([row[2] for row in self.job_numbers()], [None, None, None])
+        self.client.post("/gritting/callouts/1/reopen")
+        self.client.post("/gritting/callouts/2/cancel")
+        self.client.post("/gritting/batches/1/finalise")
+        self.assertEqual([(row[1], row[2]) for row in self.job_numbers()], [("called_out", 1), ("cancelled", None), ("called_out", 2)])
+
+    def test_single_call_outs_are_numbered_at_once_and_lose_it_when_cancelled(self):
+        site_ids = self.make_sites(names=("Main yard",))
+        self.client.post("/gritting/new-callout", data={
+            "site_id": site_ids[0], "called_out_at": "2026-01-12T18:00", "planned_attendance_from": "22:00", "planned_attendance_to": "04:00",
+            "weather_conditions": "Frost", "service_notes": "", "recipient": "pat@acme.test", "subject": "s", "message": "m", "pricing_label": "Weekday Night"})
+        self.assertEqual([(row[1], row[2]) for row in self.job_numbers()], [("called_out", 1)])
+        self.client.post("/gritting/callouts/1/cancel")
+        self.assertEqual([(row[1], row[2]) for row in self.job_numbers()], [("cancelled", None)])
+        self.client.post("/gritting/callouts/1/reopen")
+        self.assertEqual(self.job_numbers()[0][2], 1)
+
+    def test_jobs_from_before_job_numbers_keep_their_number_except_cancelled_and_draft_ones(self):
+        self.client.get("/gritting/")
+        site_ids = self.make_sites(names=("A", "B", "C"))
+        self.bulk_callout(site_ids)
+        self.client.post("/gritting/callouts/2/cancel")
+        self.client.post("/gritting/batches/1/finalise")
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        db.execute("ALTER TABLE call_outs DROP COLUMN job_number")
+        db.commit()
+        db.close()
+        gritting._initialised_database = None  # start the app again on the older database
+        self.client.get("/gritting/")
+        self.assertEqual([(row[1], row[2]) for row in self.job_numbers()], [("called_out", 1), ("cancelled", None), ("called_out", 3)])
+
+    # ---- couldn't access the site ----------------------------------------------------------------------------
+
+    def test_no_access_emails_the_customer_and_takes_the_job_off_the_list(self):
+        site_ids = self.make_sites(names=("Main yard", "Loading bay"))
+        self.bulk_callout(site_ids)
+        self.client.post("/gritting/batches/1/finalise")
+        sent = []
+        def fake_send(recipients, subject, body, attachments=None):
+            sent.append((list(recipients), subject, body))
+            return "sent", "ok"
+        with patch.object(gritting, "send_email_message", side_effect=fake_send):
+            page = self.client.get("/gritting/live-jobs").get_data(as_text=True)
+            self.assertIn("Couldn't access the site", page)
+            response = self.client.post("/gritting/callouts/1/no-access", data={"access_note": "Gate locked", "next": "live_jobs"}, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("marked as no access and the customer has been emailed", response)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0], ["pat@acme.test"])
+        self.assertIn("could not access", sent[0][1])
+        self.assertIn("Gate locked", sent[0][2])
+        self.assertNotRegex(sent[0][2], r"\{\w+\}")  # every placeholder was filled in
+        self.assertEqual([row[1] for row in self.job_numbers()], ["no_access", "called_out"])
+        self.assertIn("1</strong> to grit", response)
+        self.assertIn("1 no access", response)
+        self.assertIn("No access", response)
+        self.assertIn("Gate locked", response)
+        detail = self.client.get("/gritting/callouts/1").get_data(as_text=True)
+        self.assertIn("We could not get in", detail)
+        self.assertIn("could not access", detail)  # the email is in the job's notifications
+        self.assertIn("No access (1)", self.client.get("/gritting/batches/1/run-sheet").get_data(as_text=True))
+        # it is not done, so it cannot be completed or cancelled until it is put back
+        self.assertIn("marked no access", self.client.post("/gritting/callouts/1/complete", data={"service_notes": "", "completed_at": "2026-01-12T23:00"}, follow_redirects=True).get_data(as_text=True))
+        self.assertIn("marked no access", self.client.post("/gritting/callouts/1/complete-quick", follow_redirects=True).get_data(as_text=True))
+        self.client.post("/gritting/callouts/1/reopen")
+        self.assertEqual([row[1] for row in self.job_numbers()], ["called_out", "called_out"])
+
+    def test_no_access_is_refused_on_a_draft_list_and_when_the_email_cannot_go(self):
+        site_ids = self.make_sites(names=("Main yard",))
+        self.bulk_callout(site_ids)
+        self.assertIn("Finalise the list first", self.client.post("/gritting/callouts/1/no-access", data={"access_note": "x"}, follow_redirects=True).get_data(as_text=True))
+        self.assertEqual(self.job_numbers()[0][1], "called_out")
+        self.client.post("/gritting/batches/1/finalise")
+        response = self.client.post("/gritting/callouts/1/no-access", data={"access_note": "Barrier down"}, follow_redirects=True).get_data(as_text=True)
+        self.assertIn("email was NOT sent", response)  # no mail server in the test, and the job is flagged to resend
+        self.assertEqual(self.job_numbers()[0][1], "no_access")
+        self.assertIn("Email not sent", self.client.get("/gritting/callouts/1").get_data(as_text=True))
+        sent = []
+        with patch.object(gritting, "smtp_configured", return_value=True), patch.object(gritting, "send_email_message", side_effect=lambda r, s, b, a=None: sent.append(s) or ("sent", "ok")):
+            self.assertIn("Resent: 1 sent", self.client.post("/gritting/callouts/1/resend-emails", follow_redirects=True).get_data(as_text=True))
+        self.assertTrue(sent and "could not access" in sent[0])
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):

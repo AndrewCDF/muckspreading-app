@@ -26,14 +26,30 @@
           {% endif %}
         {% endif %}
       </div>
-      <p class="night-counts"><strong>{{ group.counts.to_grit }}</strong> to grit · {{ group.counts.cancelled }} not needed · {{ group.counts.done }} done</p>
+      <p class="night-counts"><strong>{{ group.counts.to_grit }}</strong> to grit · {{ group.counts.cancelled }} not needed{% if group.counts.no_access %} · {{ group.counts.no_access }} no access{% endif %} · {{ group.counts.done }} done</p>
       {% if group.batch_id and not group.finalised_at %}
         <p class="rf-advice">Draft list: you can open a job or mark it not needed. Finalise the list to get the list to grit from, and complete jobs from it through the night.</p>
       {% endif %}
 
       <div class="stack-list">
         {% for row in group.rows %}
-          {% if row.status == 'cancelled' %}
+          {% if row.status == 'no_access' %}
+            <article class="job-card is-cancelled">
+              <div class="job-head">
+                <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
+                <span class="status status-no_access">No access</span>
+              </div>
+              <p class="job-meta">{% if row.job_number %}Job {{ row.job_number }} · {% endif %}Could not get in{% if row.access_note %}: {{ row.access_note }}{% endif %}</p>
+              {% if group.email_problems.get(row.id) %}<p class="email-flag">⚠ {{ group.email_problems.get(row.id) }}</p>{% endif %}
+              <div class="job-actions">
+                <a class="button subtle" href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">Open</a>
+                <form method="post" action="{{ url_for('gritting.reopen_callout', call_out_id=row.id) }}">
+                  <input type="hidden" name="next" value="live_jobs">
+                  <button class="button subtle" type="submit">Put back on the list</button>
+                </form>
+              </div>
+            </article>
+          {% elif row.status == 'cancelled' %}
             <article class="job-card is-cancelled">
               <div class="job-head">
                 <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
@@ -62,7 +78,7 @@
                 <strong>{{ row.customer_name }} · {{ row.site_name }}</strong>
                 <span class="status status-{{ row.status }}">{{ row.status|replace('_', ' ') }}</span>
               </div>
-              <p class="job-meta">{{ row.address }}{% if row.postcode %}, {{ row.postcode }}{% endif %}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
+              <p class="job-meta">{% if row.job_number %}<strong>Job {{ row.job_number }}</strong> · {% endif %}{{ row.address }}{% if row.postcode %}, {{ row.postcode }}{% endif %}{% if row.route_notes %} · {{ row.route_notes }}{% endif %}</p>
               {% if group.email_problems.get(row.id) %}<p class="email-flag">⚠ {{ group.email_problems.get(row.id) }}</p>{% endif %}
 
               {% if row.extras_json|extras_summary %}<p class="job-meta rf-rain-line">Includes extras: {{ row.extras_json|extras_summary }}</p>{% endif %}
@@ -81,6 +97,19 @@
                   </form>
                 {% endif %}
               </div>
+              {% if group.finalised_at or not group.batch_id %}
+                <details class="no-access-box">
+                  <summary>Couldn't access the site</summary>
+                  <form method="post" action="{{ url_for('gritting.no_access_callout', call_out_id=row.id) }}" class="form-grid" data-confirm="Mark {{ row.site_name }} as no access, email {{ row.customer_name }} and take it off the list?">
+                    <input type="hidden" name="next" value="live_jobs">
+                    <label class="full-width">
+                      What stopped us (goes in the email)
+                      <input type="text" name="access_note" maxlength="500" placeholder="Gate locked, vehicle blocking the entrance..." required>
+                    </label>
+                    <button class="button primary full-width" type="submit">Send no access email and remove</button>
+                  </form>
+                </details>
+              {% endif %}
             </article>
           {% endif %}
         {% endfor %}
