@@ -15,9 +15,13 @@
     .hours { white-space: nowrap; text-align: right; }
     .notes { white-space: pre-wrap; min-width: 220px; }
     .print-button { padding: 11px 18px; border: 0; border-radius: 10px; background: #24442f; color: white; font-weight: bold; cursor: pointer; }
+    body { padding-top: env(safe-area-inset-top, 0px); }
+    header { flex-wrap: wrap; }
+    .page-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+    .back-button { display: inline-flex; align-items: center; padding: 11px 16px; border-radius: 10px; border: 1px solid #b8c2ba; background: #fff; color: #24442f; font-weight: bold; text-decoration: none; }
     @media print {
       body { margin: 8mm; font-size: 10px; }
-      .print-button { display: none; }
+      .print-button, .back-button { display: none; }
       table { break-inside: auto; }
       tr { break-inside: avoid; }
       thead { display: table-header-group; }
@@ -27,7 +31,10 @@
 <body>
   <header>
     <div><h1>A. Farrell Contracting</h1><h2>{{ report.month_label }} Timesheet</h2><p>Staff member: <strong>{{ report.staff_name }}</strong></p><p>Overall total: <strong>{{ report.total_duration_label }}</strong></p></div>
-    <button class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
+    <div class="page-buttons">
+      <a class="back-button" href="{{ url_for('timesheet_home') }}" onclick="if (window.history.length > 1) { window.history.back(); return false; }">← Back to timesheet</a>
+      <button class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
+    </div>
   </header>
   <h2>Company Hours</h2>
   <table>

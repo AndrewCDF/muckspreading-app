@@ -458,3 +458,20 @@ html body input[type="datetime-local"]::-webkit-date-and-time-value,
 html body input[type="time"]::-webkit-date-and-time-value,
 html body input[type="month"]::-webkit-date-and-time-value { text-align: left; }
 html body .field, html body label, html body .form-grid > * { min-width: 0; }
+
+/* In-app viewer for PDFs and photos: a Close bar on top so there is always a way back */
+.af-viewer-open, .af-viewer-open body { overflow: hidden; }
+.af-viewer { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; background: #1c221e; opacity: 0; transform: translateY(16px); transition: opacity 0.22s ease, transform 0.25s var(--af-ease); }
+.af-viewer.is-open { opacity: 1; transform: none; }
+.af-viewer-bar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px; background: linear-gradient(160deg, #1f4a33, #0f2619); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); }
+.af-viewer-title { margin: 0; overflow: hidden; color: #fff; font-weight: 700; font-size: 15px; text-align: center; white-space: nowrap; text-overflow: ellipsis; }
+.af-viewer-close, .af-viewer-save { appearance: none; min-height: 42px; padding: 0 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.14); color: #fff; font: inherit; font-weight: 800; font-size: 14px; cursor: pointer; }
+.af-viewer-save { background: linear-gradient(180deg, var(--af-gold-1), var(--af-gold-2)); border: 0; box-shadow: 0 3px 0 var(--af-gold-edge); }
+.af-viewer-save[hidden] { display: inline-block !important; visibility: hidden; }
+.af-viewer-close:active, .af-viewer-save:active { transform: translateY(2px); }
+.af-viewer-body { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px calc(env(safe-area-inset-bottom, 0px) + 16px); }
+.af-viewer-pages { display: grid; justify-items: center; gap: 12px; }
+.af-viewer-page { display: block; max-width: 100%; height: auto; background: #fff; border-radius: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); }
+.af-viewer-image { display: block; max-width: 100%; max-height: 100%; margin: 0 auto; border-radius: 8px; object-fit: contain; }
+.af-viewer-frame { width: 100%; height: 100%; min-height: 70vh; border: 0; border-radius: 6px; background: #fff; }
+.af-viewer-message { margin: 40px auto; max-width: 420px; color: #e8efe9; text-align: center; font-weight: 600; line-height: 1.5; }

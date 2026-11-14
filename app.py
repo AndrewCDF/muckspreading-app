@@ -1333,7 +1333,7 @@ HTML = """
           <div class="hint">Use Job Date From if you want to stop the invoice pulling in older uninvoiced jobs. The rate field defaults from the customer master but can be changed for this invoice. Additional fees use separate description and amount boxes, with VAT fixed at 20%.</div>
           <div class="hint">The customer email comes from the saved job snapshot or the current customer master. Office and Andrew receive accounts copies automatically. Owen is excluded from invoice copies.</div>
           <div class="actions">
-            <button class="button button-secondary" type="submit" formaction="{{ url_for('invoice_preview_pdf') }}" formmethod="post" formtarget="_blank">Preview PDF</button>
+            <button class="button button-secondary" type="submit" formaction="{{ url_for('invoice_preview_pdf') }}" formmethod="post" formtarget="_blank" data-viewer-submit="Invoice preview">Preview PDF</button>
             <button class="button button-secondary" type="submit" formaction="{{ url_for('invoice_preview_xlsx') }}" formmethod="post">Download Preview .xlsx</button>
             <button class="button button-primary" type="submit">Create and Email Invoice</button>
           </div>
@@ -1503,7 +1503,7 @@ HTML = """
               {% if form_job.issue_photo_items %}
               <div class="photo-grid">
                 {% for photo in form_job.issue_photo_items %}
-                <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener">
+                <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener" data-viewer="Issue photo {{ loop.index }}" data-viewer-name="issue-photo-{{ loop.index }}.jpg">
                   <img src="{{ photo.url }}" alt="Issue photo">
                   <span>{{ loop.index }}</span>
                 </a>
@@ -1556,7 +1556,7 @@ HTML = """
                     {% if job.issue_photo_items %}
                     <div class="job-photo-grid">
                       {% for photo in job.issue_photo_items %}
-                      <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener">
+                      <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener" data-viewer="Issue photo {{ loop.index }}" data-viewer-name="issue-photo-{{ loop.index }}.jpg">
                         <img src="{{ photo.url }}" alt="Issue photo">
                         <span>{{ loop.index }}</span>
                       </a>
@@ -1602,7 +1602,7 @@ HTML = """
                   {% if job.issue_photo_items %}
                   <div class="job-photo-grid">
                     {% for photo in job.issue_photo_items %}
-                    <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener">
+                    <a class="photo-thumb" href="{{ photo.url }}" target="_blank" rel="noopener" data-viewer="Issue photo {{ loop.index }}" data-viewer-name="issue-photo-{{ loop.index }}.jpg">
                       <img src="{{ photo.url }}" alt="Issue photo">
                       <span>{{ loop.index }}</span>
                     </a>
@@ -1692,6 +1692,7 @@ HTML = """
     {% if not invoice_page %}<button class="bottom-nav-btn" id="af-menu-button" type="button" aria-controls="af-menu" aria-expanded="false"><strong aria-hidden="true">☰</strong>Menu</button>{% endif %}
   </nav>
   <script src="/static/af_menu.js" defer></script>
+  <script src="/static/af_viewer.js" defer></script>
   <div id="download_notice" class="download-notice" hidden>Preparing download...</div>
 
   <script>
@@ -3161,7 +3162,7 @@ INVOICE_HISTORY_HTML = """
                 {% if row.can_edit %}
                 <div class="actions-inline">
                   <a class="button button-small" href="{{ url_for('invoice_history_edit', ledger_index=row.ledger_index) }}">Edit / Re-send</a>
-                  <a class="button button-small" href="{{ url_for('invoice_history_show_pdf', ledger_index=row.ledger_index) }}" target="_blank" rel="noopener">View PDF</a>
+                  <a class="button button-small" href="{{ url_for('invoice_history_show_pdf', ledger_index=row.ledger_index) }}" target="_blank" rel="noopener" data-viewer="Invoice" data-viewer-name="invoice.pdf">View PDF</a>
                   <a class="button button-small" data-invoice-download="1" data-fallback-name="invoice.pdf" href="{{ url_for('invoice_history_download_pdf', ledger_index=row.ledger_index) }}">Save PDF</a>
                   <a class="button button-small" data-invoice-download="1" data-fallback-name="invoice.xlsx" href="{{ url_for('invoice_history_download_xlsx', ledger_index=row.ledger_index) }}">Save Excel</a>
                 </div>
@@ -3259,6 +3260,7 @@ INVOICE_HISTORY_HTML = """
       });
     }
   </script>
+  <script src="/static/af_viewer.js" defer></script>
 </body>
 </html>
 """
