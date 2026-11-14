@@ -153,11 +153,11 @@ DASHBOARD_HTML = """
       <section class="branch-grid">
                 <a class="primary" href="/muck">Muck Spreading</a>
                 <a class="primary" href="/straw">Hay &amp; Straw</a>
-                <a class="primary" href="{{ url_for('timesheet_home') }}">Timesheet</a>
                 <a class="primary" href="{{ url_for('beet_home') }}">Sugar Beet</a>
                 <a class="primary" href="{{ url_for('gritting.dashboard') }}">Gritting</a>
                 <a class="primary" href="{{ url_for('weather.weather_home') }}">Weather</a>
                 <a class="primary" href="{{ url_for('maintenance_home') }}">Maintenance</a>
+                <a class="primary" href="{{ url_for('timesheet_home') }}">Timesheet</a>
       </section>
     </main>
   </div>
@@ -1237,7 +1237,7 @@ HTML = """
           <span class="title-line title-line-secondary">Invoice Page</span>
         </h1>
         <div class="actions">
-          <a class="button button-secondary" href="{{ url_for('home') }}">Back to Dashboard</a>
+          <a class="button button-secondary" href="{{ url_for('muck_home') }}">Back to muck spreading</a>
           <a class="button button-secondary" href="{{ url_for('invoice_history') }}">Invoice History</a>
         </div>
       </div>
@@ -1515,7 +1515,7 @@ HTML = """
           <div class="actions">
             <button class="button button-primary" type="submit">{{ form_submit_label }}</button>
             {% if is_editing %}
-            <a class="button button-secondary" href="{{ url_for('home') }}">Cancel Edit</a>
+            <a class="button button-secondary" href="{{ url_for('muck_home') }}">Cancel Edit</a>
             {% endif %}
           </div>
         </form>
@@ -2631,7 +2631,7 @@ ADMIN_HTML = """
 <body>
   <div class="page">
     <div class="top-links">
-      <a class="button button-secondary" href="{{ url_for('home') }}">Back To Jobs</a>
+      <a class="button button-secondary" href="{{ url_for('muck_home') }}">Back to muck spreading</a>
     </div>
 
     {% if status_msg %}
@@ -3119,7 +3119,7 @@ INVOICE_HISTORY_HTML = """
   <div class="page">
     <div class="top-links">
       <a class="button" href="{{ url_for('invoice_home') }}">Back To Invoices</a>
-      <a class="button" href="{{ url_for('home') }}">Back To Jobs</a>
+      <a class="button" href="{{ url_for('muck_home') }}">Back to muck spreading</a>
     </div>
 
     {% if status_msg %}
@@ -11262,27 +11262,27 @@ def save_job():
     job_date = str(request.form.get("job_date", "") or "").strip()
 
     if not customer:
-        return redirect(url_for("home", ok=0, msg="Customer is required"))
+        return redirect(url_for("muck_home", ok=0, msg="Customer is required"))
     if not field_name:
-        return redirect(url_for("home", ok=0, msg="Field name is required"))
+        return redirect(url_for("muck_home", ok=0, msg="Field name is required"))
     if not muck_type:
-        return redirect(url_for("home", ok=0, msg="Muck type is required"))
+        return redirect(url_for("muck_home", ok=0, msg="Muck type is required"))
     try:
         datetime.strptime(job_date, "%Y-%m-%d")
     except ValueError:
-        return redirect(url_for("home", ok=0, msg="Job date must be a valid date"))
+        return redirect(url_for("muck_home", ok=0, msg="Job date must be a valid date"))
 
     try:
         spreader_tons = parse_tons(request.form.get("spreader_tons"), "Total spreader tons")
         john_deere_tons = parse_tons(request.form.get("john_deere_tons"), "Total Ops Center tons")
     except ValueError as exc:
-        return redirect(url_for("home", ok=0, msg=str(exc)))
+        return redirect(url_for("muck_home", ok=0, msg=str(exc)))
 
     existing_job = None
     if edit_job_id:
         existing_job = find_job_by_id(edit_job_id)
         if not existing_job:
-            return redirect(url_for("home", ok=0, msg="Saved job could not be found for editing"))
+            return redirect(url_for("muck_home", ok=0, msg="Saved job could not be found for editing"))
 
     record = {
         "id": int(existing_job.get("id")) if isinstance(existing_job, dict) else int(time.time() * 1000),
@@ -11333,15 +11333,15 @@ def save_job():
         save_field_map(field_map)
 
     action_label = "Updated" if existing_job else "Saved"
-    return redirect(url_for("home", ok=1, msg="%s job for %s - %s." % (action_label, customer, field_name)))
+    return redirect(url_for("muck_home", ok=1, msg="%s job for %s - %s." % (action_label, customer, field_name)))
 
 
 @app.route("/jobs/delete/<int:job_id>", methods=["POST"])
 def delete_job(job_id):
     ensure_data_dir()
     if not delete_job_by_id(job_id):
-        return redirect(url_for("home", ok=0, msg="Saved job could not be found"))
-    return redirect(url_for("home", ok=1, msg="Deleted saved job"))
+        return redirect(url_for("muck_home", ok=0, msg="Saved job could not be found"))
+    return redirect(url_for("muck_home", ok=1, msg="Deleted saved job"))
 
 
 @app.route("/jobs/issue-photos/<path:filename>")
@@ -12302,7 +12302,7 @@ def backup_download(name):
 def export_period_summary_xlsx(period_key):
     config = summary_export_config(period_key)
     if not isinstance(config, dict):
-        return redirect(url_for("home", ok=0, msg="Unknown summary export period"))
+        return redirect(url_for("muck_home", ok=0, msg="Unknown summary export period"))
 
     start_date, end_date = config["range"]
     summary = jobs_summary_for_range(start_date, end_date, config["title"])

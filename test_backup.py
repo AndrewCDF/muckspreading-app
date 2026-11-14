@@ -77,6 +77,15 @@ class WholeAppBackupTests(unittest.TestCase):
         self.assertIn(backups[0]["label"].encode(), self.client.get("/settings").data)
         self.assertEqual(self.client.get("/backup/files/..%2Fapp.py").status_code, 404)
 
+    def test_muck_spreading_buttons_and_saves_come_back_to_muck_spreading_not_the_app_home(self):
+        for path in ("/invoice", "/invoice/history", "/admin"):
+            page = self.client.get(path).get_data(as_text=True)
+            self.assertIn('href="/muck">Back to muck spreading<', page, path)
+        refused = self.client.post("/jobs/save", data={"customer": ""})  # a save that is refused still lands on muck spreading
+        self.assertIn("/muck?", refused.headers["Location"])
+        missing = self.client.post("/jobs/delete/999999")
+        self.assertIn("/muck?", missing.headers["Location"])
+
     def test_the_parts_of_the_app_no_longer_have_their_own_backup_button(self):
         self.assertNotIn(b"Backup ZIP", self.client.get("/muck").data)
 
