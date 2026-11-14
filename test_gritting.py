@@ -964,6 +964,59 @@ class GrittingModuleTests(unittest.TestCase):
             self.assertIn("Resent: 1 sent", self.client.post("/gritting/callouts/1/resend-emails", follow_redirects=True).get_data(as_text=True))
         self.assertTrue(sent and "could not access" in sent[0])
 
+    # ---- checking the forecast against real road readings -------------------------------------------------------
+
+    def test_road_readings_are_saved_beside_the_forecast_and_correct_it_once_there_are_enough(self):
+        from datetime import timedelta as delta
+        site_ids = self.make_sites(names=("Main yard",))
+        self.bulk_callout(site_ids)
+        self.client.post("/gritting/batches/1/finalise")
+        start = (datetime.now() - delta(days=2)).strftime("%Y-%m-%dT00:00")
+        fixture = raw_forecast(lambda stamp: 1.0, start=start, hours=24 * 6)
+        with patch.object(gritting, "fetch_open_meteo_forecast", return_value=(fixture, False)):
+            self.assertIn("Log road temperature", self.client.get("/gritting/live-jobs").get_data(as_text=True))
+            first = self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0", "next": "live_jobs"}, follow_redirects=True).get_data(as_text=True)
+            self.assertIn("Saved -1.0°C", first)
+            self.assertIn("2.0°C colder than forecast", first)  # the forecast said 1.0
+            for bad in ("", "abc", "99", "-50"):
+                self.assertNotIn("Saved", self.client.post("/gritting/callouts/1/road-reading", data={"reading": bad}, follow_redirects=True).get_data(as_text=True))
+            db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+            self.assertEqual(db.execute("SELECT reading, forecast_surface FROM road_readings").fetchall(), [(-1.0, 1.0)])
+            db.close()
+            # four readings are not enough to move the forecast, five are, and the move is smaller than the miss
+            accuracy = lambda: self.client.get("/gritting/road-forecast.json").get_json()
+            for _ in range(3):
+                self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0"})
+            self.assertEqual((accuracy()["bias"], accuracy()["readings"]), (0.0, 4))
+            self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0"})
+            self.assertEqual(accuracy()["readings"], 5)
+            self.assertEqual(accuracy()["bias"], -1.0)  # median miss -2.0, trusted 5 parts in 10
+            for _ in range(15):
+                self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0"})
+            self.assertEqual(accuracy()["bias"], -1.6)  # 20 readings: trusted 20 parts in 25
+            page = self.client.get("/gritting/road-accuracy").get_data(as_text=True)
+            self.assertIn("-2.0°C", page)
+            self.assertIn("colder than the forecast", page)
+        # a correction moves the night's figures the same amount
+        now = datetime(2026, 11, 10, 19, 0)
+        freezing = raw_forecast(lambda stamp: 3.0, hours=24 * 12)
+        plain = gritting.road_forecast_from_open_meteo(freezing, now)["nights"][0]
+        lowered = gritting.road_forecast_from_open_meteo(freezing, now, bias=-2.0)["nights"][0]
+        self.assertEqual((plain["min_surface"], lowered["min_surface"]), (3.0, 1.0))
+        self.assertEqual(plain["level"], "ok")
+        self.assertEqual(lowered["level"], "watch")
+
+    def test_the_accuracy_page_loads_with_no_readings_and_the_bias_is_limited(self):
+        self.assertIn("No readings yet", self.client.get("/gritting/road-accuracy").get_data(as_text=True))
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        now = datetime.now().strftime("%Y-%m-%dT%H:%M")
+        for _ in range(40):
+            db.execute("INSERT INTO road_readings (read_at, reading, forecast_surface) VALUES (?, 12.0, 0.0)", (now,))
+        db.commit()
+        db.close()
+        with app.app.app_context():
+            self.assertEqual(gritting.road_accuracy(gritting.get_db())["bias"], 3.0)  # never more than 3 degrees
+
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()
         for href in re.findall(r'href="(/[^"#]*)"', page):
@@ -985,12 +1038,12 @@ def raw_forecast(surface, air=None, dew=-5.0, rain=0.0, cloud=100, wind=10.0, st
 
 
 class RoadForecastTests(unittest.TestCase):
-    def test_hour_risk_rules_keep_a_safety_margin(self):
+    def test_hour_risk_rules_use_a_zero_degree_trigger(self):
         def row(surface, air=8.0, dew=-5.0, rain=0.0, snow=0.0, cloud=100, wind=10):
             return {"surface": surface, "air": air, "dew": dew, "rain": rain, "snow": snow, "cloud": cloud, "wind": wind}
         cases = [
-            (row(-1.0), "grit"), (row(0.5), "grit"), (row(0.6), "watch"), (row(2.0), "watch"), (row(2.1), "ok"), (row(3.0), "ok"),
-            (row(1.9, rain=0.4), "grit"), (row(2.5, rain=0.4), "ok"), (row(1.4, dew=1.0), "grit"), (row(1.4, dew=-5.0), "watch"),
+            (row(-1.0), "grit"), (row(0.0), "grit"), (row(0.1), "watch"), (row(0.5), "watch"), (row(2.0), "watch"), (row(2.1), "ok"), (row(3.0), "ok"),
+            (row(1.9, rain=0.4), "watch"), (row(0.0, rain=0.4), "grit"), (row(1.4, dew=1.0), "watch"),  # rain and damp no longer raise the trigger
             (row(5.0, air=2.0, cloud=10, wind=3), "ok"),  # clear, calm and cold air no longer raises a warning by itself
         ]
         for case, expected in cases:

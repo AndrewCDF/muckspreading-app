@@ -280,7 +280,7 @@
   function hourlyTable(hours) {
     const rows = hours.map(hour => {
       const cls = hour.level === 'grit' ? 'wx-row-grit' : hour.level === 'watch' ? 'wx-row-watch' : '';
-      const cold = hour.surface !== null && hour.surface <= 0.5 ? ' class="wx-cold"' : '';
+      const cold = hour.surface !== null && hour.surface <= 0 ? ' class="wx-cold"' : '';
       return `<tr class="${cls}"><td>${esc(hour.hour)} ${esc(hour.icon)}</td><td>${deg(hour.temp)}</td><td>${deg(hour.feels)}</td><td${cold}>${deg(hour.surface)}</td>
         <td>${num(hour.rain)}</td><td>${num(hour.prob, 0)}%</td><td>${num(hour.wind)}</td><td>${num(hour.gust)}</td><td>${esc(hour.compass)}</td>
         <td>${num(hour.cloud, 0)}%</td><td>${num(hour.humidity, 0)}%</td><td>${num(hour.pressure, 0)}</td><td>${num(hour.visibility_km)}</td><td>${deg(hour.dew)}</td><td>${num(hour.uv)}</td></tr>`;

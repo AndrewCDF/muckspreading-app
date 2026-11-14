@@ -27,6 +27,7 @@
       <div id="rf-svg"></div>
     </figure>
     <p class="job-meta" id="rf-updated"></p>
+    <p class="job-meta" id="rf-bias"></p>
     <p class="job-meta">A guide from the Met Office UK model for {{ forecast_place }}, not a road sensor reading. Real road temperatures can differ by a few degrees, especially on clear, calm nights and on bridges and exposed routes, so use your own judgement.</p>
   </section>
 
@@ -274,6 +275,9 @@
               : "No rain forecast in the next 7 days.";
             renderNights(data.nights);
             renderChart();
+            const biasNote = document.getElementById("rf-bias");
+            const link = ' <a href="{{ url_for('gritting.road_accuracy_page') }}">See how accurate it is</a>';
+            biasNote.innerHTML = (data.bias ? "Corrected " + (data.bias > 0 ? "+" : "") + data.bias + "°C using " + data.readings + " of your road readings." : (data.readings < 5 ? "Log road temperatures on jobs to check this forecast (" + data.readings + " of 5 so far)." : "The forecast matches your road readings, so no correction is applied.")) + link;
             updated.textContent = "Updated " + data.updated + (data.stale ? " (the forecast service did not answer, so this may be a little out of date)" : "") + ".";
           })
           .catch(function () {

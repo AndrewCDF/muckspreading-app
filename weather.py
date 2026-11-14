@@ -169,7 +169,7 @@ def pressure_change(hours: list[dict[str, Any]], ahead: int = 3) -> dict[str, An
     return {"trend": trend, "change": change}
 
 
-def build_weather(raw: dict[str, Any], now: datetime) -> dict[str, Any]:
+def build_weather(raw: dict[str, Any], now: datetime, bias: float = 0.0, road: dict[str, Any] | None = None) -> dict[str, Any]:
     hourly, daily = raw["hourly"], raw["daily"]
     times = hourly.get("time") or []
     this_hour = now.replace(minute=0, second=0, microsecond=0)
@@ -202,6 +202,8 @@ def build_weather(raw: dict[str, Any], now: datetime) -> dict[str, Any]:
         if moment < this_hour:
             continue
         surface = _number(columns["soil_temperature_0cm"], index)
+        if surface is not None:
+            surface = round(surface + bias, 1)  # corrected by what your own road readings show
         air = _number(columns["temperature_2m"], index)
         dew = _number(columns["dew_point_2m"], index)
         rain = _number(columns["precipitation"], index) or 0.0
@@ -226,9 +228,19 @@ def build_weather(raw: dict[str, Any], now: datetime) -> dict[str, Any]:
             "icon": icon, "level": level,
         })
 
+    # Where the gritting page has its own three-model road forecast, use it here too, so both pages give the same answer.
+    if road:
+        road_hours = {(item["date"], item["hour"]): item for item in road.get("hourly", [])}
+        for hour in hours:
+            match = road_hours.get((hour["date"], hour["hour"]))
+            if match:
+                hour["surface"], hour["level"] = match["surface"], match["level"]
+
     # Gritting verdict per night (18:00 to 06:00), the same rules as the gritting page.
-    night_forecast = gritting.road_forecast_from_open_meteo(raw, now, night_count=FORECAST_DAYS)
+    night_forecast = gritting.road_forecast_from_open_meteo(raw, now, night_count=FORECAST_DAYS, bias=bias)
     nights_by_date = {night["date"]: night for night in night_forecast["nights"]}
+    for night in (road or {}).get("nights", []):
+        nights_by_date[night["date"]] = night
 
     days = []
     for index, date in enumerate(daily.get("time") or []):
@@ -261,7 +273,7 @@ def build_weather(raw: dict[str, Any], now: datetime) -> dict[str, Any]:
         # Gritting is overnight for the next morning, so frost is judged on the whole night (18:00 to 06:00),
         # not on midnight to midnight.
         night = days[-1]["night"]
-        days[-1]["ground_frost"] = bool(night) and night["min_surface"] <= 0.5
+        days[-1]["ground_frost"] = bool(night) and night["min_surface"] <= gritting.GRIT_TRIGGER_C
     current = raw.get("current") or {}
     description, icon = describe_weather(current.get("weather_code"))
     now_hour = hours[0] if hours else {}
@@ -301,7 +313,13 @@ def weather_home() -> str:
 def forecast_json() -> Any:
     try:
         raw, stale = fetch_weather()
-        payload = build_weather(raw, gritting.local_now())
+        bias = gritting.current_road_bias()
+        try:
+            road_raw, _ = gritting.fetch_open_meteo_forecast()
+            road = gritting.road_forecast_from_open_meteo(road_raw, gritting.local_now(), bias=bias)
+        except Exception:
+            road = None  # the weather page still works on its own forecast
+        payload = build_weather(raw, gritting.local_now(), bias=bias, road=road)
         payload.update(ok=True, stale=stale, updated=datetime.now().strftime("%H:%M"))
     except Exception:
         payload = {"ok": False, "message": "The forecast could not be loaded just now. Check the internet connection and try again."}

@@ -61,6 +61,16 @@
           </form>
         {% endif %}
         <details class="no-access-box" style="margin-top: 12px;">
+          <summary>Log road temperature</summary>
+          <form method="post" action="{{ url_for('gritting.save_road_reading', call_out_id=call_out.id) }}" class="form-grid">
+            <label>
+              Road temperature now (°C)
+              <input type="number" name="reading" step="0.1" inputmode="decimal" placeholder="-1.5" required>
+            </label>
+            <button class="button primary full-width" type="submit">Save reading</button>
+          </form>
+        </details>
+        <details class="no-access-box" style="margin-top: 12px;">
           <summary>Couldn't access the site</summary>
           <form method="post" action="{{ url_for('gritting.no_access_callout', call_out_id=call_out.id) }}" class="form-grid" data-confirm="Mark this job as no access, email the customer and take it off the list?">
             <label class="full-width">

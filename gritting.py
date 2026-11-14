@@ -1192,6 +1192,20 @@ def init_db() -> None:
     ensure_column("call_outs", "job_number", "INTEGER")
     db.execute(
         """
+        CREATE TABLE IF NOT EXISTS road_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            call_out_id INTEGER,
+            site_id INTEGER,
+            read_at TEXT NOT NULL,
+            reading REAL NOT NULL,
+            forecast_surface REAL,
+            forecast_air REAL,
+            note TEXT
+        )
+        """
+    )
+    db.execute(
+        """
         CREATE TABLE IF NOT EXISTS special_dates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_date TEXT NOT NULL,
@@ -2573,7 +2587,7 @@ def build_new_callout_page_data() -> dict[str, Any]:
 
 # --- Road surface temperature forecast -------------------------------------------------------------
 # Hourly model surface (0 cm) temperature from the Met Office UK model via Open-Meteo, which needs no key.
-# It is a model figure, not a road sensor reading, so the risk rules below keep a safety margin.
+# It is a model figure, not a road sensor reading: grit at the 0°C trigger or below, and keep an eye on it up to 2°C above.
 FORECAST_PLACE = "Norwich"
 FORECAST_LATITUDE = 52.63
 FORECAST_LONGITUDE = 1.30
@@ -2628,25 +2642,21 @@ def fetch_open_meteo_forecast(timeout: float = 10.0) -> tuple[dict[str, Any], bo
         return data, False
 
 
-WATCH_SURFACE_C = 2.0  # "keep an eye on it" at this road surface temperature or lower
+GRIT_TRIGGER_C = 0.0  # our trigger: grit when the forecast road surface is at this temperature or lower
+WATCH_SURFACE_C = GRIT_TRIGGER_C + 2.0  # "keep an eye on it" up to 2 degrees above the trigger
 
 
 def classify_road_hour(row: dict[str, Any]) -> tuple[str, str]:
-    """Risk for one hour from the forecast surface temperature, with a margin for model error."""
-    surface, dew = row["surface"], row["dew"]
-    wet = (row["rain"] or 0) > 0.1 or (row["snow"] or 0) > 0
-    if surface <= 0.5:
-        return "grit", "Road surface at or below freezing"
-    if wet and surface <= 2:
-        return "grit", "Rain or snow on a surface close to freezing"
-    if dew is not None and surface <= 1.5 and surface <= dew + 1:
-        return "grit", "Close to freezing and humid, so frost is likely to form"
+    """Risk for one hour from the forecast road surface temperature: grit at the trigger or below."""
+    surface = row["surface"]
+    if surface <= GRIT_TRIGGER_C:
+        return "grit", f"Road surface at or below {GRIT_TRIGGER_C:g}°C"
     if surface <= WATCH_SURFACE_C:
         return "watch", "Road surface close to freezing"
     return "ok", ""
 
 
-def forecast_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
+def forecast_rows(raw: dict[str, Any], bias: float = 0.0) -> list[dict[str, Any]]:
     hourly = raw.get("hourly") or {}
     times = hourly.get("time") or []
 
@@ -2664,7 +2674,7 @@ def forecast_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
             moment = datetime.fromisoformat(stamp)
         except ValueError:
             continue
-        row = {"time": moment, "surface": float(surface[index]), "air": float(air[index]),
+        row = {"time": moment, "surface": float(surface[index]) + bias, "air": float(air[index]),
                "dew": None if dew[index] is None else float(dew[index]), "rain": rain[index], "snow": snow[index],
                "cloud": cloud[index], "wind": wind[index]}
         row["level"], row["reason"] = classify_road_hour(row)
@@ -2797,9 +2807,9 @@ def consensus_rows(per_model: dict[str, list[dict[str, Any]]]) -> list[dict[str,
     return merged
 
 
-def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_count: int = 7) -> dict[str, Any]:
+def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_count: int = 7, bias: float = 0.0) -> dict[str, Any]:
     """The next seven nights (18:00 to 06:00) and the next seven days hour by hour, from a raw Open-Meteo response."""
-    per_model = {model: forecast_rows(part) for model, part in split_models(raw).items()}
+    per_model = {model: forecast_rows(part, bias) for model, part in split_models(raw).items()}
     per_model = {model: rows for model, rows in per_model.items() if rows}
     if not per_model:
         raise ValueError("The forecast had no surface temperatures.")
@@ -2861,12 +2871,107 @@ def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_coun
     }
 
 
+# ---- Checking the forecast against real road readings ------------------------------------------------------
+BIAS_MIN_READINGS = 5      # no correction until there are this many readings to learn from
+BIAS_LIMIT_C = 3.0         # never move the forecast by more than this
+BIAS_RECENT_DAYS = 90
+
+
+def forecast_surface_at(moment: datetime) -> tuple[float | None, float | None]:
+    """What the forecast (before any correction) gave for the road surface and air at this hour, if it is still on hand."""
+    try:
+        raw, _ = fetch_open_meteo_forecast()
+        per_model = {model: forecast_rows(part) for model, part in split_models(raw).items()}
+        rows = consensus_rows({model: rows for model, rows in per_model.items() if rows})
+    except Exception:
+        return None, None
+    hour = moment.replace(minute=0, second=0, microsecond=0)
+    if moment.minute >= 30:
+        hour += timedelta(hours=1)
+    match = next((row for row in rows if row["time"] == hour), None)
+    return (None, None) if match is None else (round(match["surface"], 1), round(match["air"], 1))
+
+
+def road_accuracy(db: sqlite3.Connection) -> dict[str, Any]:
+    """How the forecast compares with the readings taken, and the correction that follows from it."""
+    since = (datetime.now() - timedelta(days=BIAS_RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M")
+    rows = db.execute(
+        "SELECT reading, forecast_surface FROM road_readings WHERE forecast_surface IS NOT NULL AND read_at >= ? ORDER BY read_at",
+        (since,),
+    ).fetchall()
+    diffs = sorted(row["reading"] - row["forecast_surface"] for row in rows)
+    count = len(diffs)
+    result: dict[str, Any] = {"count": count, "bias": 0.0, "median_miss": None, "typical_error": None, "needed": max(BIAS_MIN_READINGS - count, 0)}
+    if count:
+        middle = diffs[count // 2] if count % 2 else (diffs[count // 2 - 1] + diffs[count // 2]) / 2
+        result["median_miss"] = round(middle, 1)
+        result["typical_error"] = round(sum(abs(value) for value in diffs) / count, 1)
+        if count >= BIAS_MIN_READINGS:
+            shrunk = middle * count / (count + BIAS_MIN_READINGS)  # trust it more as readings build up
+            result["bias"] = round(max(-BIAS_LIMIT_C, min(BIAS_LIMIT_C, shrunk)), 1)
+    return result
+
+
+def current_road_bias() -> float:
+    return float(road_accuracy(get_db())["bias"])
+
+
+@bp.post("/callouts/<int:call_out_id>/road-reading")
+def save_road_reading(call_out_id: int):
+    """A real road surface temperature taken on site, kept next to what the forecast said for that hour."""
+    db = get_db()
+    call_out = fetch_call_out(call_out_id)
+    back = redirect(url_for("gritting.live_jobs") if request.form.get("next", "").strip() == "live_jobs" else url_for("gritting.callout_detail", call_out_id=call_out_id))
+    if call_out is None:
+        flash("Call-out not found.")
+        return redirect(url_for("gritting.callouts"))
+    try:
+        reading = round(float(request.form.get("reading", "").strip()), 1)
+    except ValueError:
+        flash("Enter the road temperature as a number, for example -1.5.")
+        return back
+    if not -30 <= reading <= 45:
+        flash("That does not look like a road temperature. Enter it in degrees C.")
+        return back
+    moment = datetime.now()
+    forecast_surface, forecast_air = forecast_surface_at(moment)
+    db.execute(
+        "INSERT INTO road_readings (call_out_id, site_id, read_at, reading, forecast_surface, forecast_air, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (call_out_id, call_out["site_id"], moment.strftime("%Y-%m-%dT%H:%M"), reading, forecast_surface, forecast_air, request.form.get("note", "").strip()[:200]),
+    )
+    db.commit()
+    where = f"{call_out['customer_name']} · {call_out['site_name']}"
+    if forecast_surface is None:
+        flash(f"Saved {reading}°C at {where}. The forecast for this hour was not available to compare with.")
+    else:
+        miss = round(reading - forecast_surface, 1)
+        flash(f"Saved {reading}°C at {where}. The forecast said {forecast_surface}°C, so it was {abs(miss)}°C {'colder' if miss < 0 else 'warmer'} than forecast." if miss else f"Saved {reading}°C at {where}, exactly as forecast.")
+    return back
+
+
+@bp.route("/road-accuracy")
+def road_accuracy_page() -> str:
+    db = get_db()
+    readings = db.execute(
+        """
+        SELECT road_readings.*, sites.name AS site_name, customers.name AS customer_name
+        FROM road_readings
+        LEFT JOIN sites ON sites.id = road_readings.site_id
+        LEFT JOIN customers ON customers.id = sites.customer_id
+        ORDER BY road_readings.read_at DESC
+        LIMIT 60
+        """
+    ).fetchall()
+    return render_template("gritting/road_accuracy.html", readings=readings, accuracy=road_accuracy(db), limit=BIAS_LIMIT_C, minimum=BIAS_MIN_READINGS)
+
+
 @bp.get("/road-forecast.json")
 def road_forecast_json() -> Any:
     try:
         raw, stale = fetch_open_meteo_forecast()
-        payload = road_forecast_from_open_meteo(raw, local_now())
-        payload.update(ok=True, stale=stale, updated=datetime.now().strftime("%H:%M"))
+        accuracy = road_accuracy(get_db())
+        payload = road_forecast_from_open_meteo(raw, local_now(), bias=accuracy["bias"])
+        payload.update(ok=True, stale=stale, updated=datetime.now().strftime("%H:%M"), bias=accuracy["bias"], readings=accuracy["count"])
     except Exception:
         payload = {"ok": False, "message": "The forecast could not be loaded just now. Check the internet connection and try again."}
     response = jsonify(payload)

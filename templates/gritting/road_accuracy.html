@@ -1,0 +1,46 @@
+{% extends "gritting/base.html" %}
+
+{% block title %}Road temperature accuracy | Norwich Gritting Services{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Forecast check</p>
+      <h2>Road temperature accuracy</h2>
+      <p class="muted">Readings taken on site, next to what the forecast said for that hour. The forecast is corrected by how far it usually misses.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="stats-grid">
+      <article class="stat-card"><span>Readings used</span><strong>{{ accuracy.count }}</strong></article>
+      <article class="stat-card"><span>Usual miss</span><strong>{% if accuracy.median_miss is none %}–{% else %}{{ '%+.1f'|format(accuracy.median_miss) }}°C{% endif %}</strong></article>
+      <article class="stat-card"><span>Typical error</span><strong>{% if accuracy.typical_error is none %}–{% else %}{{ accuracy.typical_error }}°C{% endif %}</strong></article>
+      <article class="stat-card"><span>Correction applied</span><strong>{{ '%+.1f'|format(accuracy.bias) }}°C</strong></article>
+    </div>
+    {% if accuracy.needed %}
+      <p class="muted">The forecast is not corrected until there are {{ minimum }} readings. {{ accuracy.needed }} more to go.</p>
+    {% elif accuracy.bias %}
+      <p class="muted">Readings have been {{ 'warmer' if accuracy.bias > 0 else 'colder' }} than the forecast, so forecast road temperatures are moved {{ 'up' if accuracy.bias > 0 else 'down' }} by {{ accuracy.bias|abs }}°C. This builds up gradually and never goes beyond {{ limit }}°C.</p>
+    {% else %}
+      <p class="muted">The forecast has been close to your readings, so no correction is applied.</p>
+    {% endif %}
+    <p class="muted">Take a reading with an infrared thermometer or probe on the road, and log it on the job under "Log road temperature".</p>
+  </section>
+
+  <section class="panel">
+    <h3>Latest readings</h3>
+    <div class="stack-list compact-stack">
+      {% for row in readings %}
+        <article class="list-card">
+          <strong>{{ row.customer_name or 'Site' }}{% if row.site_name %} · {{ row.site_name }}{% endif %}</strong>
+          <p class="job-meta">{{ row.read_at|datetime_display }} · Reading {{ row.reading }}°C
+            {% if row.forecast_surface is not none %}· Forecast {{ row.forecast_surface }}°C · {{ '%+.1f'|format(row.reading - row.forecast_surface) }}°C{% else %}· no forecast to compare{% endif %}</p>
+          {% if row.note %}<p class="muted">{{ row.note }}</p>{% endif %}
+        </article>
+      {% else %}
+        <p class="muted">No readings yet.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

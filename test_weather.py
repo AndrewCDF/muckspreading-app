@@ -116,6 +116,26 @@ class WeatherDataTests(unittest.TestCase):
         self.assertEqual(weather.pressure_change([{"pressure": 1002.0}, {}, {}, {"pressure": 1002.4}])["trend"], "Steady")
         self.assertEqual(weather.pressure_change([{"pressure": None}]), {"trend": "", "change": None})
 
+    def test_the_weather_page_uses_the_gritting_pages_forecast_where_it_has_one(self):
+        import gritting
+        from test_gritting import raw_forecast
+        mild_here = raw_weather(lambda stamp: -3.0)  # this page's own forecast says a hard frost every night
+        road_raw = {"hourly": {}}
+        parts = {}
+        for model in ("ukmo_seamless", "ecmwf_ifs025", "icon_seamless"):
+            part = raw_forecast(lambda stamp: 6.0, start="2026-11-10T00:00", hours=24 * 8)["hourly"]
+            parts.setdefault("time", part["time"])
+            for key, values in part.items():
+                if key != "time":
+                    parts[f"{key}_{model}"] = values
+        road = gritting.road_forecast_from_open_meteo({"hourly": parts}, self.NOW)
+        alone = {day["date"]: day for day in weather.build_weather(mild_here, self.NOW)["days"]}
+        shared = {day["date"]: day for day in weather.build_weather(mild_here, self.NOW, road=road)["days"]}
+        self.assertEqual(alone["2026-11-11"]["night"]["level"], "grit")
+        self.assertEqual(shared["2026-11-11"]["night"]["level"], "ok")  # the three models say mild, so both pages agree
+        self.assertEqual(shared["2026-11-11"]["night"]["min_surface"], 6.0)
+        self.assertEqual(shared["2026-11-21"]["night"]["level"], "grit")  # beyond the gritting forecast it keeps its own
+
     def test_road_surface_and_gritting_verdicts_per_day(self):
         freezing = lambda stamp: -1.0 if datetime(2026, 11, 13, 0) <= stamp < datetime(2026, 11, 13, 6) else 6.0
         data = weather.build_weather(raw_weather(freezing), self.NOW)
