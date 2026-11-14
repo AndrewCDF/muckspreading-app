@@ -78,7 +78,7 @@ The Hay & Straw home screen has a **+** button for recording delivered lorry or 
 
 **Extras on a site.** When a customer adds something to a site (a new area, a path), open the customer under Customers & Sites and use **Extras on this site**. Give the description, the extra price per visit ex VAT and the **first night charged**: an extra logged on the 11th night with a first night of the 12th is charged on the 12th night and every night after, and the first 11 nights stay at the old price. Each call-out takes the site price plus the extras in force on its night, shows them (on the job, the live list, the final list, the monthly summary and the export), and keeps that price once the job is done. Changing extras reprices jobs that are not done yet. **End this extra** with its last night when the customer takes it back out, or **Remove** one entered by mistake. A minus makes a reduction.
 
-**The night's list.** Send a call-out to create the list for the night; it opens on **Live jobs**. While the list is a draft you can only open a job or press **Not needed** on a site whose customer does not need us (it leaves the list and the totals, and can be put back); jobs on a draft list cannot be completed. When it is right, press **Finalise the list**: that is the list to grit from, and **Mark complete** appears on each job to complete them through the night. **Open the final list to print** gives the sheet to take out: sites to grit with address, route notes and contact, then anything already done and anything not needed. A late cancellation still works after finalising and reminds you to print the list again. **Reopen the list** to make changes, until the first job is completed.
+**The night's list.** Send a call-out to create the list for the night; it opens on **Live jobs**. While the list is a draft each job has **Open** and **Cancel** (for a customer who does not need us: it leaves the list and the totals, and can be put back); jobs on a draft list cannot be completed. When it is right, press **Finalise the list**: that is the list to grit from. Each job then has a big **Mark complete** button, with **Open** and a red **No access** underneath; jobs are cancelled on the draft list, not the finalised one. **Reopen the list** to make changes, until the first job is completed.
 
 The gritting app is part of this app now, under `/gritting`. It keeps its own look and its own customers and sites, separate from the muck customers, and everything it stores is in `data/gritting/`. That folder is laid out like the old standalone app's folder, so the old data can be copied straight in. On the office Pi, with the old app stopped:
 
@@ -102,6 +102,16 @@ cp /home/pi/StrawApp/data/straw-records.json /home/pi/muckspreading-app/data/str
 ```
 
 The workbook contains email credentials, so it is excluded from Git. App backups include it. Jobs, timesheets, invoices and saved straw records remain in their existing data stores.
+
+## Backups
+
+One backup covers the whole app: the code, `settings.xlsx` and the other workbooks, and everything in `data/` (muck spreading, gritting, straw, beet, maintenance, timesheets, invoices and photos). Databases are copied with SQLite's own backup so the copy is consistent even while the app is in use.
+
+- The app makes one automatically every day from 02:00 (or as soon as it starts, if that day's backup is missing).
+- They are saved as `backups/whole_app_backup_YYYYMMDD_HHMMSS.zip` in the app folder, and the newest 14 are kept. The folder is excluded from Git.
+- Settings → Backups has **Back up now** and a download link for each saved backup.
+
+The backups sit on the same SD card as the app, so download one now and then (or copy the `backups` folder) to keep a copy somewhere else.
 
 ## Run
 

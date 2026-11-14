@@ -149,46 +149,288 @@ button:hover, .button:hover {
   line-height: 1.55;
 }
 
-.bottom-fixed-nav {
-  position: fixed;
+/* =====================================================================
+   Layered hero theme: green banner, floating cards, raised buttons,
+   floating nav and gentle motion. Selectors start with "html body" so
+   they win over the per-page styles that load after this file.
+   ===================================================================== */
+:root {
+  --af-hero-1: #1f4a33;
+  --af-hero-2: #0f2619;
+  --af-gold-1: #dcb460;
+  --af-gold-2: #b68b38;
+  --af-gold-edge: #8c6a22;
+  --af-green-1: #2f5d41;
+  --af-green-2: #1b3d2a;
+  --af-green-edge: #0f2619;
+  --af-lift-1: 0 2px 4px rgba(15, 38, 25, 0.08), 0 8px 18px rgba(15, 38, 25, 0.10);
+  --af-lift-2: 0 2px 4px rgba(15, 38, 25, 0.08), 0 16px 32px rgba(15, 38, 25, 0.16);
+  --af-ease: cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+html body {
+  position: relative;
+  background: #f1f4f1;
+  padding-bottom: 96px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The green banner behind the page title */
+html body::before {
+  content: "";
+  position: absolute;
+  top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
+  height: 190px;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 85% 0%, rgba(220, 180, 96, 0.22), transparent 42%),
+    linear-gradient(160deg, var(--af-hero-1) 0%, var(--af-hero-2) 100%);
+  background-size: 140% 140%, 100% 100%;
+  border-radius: 0 0 30px 30px;
+  box-shadow: 0 14px 30px rgba(15, 38, 25, 0.22);
+  animation: af-drift 22s ease-in-out infinite alternate;
+}
+
+html body .shell,
+html body .app-shell,
+html body .page { position: relative; z-index: 1; }
+
+html body .topbar h1,
+html body .topbar .brand-block h1 { color: #fff; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); }
+html body .topbar .eyebrow { color: rgba(255, 255, 255, 0.78); }
+html body .topbar { animation: af-rise 0.5s var(--af-ease) both; }
+
+/* Cards float above the banner */
+html body .panel,
+html body .card,
+html body .quick-card,
+html body .branch-card {
+  background: #fff;
+  border: 1px solid rgba(27, 61, 42, 0.07);
+  border-radius: 20px;
+  box-shadow: var(--af-lift-1);
+  transition: transform 0.25s var(--af-ease), box-shadow 0.25s var(--af-ease);
+  animation: af-rise 0.55s var(--af-ease) both;
+}
+html body .panel:nth-child(2), html body .branch-card:nth-child(2) { animation-delay: 0.06s; }
+html body .panel:nth-child(3), html body .branch-card:nth-child(3) { animation-delay: 0.12s; }
+html body .panel:nth-child(4) { animation-delay: 0.18s; }
+html body .panel:nth-child(n+5) { animation-delay: 0.22s; }
+html body .hero.panel { background: #fff; }
+html body .card.stats { background: linear-gradient(180deg, #2f5d41, #1b3d2a); color: #f5efe2; border-color: rgba(255, 255, 255, 0.08); box-shadow: 0 3px 0 #0f2619, var(--af-lift-1); }
+
+@media (hover: hover) {
+  html body .quick-card:hover,
+  html body .branch-card:hover { transform: translateY(-3px); box-shadow: var(--af-lift-2); }
+}
+
+/* Raised 3D buttons */
+html body .button-primary,
+html body .primary,
+html body .primary-action,
+html body .primary-button,
+html body .button.primary {
+  background: linear-gradient(180deg, var(--af-green-1), var(--af-green-2));
+  color: #fff;
+  border: 0;
+  box-shadow: 0 5px 0 var(--af-green-edge), 0 10px 16px rgba(15, 38, 25, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.2s ease;
+}
+html body .button-gold,
+html body .straw-button,
+html body .maintenance-button {
+  background: linear-gradient(180deg, var(--af-gold-1), var(--af-gold-2));
+  color: #fff;
+  border: 0;
+  box-shadow: 0 5px 0 var(--af-gold-edge), 0 10px 16px rgba(140, 106, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  text-shadow: 0 1px 1px rgba(90, 64, 12, 0.35);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.2s ease;
+}
+html body .button-secondary,
+html body .secondary,
+html body .secondary-action,
+html body .secondary-button {
+  background: linear-gradient(180deg, #fff, #eef4ef);
+  color: var(--af-green);
+  border: 1px solid rgba(27, 61, 42, 0.12);
+  box-shadow: 0 3px 0 rgba(27, 61, 42, 0.14), 0 6px 12px rgba(15, 38, 25, 0.08);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+@media (hover: hover) {
+  html body .button-primary:hover, html body .primary:hover, html body .primary-action:hover,
+  html body .primary-button:hover, html body .button.primary:hover,
+  html body .button-gold:hover, html body .straw-button:hover, html body .maintenance-button:hover {
+    transform: translateY(-2px); filter: brightness(1.05);
+  }
+}
+html body .button-primary:active, html body .primary:active, html body .primary-action:active,
+html body .primary-button:active, html body .button.primary:active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 var(--af-green-edge), 0 3px 6px rgba(15, 38, 25, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+html body .button-gold:active, html body .straw-button:active, html body .maintenance-button:active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 var(--af-gold-edge), 0 3px 6px rgba(140, 106, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+html body .button-secondary:active, html body .secondary:active, html body .secondary-action:active, html body .secondary-button:active {
+  transform: translateY(2px); box-shadow: 0 1px 0 rgba(27, 61, 42, 0.14);
+}
+
+/* Fields sit slightly pressed in */
+html body input, html body select, html body textarea {
+  background: #fbfcfb;
+  border: 1px solid rgba(27, 61, 42, 0.14);
+  box-shadow: inset 0 2px 4px rgba(15, 38, 25, 0.05);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+html body input:focus, html body select:focus, html body textarea:focus {
+  background: #fff;
+  border-color: var(--af-gold);
+  box-shadow: inset 0 1px 2px rgba(15, 38, 25, 0.04), 0 0 0 4px rgba(199, 158, 79, 0.2);
+}
+
+/* Floating bottom nav */
+.bottom-fixed-nav {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom) * 0.4);
   z-index: 20;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-  background: var(--af-nav-bg);
-  border-top: 1px solid var(--af-nav-border);
-  padding-bottom: calc(env(safe-area-inset-bottom) * 0.5);
+  gap: 4px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid rgba(27, 61, 42, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 12px 26px rgba(15, 38, 25, 0.22), 0 2px 4px rgba(15, 38, 25, 0.1);
+  animation: af-nav-in 0.6s var(--af-ease) 0.15s both;
 }
-
 .bottom-nav-btn {
   appearance: none;
   border: none;
+  border-radius: 15px;
   background: transparent;
   color: var(--af-muted);
-  padding: 8px 8px 8px;
+  padding: 6px 6px 5px;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  text-align: center;
   cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+.bottom-nav-btn:hover, .bottom-nav-btn:focus-visible { background: rgba(27, 61, 42, 0.06); color: var(--af-green); }
+.bottom-nav-btn:active { transform: scale(0.94); }
+.bottom-nav-btn[aria-current="page"] {
+  background: linear-gradient(180deg, var(--af-green-1), var(--af-green-2));
+  color: #fff;
+  box-shadow: 0 3px 0 var(--af-green-edge);
+}
+.bottom-nav-btn strong { display: block; font-size: 17px; line-height: 1; margin-bottom: 2px; }
+
+/* Motion */
+@keyframes af-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes af-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes af-nav-in { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: none; } }
+@keyframes af-drift { from { background-position: 0% 0%, 0 0; } to { background-position: 100% 100%, 0 0; } }
+@keyframes af-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(179, 64, 47, 0.35); } 50% { box-shadow: 0 0 0 7px rgba(179, 64, 47, 0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  html body::before, html body .panel, html body .card, html body .topbar,
+  html body .quick-card, html body .branch-card, .bottom-fixed-nav { animation: none !important; }
+  * { transition-duration: 0.01ms !important; }
 }
 
-.bottom-nav-btn:hover,
-.bottom-nav-btn:focus-visible {
-  background: rgba(36, 68, 47, 0.04);
-  color: var(--af-green);
+/* Four-button nav (Back, Home, Settings, Menu) and the menu that slides up from it */
+.bottom-fixed-nav.has-menu { grid-template-columns: repeat(4, minmax(0, 1fr)); z-index: 40; }
+.bottom-fixed-nav .bottom-nav-btn { display: block; font: inherit; font-size: 11px; font-weight: 800; }
+.bottom-nav-btn[aria-expanded="true"] { background: linear-gradient(180deg, var(--af-green-1), var(--af-green-2)); color: #fff; box-shadow: 0 3px 0 var(--af-green-edge); }
+.af-menu-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(10, 24, 16, 0.45); opacity: 0; transition: opacity 0.25s ease; }
+.af-menu {
+  position: fixed; left: 12px; right: 12px; z-index: 35; max-width: 560px; margin: 0 auto;
+  bottom: calc(76px + env(safe-area-inset-bottom) * 0.4);
+  padding: 10px 14px 16px; border-radius: 24px; background: #fff;
+  box-shadow: 0 24px 48px rgba(10, 24, 16, 0.35), 0 2px 6px rgba(10, 24, 16, 0.12);
+  opacity: 0; transform: translateY(24px) scale(0.98); transform-origin: bottom center;
+  transition: opacity 0.25s ease, transform 0.3s var(--af-ease);
 }
+.af-menu-open .af-menu-backdrop { opacity: 1; }
+.af-menu-open .af-menu { opacity: 1; transform: none; }
+.af-menu-handle { width: 40px; height: 4px; margin: 0 auto 10px; border-radius: 4px; background: rgba(27, 61, 42, 0.18); }
+.af-menu-title { margin: 0 4px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--af-muted); }
+.af-menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.af-menu-item {
+  appearance: none; display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 10px 12px; width: 100%;
+  border-radius: 16px; background: linear-gradient(180deg, #fff, #eef4ef); border: 1px solid rgba(27, 61, 42, 0.1);
+  box-shadow: 0 3px 0 rgba(27, 61, 42, 0.12); color: var(--af-green); font: inherit; font-weight: 700; font-size: 15px;
+  text-align: left; cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.af-menu-item span { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: 10px; background: #e3eee6; font-size: 17px; }
+.af-menu-item:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(27, 61, 42, 0.12); }
+.af-menu-item[aria-current="page"] { background: linear-gradient(180deg, var(--af-green-1), var(--af-green-2)); color: #fff; border-color: transparent; box-shadow: 0 3px 0 var(--af-green-edge); }
+.af-menu-item[aria-current="page"] span { background: rgba(255, 255, 255, 0.16); }
+.af-menu-item.is-gold { background: linear-gradient(180deg, var(--af-gold-1), var(--af-gold-2)); color: #fff; border-color: transparent; box-shadow: 0 3px 0 var(--af-gold-edge); }
+.af-menu-item.is-gold span { background: rgba(255, 255, 255, 0.2); }
+.af-menu-open .af-menu-item { animation: af-rise 0.35s var(--af-ease) both; }
+.af-menu-open .af-menu-item:nth-child(2) { animation-delay: 0.03s; }
+.af-menu-open .af-menu-item:nth-child(3) { animation-delay: 0.06s; }
+.af-menu-open .af-menu-item:nth-child(4) { animation-delay: 0.09s; }
+.af-menu-open .af-menu-item:nth-child(n+5) { animation-delay: 0.12s; }
+@media (prefers-reduced-motion: reduce) { .af-menu-open .af-menu-item { animation: none; } }
 
-.bottom-nav-btn strong {
-  display: block;
-  font-size: 17px;
-  line-height: 1;
-  margin-bottom: 2px;
-}
+/* Backups list on the settings page */
+.backup-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.backup-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 14px; background: #f3f7f3; border: 1px solid rgba(27, 61, 42, 0.08); font-weight: 600; }
+.backup-list small { margin-left: 6px; color: var(--af-muted); font-weight: 600; }
+.backup-list .button { min-height: 40px; padding: 0 16px; white-space: nowrap; }
 
-body {
-  padding-bottom: 60px;
-}
+/* Collapsible boxes on the settings page */
+.settings-box { margin-top: 14px; border-radius: 16px; border: 1px solid rgba(27, 61, 42, 0.1); background: #f7faf7; overflow: hidden; }
+.settings-box > summary { position: relative; display: grid; gap: 2px; min-height: 56px; padding: 12px 46px 12px 16px; list-style: none; cursor: pointer; }
+.settings-box > summary::-webkit-details-marker { display: none; }
+.settings-box > summary span { font-size: 17px; font-weight: 800; color: var(--af-green); }
+.settings-box > summary small { color: var(--af-muted); font-weight: 600; }
+.settings-box > summary::after { content: "＋"; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 20px; color: var(--af-gold); transition: transform 0.25s ease; }
+.settings-box[open] > summary::after { transform: translateY(-50%) rotate(45deg); }
+.settings-box[open] > summary { border-bottom: 1px solid rgba(27, 61, 42, 0.1); background: #fff; }
+.settings-box-body { padding: 14px 16px 16px; background: #fff; }
+.settings-box[open] .settings-box-body { animation: af-rise 0.3s var(--af-ease) both; }
+
+/* Links that sit on the green banner (e.g. "Back To Jobs" on Settings) */
+html body .top-links { position: relative; z-index: 1; }
+html body .top-links .button, html body .top-links a { background: rgba(255, 255, 255, 0.14); color: #fff; border: 1px solid rgba(255, 255, 255, 0.24); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18); }
+
+/* One Settings page for the whole app, a section per part */
+.settings-page .topbar { margin-bottom: 10px; }
+.settings-jump { position: relative; z-index: 1; display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 14px; margin: 0 -2px 6px; scrollbar-width: none; }
+.settings-jump::-webkit-scrollbar { display: none; }
+.settings-jump a { flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.24); color: #fff; font-size: 14px; font-weight: 700; white-space: nowrap; transition: background 0.2s ease; }
+.settings-jump a:hover, .settings-jump a:focus-visible { background: rgba(255, 255, 255, 0.26); }
+html body .settings-section { scroll-margin-top: 12px; }
+html body .settings-section + .settings-section { margin-top: 18px; }
+.settings-eyebrow { margin: 0 0 2px; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--af-gold-2); }
+.settings-section > h2 { margin: 0 0 4px; }
+.settings-section .settings-box:first-of-type { margin-top: 12px; }
+.settings-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.settings-box .actions { margin-top: 14px; }
+.check-row { display: flex !important; align-items: center; gap: 10px; text-transform: none !important; letter-spacing: 0 !important; font-size: 15px !important; color: var(--af-ink) !important; }
+.check-row input { width: 22px !important; min-height: 22px !important; height: 22px; flex: 0 0 22px; padding: 0; }
+.template-preview-box { padding: 12px 14px; border-radius: 14px; background: #f3f7f3; border: 1px dashed rgba(27, 61, 42, 0.2); }
+.template-preview-box .preview-label { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--af-muted); }
+.template-preview-box pre { margin: 6px 0 0; white-space: pre-wrap; font-family: inherit; line-height: 1.5; color: var(--af-ink); }
+.settings-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.settings-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 14px; background: #f3f7f3; border: 1px solid rgba(27, 61, 42, 0.08); }
+.settings-list li form { margin: 0; }
+.settings-list li .button { min-height: 40px; width: auto; }
+.settings-list li.empty { color: var(--af-muted); }
+
+/* Home page title: the two business names on one line, sized to fit the screen */
+html body .topbar h1.home-title { white-space: nowrap; font-size: min(46px, calc((100vw - 32px) / 19.5)); letter-spacing: -0.035em; line-height: 1.1; }
+.settings-page .topbar .eyebrow { margin: 0 0 6px; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }

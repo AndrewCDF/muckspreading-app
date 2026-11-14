@@ -169,7 +169,7 @@ def pressure_change(hours: list[dict[str, Any]], ahead: int = 3) -> dict[str, An
     return {"trend": trend, "change": change}
 
 
-def build_weather(raw: dict[str, Any], now: datetime, bias: float = 0.0, road: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_weather(raw: dict[str, Any], now: datetime, road: dict[str, Any] | None = None) -> dict[str, Any]:
     hourly, daily = raw["hourly"], raw["daily"]
     times = hourly.get("time") or []
     this_hour = now.replace(minute=0, second=0, microsecond=0)
@@ -203,7 +203,7 @@ def build_weather(raw: dict[str, Any], now: datetime, bias: float = 0.0, road: d
             continue
         surface = _number(columns["soil_temperature_0cm"], index)
         if surface is not None:
-            surface = round(surface + bias, 1)  # corrected by what your own road readings show
+            surface = round(surface, 1)
         air = _number(columns["temperature_2m"], index)
         dew = _number(columns["dew_point_2m"], index)
         rain = _number(columns["precipitation"], index) or 0.0
@@ -237,7 +237,7 @@ def build_weather(raw: dict[str, Any], now: datetime, bias: float = 0.0, road: d
                 hour["surface"], hour["level"] = match["surface"], match["level"]
 
     # Gritting verdict per night (18:00 to 06:00), the same rules as the gritting page.
-    night_forecast = gritting.road_forecast_from_open_meteo(raw, now, night_count=FORECAST_DAYS, bias=bias)
+    night_forecast = gritting.road_forecast_from_open_meteo(raw, now, night_count=FORECAST_DAYS)
     nights_by_date = {night["date"]: night for night in night_forecast["nights"]}
     for night in (road or {}).get("nights", []):
         nights_by_date[night["date"]] = night
@@ -313,13 +313,12 @@ def weather_home() -> str:
 def forecast_json() -> Any:
     try:
         raw, stale = fetch_weather()
-        bias = gritting.current_road_bias()
         try:
             road_raw, _ = gritting.fetch_open_meteo_forecast()
-            road = gritting.road_forecast_from_open_meteo(road_raw, gritting.local_now(), bias=bias)
+            road = gritting.road_forecast_from_open_meteo(road_raw, gritting.local_now())
         except Exception:
             road = None  # the weather page still works on its own forecast
-        payload = build_weather(raw, gritting.local_now(), bias=bias, road=road)
+        payload = build_weather(raw, gritting.local_now(), road=road)
         payload.update(ok=True, stale=stale, updated=datetime.now().strftime("%H:%M"))
     except Exception:
         payload = {"ok": False, "message": "The forecast could not be loaded just now. Check the internet connection and try again."}

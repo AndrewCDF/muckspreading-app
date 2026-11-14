@@ -1192,20 +1192,6 @@ def init_db() -> None:
     ensure_column("call_outs", "job_number", "INTEGER")
     db.execute(
         """
-        CREATE TABLE IF NOT EXISTS road_readings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            call_out_id INTEGER,
-            site_id INTEGER,
-            read_at TEXT NOT NULL,
-            reading REAL NOT NULL,
-            forecast_surface REAL,
-            forecast_air REAL,
-            note TEXT
-        )
-        """
-    )
-    db.execute(
-        """
         CREATE TABLE IF NOT EXISTS special_dates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_date TEXT NOT NULL,
@@ -2656,7 +2642,7 @@ def classify_road_hour(row: dict[str, Any]) -> tuple[str, str]:
     return "ok", ""
 
 
-def forecast_rows(raw: dict[str, Any], bias: float = 0.0) -> list[dict[str, Any]]:
+def forecast_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
     hourly = raw.get("hourly") or {}
     times = hourly.get("time") or []
 
@@ -2674,7 +2660,7 @@ def forecast_rows(raw: dict[str, Any], bias: float = 0.0) -> list[dict[str, Any]
             moment = datetime.fromisoformat(stamp)
         except ValueError:
             continue
-        row = {"time": moment, "surface": float(surface[index]) + bias, "air": float(air[index]),
+        row = {"time": moment, "surface": float(surface[index]), "air": float(air[index]),
                "dew": None if dew[index] is None else float(dew[index]), "rain": rain[index], "snow": snow[index],
                "cloud": cloud[index], "wind": wind[index]}
         row["level"], row["reason"] = classify_road_hour(row)
@@ -2807,9 +2793,9 @@ def consensus_rows(per_model: dict[str, list[dict[str, Any]]]) -> list[dict[str,
     return merged
 
 
-def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_count: int = 7, bias: float = 0.0) -> dict[str, Any]:
+def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_count: int = 7) -> dict[str, Any]:
     """The next seven nights (18:00 to 06:00) and the next seven days hour by hour, from a raw Open-Meteo response."""
-    per_model = {model: forecast_rows(part, bias) for model, part in split_models(raw).items()}
+    per_model = {model: forecast_rows(part) for model, part in split_models(raw).items()}
     per_model = {model: rows for model, rows in per_model.items() if rows}
     if not per_model:
         raise ValueError("The forecast had no surface temperatures.")
@@ -2871,107 +2857,12 @@ def road_forecast_from_open_meteo(raw: dict[str, Any], now: datetime, night_coun
     }
 
 
-# ---- Checking the forecast against real road readings ------------------------------------------------------
-BIAS_MIN_READINGS = 5      # no correction until there are this many readings to learn from
-BIAS_LIMIT_C = 3.0         # never move the forecast by more than this
-BIAS_RECENT_DAYS = 90
-
-
-def forecast_surface_at(moment: datetime) -> tuple[float | None, float | None]:
-    """What the forecast (before any correction) gave for the road surface and air at this hour, if it is still on hand."""
-    try:
-        raw, _ = fetch_open_meteo_forecast()
-        per_model = {model: forecast_rows(part) for model, part in split_models(raw).items()}
-        rows = consensus_rows({model: rows for model, rows in per_model.items() if rows})
-    except Exception:
-        return None, None
-    hour = moment.replace(minute=0, second=0, microsecond=0)
-    if moment.minute >= 30:
-        hour += timedelta(hours=1)
-    match = next((row for row in rows if row["time"] == hour), None)
-    return (None, None) if match is None else (round(match["surface"], 1), round(match["air"], 1))
-
-
-def road_accuracy(db: sqlite3.Connection) -> dict[str, Any]:
-    """How the forecast compares with the readings taken, and the correction that follows from it."""
-    since = (datetime.now() - timedelta(days=BIAS_RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M")
-    rows = db.execute(
-        "SELECT reading, forecast_surface FROM road_readings WHERE forecast_surface IS NOT NULL AND read_at >= ? ORDER BY read_at",
-        (since,),
-    ).fetchall()
-    diffs = sorted(row["reading"] - row["forecast_surface"] for row in rows)
-    count = len(diffs)
-    result: dict[str, Any] = {"count": count, "bias": 0.0, "median_miss": None, "typical_error": None, "needed": max(BIAS_MIN_READINGS - count, 0)}
-    if count:
-        middle = diffs[count // 2] if count % 2 else (diffs[count // 2 - 1] + diffs[count // 2]) / 2
-        result["median_miss"] = round(middle, 1)
-        result["typical_error"] = round(sum(abs(value) for value in diffs) / count, 1)
-        if count >= BIAS_MIN_READINGS:
-            shrunk = middle * count / (count + BIAS_MIN_READINGS)  # trust it more as readings build up
-            result["bias"] = round(max(-BIAS_LIMIT_C, min(BIAS_LIMIT_C, shrunk)), 1)
-    return result
-
-
-def current_road_bias() -> float:
-    return float(road_accuracy(get_db())["bias"])
-
-
-@bp.post("/callouts/<int:call_out_id>/road-reading")
-def save_road_reading(call_out_id: int):
-    """A real road surface temperature taken on site, kept next to what the forecast said for that hour."""
-    db = get_db()
-    call_out = fetch_call_out(call_out_id)
-    back = redirect(url_for("gritting.live_jobs") if request.form.get("next", "").strip() == "live_jobs" else url_for("gritting.callout_detail", call_out_id=call_out_id))
-    if call_out is None:
-        flash("Call-out not found.")
-        return redirect(url_for("gritting.callouts"))
-    try:
-        reading = round(float(request.form.get("reading", "").strip()), 1)
-    except ValueError:
-        flash("Enter the road temperature as a number, for example -1.5.")
-        return back
-    if not -30 <= reading <= 45:
-        flash("That does not look like a road temperature. Enter it in degrees C.")
-        return back
-    moment = datetime.now()
-    forecast_surface, forecast_air = forecast_surface_at(moment)
-    db.execute(
-        "INSERT INTO road_readings (call_out_id, site_id, read_at, reading, forecast_surface, forecast_air, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (call_out_id, call_out["site_id"], moment.strftime("%Y-%m-%dT%H:%M"), reading, forecast_surface, forecast_air, request.form.get("note", "").strip()[:200]),
-    )
-    db.commit()
-    where = f"{call_out['customer_name']} · {call_out['site_name']}"
-    if forecast_surface is None:
-        flash(f"Saved {reading}°C at {where}. The forecast for this hour was not available to compare with.")
-    else:
-        miss = round(reading - forecast_surface, 1)
-        flash(f"Saved {reading}°C at {where}. The forecast said {forecast_surface}°C, so it was {abs(miss)}°C {'colder' if miss < 0 else 'warmer'} than forecast." if miss else f"Saved {reading}°C at {where}, exactly as forecast.")
-    return back
-
-
-@bp.route("/road-accuracy")
-def road_accuracy_page() -> str:
-    db = get_db()
-    readings = db.execute(
-        """
-        SELECT road_readings.*, sites.name AS site_name, customers.name AS customer_name
-        FROM road_readings
-        LEFT JOIN sites ON sites.id = road_readings.site_id
-        LEFT JOIN customers ON customers.id = sites.customer_id
-        ORDER BY road_readings.read_at DESC
-        LIMIT 60
-        """
-    ).fetchall()
-    return render_template("gritting/road_accuracy.html", readings=readings, accuracy=road_accuracy(db), limit=BIAS_LIMIT_C, minimum=BIAS_MIN_READINGS)
-
-
 @bp.get("/road-forecast.json")
 def road_forecast_json() -> Any:
     try:
         raw, stale = fetch_open_meteo_forecast()
-        accuracy = road_accuracy(get_db())
-        payload = road_forecast_from_open_meteo(raw, local_now(), bias=accuracy["bias"])
-        payload.update(ok=True, stale=stale, updated=datetime.now().strftime("%H:%M"), bias=accuracy["bias"], readings=accuracy["count"])
+        payload = road_forecast_from_open_meteo(raw, local_now())
+        payload.update(ok=True, stale=stale, updated=datetime.now().strftime("%H:%M"))
     except Exception:
         payload = {"ok": False, "message": "The forecast could not be loaded just now. Check the internet connection and try again."}
     response = jsonify(payload)
@@ -3132,37 +3023,6 @@ def reopen_batch(batch_id: int):
     db.commit()
     flash("List reopened. Finalise it again when the changes are done.")
     return redirect(url_for("gritting.live_jobs") + f"#list-{batch_id}")
-
-
-@bp.route("/batches/<int:batch_id>/run-sheet")
-def run_sheet(batch_id: int) -> str:
-    """The list to take out gritting: sites still to do first, then anything already done and anything not needed."""
-    db = get_db()
-    batch = db.execute("SELECT * FROM dispatch_batches WHERE id = ?", (batch_id,)).fetchone()
-    if batch is None:
-        flash("List not found.")
-        return redirect(url_for("gritting.live_jobs"))
-    rows = db.execute(
-        """
-        SELECT call_outs.id, call_outs.job_number, call_outs.status, call_outs.pricing_label, call_outs.extras_json, call_outs.planned_attendance, call_outs.access_note,
-               sites.name AS site_name, sites.address, sites.postcode, sites.route_notes,
-               customers.name AS customer_name, customers.contact_name, customers.emergency_phone, customers.emergency_contacts
-        FROM call_outs
-        JOIN sites ON sites.id = call_outs.site_id
-        JOIN customers ON customers.id = sites.customer_id
-        WHERE call_outs.dispatch_batch_id = ?
-        ORDER BY customers.name COLLATE NOCASE, sites.name COLLATE NOCASE
-        """,
-        (batch_id,),
-    ).fetchall()
-    return render_template(
-        "gritting/run_sheet.html",
-        batch=batch,
-        to_grit=[row for row in rows if row["status"] == "called_out"],
-        done=[row for row in rows if row["status"] == "completed"],
-        cancelled=[row for row in rows if row["status"] == "cancelled"],
-        no_access=[row for row in rows if row["status"] == "no_access"],
-    )
 
 
 @bp.route("/new-callout", methods=["GET", "POST"])
@@ -3483,15 +3343,18 @@ def settings() -> str:
             save_report_settings(db, request.form)
             flash("Settings updated.")
         db.commit()
-        return redirect(url_for("gritting.settings"))
+    # Gritting's settings live in a section of the app's one Settings page.
+    return redirect(url_for("settings_home") + "#gritting")
 
-    return render_template(
-        "gritting/settings.html",
+
+def settings_context() -> dict[str, Any]:
+    """What the Gritting section of the app's Settings page shows."""
+    db = get_db()
+    return dict(
         email_settings=fetch_email_settings(),
         special_dates=db.execute("SELECT id, event_date, name FROM special_dates WHERE event_date >= ? ORDER BY event_date, name", (datetime.now().date().isoformat(),)).fetchall(),
         smtp_settings=fetch_smtp_settings(),
         report_settings=fetch_report_settings(),
-        report_state=fetch_report_state(),
         season=current_gritting_season(),
         season_state=fetch_season_state(),
         monthly_day_options=monthly_day_options(),
@@ -3788,8 +3651,7 @@ def cancel_callout(call_out_id: int):
             (now_iso(), call_out_id),
         )
         db.commit()
-        flash(f"Cancelled {call_out['customer_name']} · {call_out['site_name']}. It is no longer a live job and is not counted in the totals."
-              + (" This list was already finalised, so print the final list again." if call_out["dispatch_batch_id"] and db.execute("SELECT finalised_at FROM dispatch_batches WHERE id = ?", (call_out["dispatch_batch_id"],)).fetchone()["finalised_at"] else ""))
+        flash(f"Cancelled {call_out['customer_name']} · {call_out['site_name']}. It is no longer a live job and is not counted in the totals.")
     if request.form.get("next", "").strip() == "live_jobs":
         return redirect(url_for("gritting.live_jobs"))
     return redirect(url_for("gritting.callout_detail", call_out_id=call_out_id))

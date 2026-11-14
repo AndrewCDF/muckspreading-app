@@ -145,7 +145,7 @@ DASHBOARD_HTML = """
     <header class="topbar">
       <div class="brand-block">
         <p class="eyebrow">Operations</p>
-        <h1>A. Farrell Contracting</h1>
+        <h1 class="home-title">Cherry Dene Farm &amp; A. Farrell Contracting</h1>
       </div>
     </header>
 
@@ -1225,6 +1225,7 @@ HTML = """
       }
     }
   </style>
+  <link rel="stylesheet" href="/static/muck.css">
 </head>
 <body>
   <div class="page">
@@ -1422,62 +1423,32 @@ HTML = """
             </script>
     </section>
     {% else %}
-    <section class="hero">
-      <div class="card hero-title-card">
-        <div class="eyebrow">Live Dashboard</div>
-        <div>
-          <h1>
-            <span class="title-line title-line-primary">A. Farrell Contracting</span>
-            <span class="title-line title-line-secondary">Muck Spreading Records</span>
-          </h1>
-          <p class="hero-copy">Record jobs quickly, keep customer data tidy, and export clean summaries and invoices without leaving the dashboard.</p>
-        </div>
-        <div class="meta">
-          <div class="pill">Today: {{ today_human }}</div>
-          <div class="pill">Saved jobs: {{ total_jobs }}</div>
+    <section class="muck-hero">
+      <div class="muck-hero-head">
+        <p class="muck-eyebrow">Cherry Dene Farm &amp; A. Farrell Contracting</p>
+        <h1 class="muck-title">Muck Spreading</h1>
+        <div class="muck-chips">
+          <span class="muck-chip">{{ today_human }}</span>
+          <span class="muck-chip">{{ total_jobs }} saved job{% if total_jobs != 1 %}s{% endif %}</span>
         </div>
       </div>
-      <div class="stats-stack">
-        <div class="card stats">
-          <h2>Today's Totals</h2>
-          <div class="stats-grid">
-            <div class="stat">
-              <div class="stat-label">Jobs</div>
-              <div class="stat-value">{{ today_job_count }}</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Spreader Tons</div>
-              <div class="stat-value">{{ today_spreader_tons }}</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Ops Center Tons</div>
-              <div class="stat-value">{{ today_john_deere_tons }}</div>
-            </div>
+      <div class="muck-stats">
+        {% for title, jobs, spreader, ops in [("Today", today_job_count, today_spreader_tons, today_john_deere_tons), ("Year to date", year_job_count, year_spreader_tons, year_john_deere_tons)] %}
+        <div class="muck-stat-card">
+          <h2>{{ title }}</h2>
+          <div class="muck-stat-row">
+            <div class="muck-stat"><strong>{{ jobs }}</strong><span>Jobs</span></div>
+            <div class="muck-stat"><strong>{{ spreader }}<small>t</small></strong><span>Spreader</span></div>
+            <div class="muck-stat"><strong>{{ ops }}<small>t</small></strong><span>Ops Center</span></div>
           </div>
         </div>
-        <div class="card stats">
-          <h2>Year to Date Totals</h2>
-          <div class="stats-grid">
-            <div class="stat">
-              <div class="stat-label">Jobs</div>
-              <div class="stat-value">{{ year_job_count }}</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Spreader Tons</div>
-              <div class="stat-value">{{ year_spreader_tons }}</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Ops Center Tons</div>
-              <div class="stat-value">{{ year_john_deere_tons }}</div>
-            </div>
-          </div>
-        </div>
+        {% endfor %}
       </div>
     </section>
 
     <section class="layout">
       <div class="dashboard-main-grid">
-      <div class="card form-card">
+      <div class="card form-card" id="new-job">
         <h2 class="panel-title">{{ form_title }}</h2>
 
         {% if status_msg %}
@@ -1550,7 +1521,7 @@ HTML = """
         </form>
       </div>
 
-      <div class="card recent-jobs-card">
+      <div class="card recent-jobs-card" id="recent-jobs">
         <h2 class="panel-title">Recent Jobs</h2>
         <p class="copy">Newest entries are shown first.</p>
         {% if recent_jobs %}
@@ -1667,7 +1638,7 @@ HTML = """
     </section>
 
     <section class="section-grid">
-      <div class="card">
+      <div class="card" id="invoices">
         <h2 class="panel-title">Invoices</h2>
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('invoice_home') }}">Create Invoice</a>
@@ -1677,17 +1648,16 @@ HTML = """
 
       <div class="card">
         <h2 class="panel-title">Tools</h2>
-        <p class="copy">Use these for admin and backups.</p>
+        <p class="copy">Data admin and settings. Backups are in Settings.</p>
         <div class="actions">
           <a class="button button-secondary button-full" href="{{ url_for('admin_home') }}">Open Data Admin</a>
           <a class="button button-secondary button-full" href="{{ url_for('settings_home') }}">Open Settings</a>
-          <a class="button button-secondary button-full" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
         </div>
       </div>
     </section>
 
     <section class="bottom-export">
-      <div class="card">
+      <div class="card" id="exports">
         <h2 class="panel-title">Summary Exports</h2>
         <p class="copy">Download period summaries or the full saved job list as Excel files.</p>
         <div class="actions">
@@ -1700,11 +1670,28 @@ HTML = """
     </section>
     {% endif %}
   </div>
-  <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
+  {% if not invoice_page %}
+  <div class="af-menu-backdrop" id="af-menu-backdrop" hidden></div>
+  <section class="af-menu" id="af-menu" aria-label="Muck spreading menu" hidden>
+    <div class="af-menu-handle" aria-hidden="true"></div>
+    <p class="af-menu-title">Muck spreading</p>
+    <div class="af-menu-grid">
+      <a class="af-menu-item is-gold" href="#new-job"><span aria-hidden="true">＋</span>New job</a>
+      <a class="af-menu-item" href="#recent-jobs"><span aria-hidden="true">≡</span>Recent jobs</a>
+      <a class="af-menu-item" href="{{ url_for('invoice_home') }}"><span aria-hidden="true">£</span>Create invoice</a>
+      <a class="af-menu-item" href="{{ url_for('invoice_history') }}"><span aria-hidden="true">▤</span>Previous invoices</a>
+      <a class="af-menu-item" href="#exports"><span aria-hidden="true">⇩</span>Summary exports</a>
+      <a class="af-menu-item" href="{{ url_for('admin_home') }}"><span aria-hidden="true">☷</span>Data admin</a>
+    </div>
+  </section>
+  {% endif %}
+  <nav class="bottom-fixed-nav{% if not invoice_page %} has-menu{% endif %}" aria-label="Bottom navigation">
     <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
     <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
-    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings#muck'"><strong>⚙</strong>Settings</button>
+    {% if not invoice_page %}<button class="bottom-nav-btn" id="af-menu-button" type="button" aria-controls="af-menu" aria-expanded="false"><strong aria-hidden="true">☰</strong>Menu</button>{% endif %}
   </nav>
+  <script src="/static/af_menu.js" defer></script>
   <div id="download_notice" class="download-notice" hidden>Preparing download...</div>
 
   <script>
@@ -2644,7 +2631,6 @@ ADMIN_HTML = """
   <div class="page">
     <div class="top-links">
       <a class="button button-secondary" href="{{ url_for('home') }}">Back To Jobs</a>
-      <a class="button button-secondary" href="{{ url_for('backup_export_zip') }}">Download Backup ZIP</a>
     </div>
 
     {% if status_msg %}
@@ -2929,7 +2915,7 @@ ADMIN_HTML = """
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
     <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
     <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
-    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings#muck'"><strong>⚙</strong>Settings</button>
   </nav>
   <script>
     const adminCustomers = {{ customers_json|safe }};
@@ -3199,7 +3185,7 @@ INVOICE_HISTORY_HTML = """
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
     <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
     <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
-    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings#muck'"><strong>⚙</strong>Settings</button>
   </nav>
   <script>
     const downloadNotice = document.getElementById("download_notice");
@@ -3283,7 +3269,7 @@ SETTINGS_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#334d38">
+  <meta name="theme-color" content="#1b3d2a">
 <title>Settings</title>
   <style>
     @import url('/static/af_brand.css');
@@ -3435,59 +3421,113 @@ SETTINGS_HTML = """
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="top-links">
-      <a class="button" href="{{ url_for('home') }}">Back To Jobs</a>
-    </div>
+  <div class="page settings-page">
+    <header class="topbar"><div class="brand-block"><p class="eyebrow">Cherry Dene Farm &amp; A. Farrell Contracting</p><h1>Settings</h1></div></header>
+    <nav class="settings-jump" aria-label="Settings sections">
+      <a href="#general">General</a>
+      <a href="#muck">Muck spreading</a>
+      <a href="#gritting">Gritting</a>
+      <a href="#beet">Sugar beet</a>
+      <a href="#lists">Staff and lists</a>
+    </nav>
 
     {% if status_msg %}
     <div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>
     {% endif %}
+    {% with messages = get_flashed_messages() %}{% for message in messages %}
+    <div class="status ok">{{ message }}</div>
+    {% endfor %}{% endwith %}
 
-    <div class="card">
-      <h1>Settings</h1>
-      <p class="copy">All settings are stored in <strong>settings.xlsx</strong> in the app folder. Use its tabs to edit staff names, companies, customers, email settings and recipients, invoice settings, farms, fields and muck types. Save and close Excel, then refresh the app. Changes saved here update the same workbook.</p>
-      <p class="copy">Change the default invoice wording and payment terms used when you open the invoice page.</p>
-      <form method="post" action="{{ url_for('settings_save') }}">
-        <div class="form-grid">
-                    <div class="field full">
-                        <h2>Email Sending Account</h2>
-                        <div class="hint">These settings control the SMTP account used for invoice and summary emails. Leave the password blank to keep the current password.</div>
-                    </div>
+    {# One form for the app's email account and the invoice wording: its fields sit in two sections and are saved together. #}
+    <form id="app-settings-form" method="post" action="{{ url_for('settings_save') }}"></form>
+
+    <section class="card settings-section" id="general" aria-labelledby="general-heading">
+      <p class="settings-eyebrow">Whole app</p>
+      <h2 id="general-heading">General</h2>
+      <details class="settings-box">
+        <summary><span>Email sending account</span><small>Used for invoices, muck spreading summaries and timesheets</small></summary>
+        <div class="settings-box-body">
+          <div class="hint">Leave the password blank to keep the current password.</div>
+            <div class="form-grid">
                     <div class="field">
                         <label for="settings_smtp_host">SMTP Host</label>
-                        <input id="settings_smtp_host" name="smtp_host" type="text" value="{{ email_config.smtp_host }}">
+                        <input form="app-settings-form" id="settings_smtp_host" name="smtp_host" type="text" value="{{ email_config.smtp_host }}">
                     </div>
                     <div class="field">
                         <label for="settings_smtp_port">SMTP Port</label>
-                        <input id="settings_smtp_port" name="smtp_port" type="number" min="1" max="65535" value="{{ email_config.smtp_port }}">
+                        <input form="app-settings-form" id="settings_smtp_port" name="smtp_port" type="number" min="1" max="65535" value="{{ email_config.smtp_port }}">
                     </div>
                     <div class="field">
                         <label for="settings_smtp_username">SMTP Username</label>
-                        <input id="settings_smtp_username" name="smtp_username" type="email" value="{{ email_config.smtp_username }}">
+                        <input form="app-settings-form" id="settings_smtp_username" name="smtp_username" type="email" value="{{ email_config.smtp_username }}">
                     </div>
                     <div class="field">
                         <label for="settings_smtp_password">SMTP Password</label>
-                        <input id="settings_smtp_password" name="smtp_password" type="password" placeholder="Leave blank to keep current password" autocomplete="new-password">
+                        <input form="app-settings-form" id="settings_smtp_password" name="smtp_password" type="password" placeholder="Leave blank to keep current password" autocomplete="new-password">
                     </div>
                     <div class="field">
                         <label for="settings_smtp_from_email">SMTP Account From</label>
-                        <input id="settings_smtp_from_email" name="smtp_from_email" type="email" value="{{ email_config.from_email }}">
+                        <input form="app-settings-form" id="settings_smtp_from_email" name="smtp_from_email" type="email" value="{{ email_config.from_email }}">
                     </div>
                     <div class="field">
                         <label for="settings_smtp_use_tls">Use TLS</label>
-                        <select id="settings_smtp_use_tls" name="smtp_use_tls">
+                        <select form="app-settings-form" id="settings_smtp_use_tls" name="smtp_use_tls">
                             <option value="1" {% if email_config.use_tls %}selected{% endif %}>Yes</option>
                             <option value="0" {% if not email_config.use_tls %}selected{% endif %}>No</option>
                         </select>
                     </div>
+            </div>
+          <div class="actions"><button class="button button-primary" type="submit" form="app-settings-form">Save email account</button></div>
+        </div>
+      </details>
+      <details class="settings-box" id="backups">
+        <summary><span>Backups</span><small>{% if backups %}Last backup {{ backups[0].label }}{% else %}No backups yet{% endif %} · every day from {{ '%02d' % backup_hour }}:00</small></summary>
+        <div class="settings-box-body">
+          <p class="copy">One backup covers the whole app: muck spreading, gritting, hay and straw, sugar beet, maintenance, timesheets, invoices, photos, settings and the app itself. It runs automatically every day from {{ '%02d' % backup_hour }}:00 and the newest {{ backup_keep }} are kept on this machine in the <strong>backups</strong> folder.</p>
+          {% if backup_error.message %}
+          <div class="status error">The last automatic backup failed ({{ backup_error.at }}): {{ backup_error.message }}</div>
+          {% endif %}
+          <form method="post" action="{{ url_for('backup_now') }}">
+            <button class="button button-primary" type="submit">Back up now</button>
+          </form>
+          {% if backups %}
+          <div class="hint">Last backup: {{ backups[0].label }}</div>
+          <ul class="backup-list">
+            {% for backup in backups %}
+            <li><span>{{ backup.label }} <small>{{ backup.size_label }}</small></span><a class="button button-secondary" href="{{ url_for('backup_download', name=backup.name) }}">Download</a></li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <div class="hint">No backups yet. The first one is made automatically today, or tap Back up now.</div>
+          {% endif %}
+        </div>
+      </details>
+      <details class="settings-box">
+        <summary><span>App update</span><small>Current version: {{ app_version }}</small></summary>
+        <div class="settings-box-body">
+          <p class="copy">Install the latest version of the app from GitHub.</p>
+          <form method="post" action="{{ url_for('update_app') }}" id="update_app_form">
+            <button class="button button-primary" type="submit">Update App</button>
+          </form>
+          <div class="hint">Current version: {{ app_version }}</div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card settings-section" id="muck" aria-labelledby="muck-heading">
+      <p class="settings-eyebrow">Muck spreading</p>
+      <h2 id="muck-heading">Muck spreading and invoices</h2>
+      <details class="settings-box">
+        <summary><span>Invoice emails</span><small>From address, payment terms and wording</small></summary>
+        <div class="settings-box-body">
+            <div class="form-grid">
           <div class="field">
             <label for="settings_invoice_from_email">Invoice From Email</label>
-            <input id="settings_invoice_from_email" name="invoice_from_email" type="email" value="{{ settings.invoice_from_email }}">
+            <input form="app-settings-form" id="settings_invoice_from_email" name="invoice_from_email" type="email" value="{{ settings.invoice_from_email }}">
           </div>
           <div class="field">
             <label for="settings_invoice_default_payment_terms_days">Default Payment Terms</label>
-            <select id="settings_invoice_default_payment_terms_days" name="invoice_default_payment_terms_days">
+            <select form="app-settings-form" id="settings_invoice_default_payment_terms_days" name="invoice_default_payment_terms_days">
               {% for option in invoice_payment_terms_options %}
               <option value="{{ option }}" {% if settings.invoice_default_payment_terms_days == option %}selected{% endif %}>{{ option }} days</option>
               {% endfor %}
@@ -3495,39 +3535,102 @@ SETTINGS_HTML = """
           </div>
           <div class="field">
             <label for="settings_invoice_subject_template">Invoice Subject Template</label>
-            <input id="settings_invoice_subject_template" name="invoice_subject_template" type="text" value="{{ settings.invoice_subject_template }}">
+            <input form="app-settings-form" id="settings_invoice_subject_template" name="invoice_subject_template" type="text" value="{{ settings.invoice_subject_template }}">
             <div class="hint">Placeholders: `{invoice_number}` `{customer}` `{farm}` `{scope}` `{greeting}`</div>
           </div>
           <div class="field full">
             <label for="settings_invoice_customer_message_template">Customer Message Template</label>
-            <textarea id="settings_invoice_customer_message_template" name="invoice_customer_message_template">{{ settings.invoice_customer_message_template }}</textarea>
+            <textarea form="app-settings-form" id="settings_invoice_customer_message_template" name="invoice_customer_message_template">{{ settings.invoice_customer_message_template }}</textarea>
           </div>
           <div class="field full">
             <label for="settings_invoice_accounts_message_template">Accounts Message Template</label>
-            <textarea id="settings_invoice_accounts_message_template" name="invoice_accounts_message_template">{{ settings.invoice_accounts_message_template }}</textarea>
+            <textarea form="app-settings-form" id="settings_invoice_accounts_message_template" name="invoice_accounts_message_template">{{ settings.invoice_accounts_message_template }}</textarea>
           </div>
+            </div>
+          <div class="hint">The greeting changes automatically to `Good Morning` or `Good Afternoon` when the email is sent.</div>
+          <div class="actions"><button class="button button-primary" type="submit" form="app-settings-form">Save invoice emails</button></div>
         </div>
-        <div class="hint">The greeting changes automatically to `Good Morning` or `Good Afternoon` when the email is sent.</div>
-        <div class="actions">
-          <button class="button button-primary" type="submit">Save Settings</button>
-        </div>
-      </form>
-    </div>
+      </details>
+      <div class="settings-links">
+        <a class="button" href="{{ url_for('admin_home') }}">Open data admin</a>
+      </div>
+    </section>
 
-    <div class="card">
-      <h2>App Update</h2>
-      <p class="copy">Install the latest version of the app from GitHub.</p>
-      <form method="post" action="{{ url_for('update_app') }}" id="update_app_form">
-        <button class="button button-primary" type="submit">Update App</button>
-      </form>
-      <div class="hint">Current version: {{ app_version }}</div>
-    </div>
+    <section class="card settings-section" id="gritting" aria-labelledby="gritting-heading">
+      <p class="settings-eyebrow">Gritting</p>
+      <h2 id="gritting-heading">Gritting</h2>
+      {% include "gritting/_settings_sections.html" %}
+    </section>
+
+    <section class="card settings-section" id="beet" aria-labelledby="beet-heading">
+      <p class="settings-eyebrow">Sugar beet</p>
+      <h2 id="beet-heading">Sugar beet</h2>
+      <details class="settings-box">
+        <summary><span>Diesel escalator</span><small>Base £{{ '%.3f' % beet_settings.base_price }} per litre · surcharge from a {{ '%g' % beet_settings.trigger_pct }}% rise</small></summary>
+        <div class="settings-box-body">
+          <p class="copy">New beet jobs use these figures. Saved jobs keep the figures they were recorded with.</p>
+          <form id="beet-settings-form">
+            <div class="form-grid">
+              <div class="field"><label for="beet_base_price">Base diesel price (£ per litre)</label><input id="beet_base_price" name="base_price" type="number" min="0" step="0.001" inputmode="decimal" value="{{ beet_settings.base_price }}" required></div>
+              <div class="field"><label for="beet_trigger_pct">Surcharge starts at a rise of (%)</label><input id="beet_trigger_pct" name="trigger_pct" type="number" min="0" step="0.1" inputmode="decimal" value="{{ beet_settings.trigger_pct }}" required></div>
+            </div>
+            <div class="actions"><button class="button button-primary" type="submit">Save diesel escalator</button></div>
+            <div class="hint" id="beet-settings-status" role="status" aria-live="polite"></div>
+          </form>
+        </div>
+      </details>
+    </section>
+
+    <section class="card settings-section" id="lists" aria-labelledby="lists-heading">
+      <p class="settings-eyebrow">Timesheets, maintenance, hay and straw</p>
+      <h2 id="lists-heading">Staff and lists</h2>
+      <p class="copy">Staff names (timesheets), machinery (maintenance), companies, customers, farms, fields, muck types and email recipients are kept in <strong>settings.xlsx</strong> in the app folder. Edit it in Excel, save and close it, then refresh the app. Changes saved on this page update the same workbook.</p>
+      <div class="settings-links">
+        <a class="button" href="{{ url_for('admin_home') }}">Open data admin</a>
+      </div>
+    </section>
   </div>
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
     <button class="bottom-nav-btn" type="button" onclick="window.history.back()"><strong>←</strong>Back</button>
     <button class="bottom-nav-btn" type="button" onclick="window.location.href='/'"><strong>⌂</strong>Home</button>
-    <button class="bottom-nav-btn" type="button" onclick="window.location.href='/settings'"><strong>⚙</strong>Settings</button>
+    <a class="bottom-nav-btn" href="/settings" aria-current="page"><strong>⚙</strong>Settings</a>
   </nav>
+  <script>
+    // Coming here from a part of the app (for example /settings#gritting) opens that section's first box.
+    (function () {
+      function openFor(hash) {
+        const target = hash && document.querySelector(hash);
+        if (!target) return;
+        const box = target.matches("details") ? target : target.querySelector("details.settings-box");
+        if (box) box.open = true;
+      }
+      openFor(window.location.hash);
+      window.addEventListener("hashchange", () => openFor(window.location.hash));
+    })();
+    // Sugar beet diesel escalator saves straight away.
+    (function () {
+      const form = document.getElementById("beet-settings-form");
+      const status = document.getElementById("beet-settings-status");
+      if (!form) return;
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        status.textContent = "Saving…";
+        try {
+          const response = await fetch("{{ url_for('beet_settings_api') }}", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ base_price: form.elements.base_price.value, trigger_pct: form.elements.trigger_pct.value }),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "The escalator settings could not be saved.");
+          status.textContent = "Saved. New beet jobs will use these figures.";
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
 """
@@ -8503,6 +8606,7 @@ def start_background_workers(debug_mode=False):
         return
     worker = threading.Thread(target=weekly_email_worker, daemon=True)
     worker.start()
+    threading.Thread(target=daily_backup_worker, daemon=True).start()
     gritting.start_background_jobs()
 
 
@@ -10939,6 +11043,12 @@ def settings_home():
         email_config=load_email_config(),
         invoice_payment_terms_options=INVOICE_PAYMENT_TERMS_OPTIONS,
         app_version=app_version_label(),
+        backups=list_backups(),
+        beet_settings=beet_settings(),
+        **gritting.settings_context(),
+        backup_keep=BACKUP_KEEP,
+        backup_hour=BACKUP_HOUR,
+        backup_error=LAST_BACKUP_ERROR,
         status_msg=str(request.args.get("msg", "") or "").strip(),
         status_ok=str(request.args.get("ok", "1")) == "1",
     )
@@ -11994,51 +12104,185 @@ def update_app():
     return render_template("updating.html", boot_id=APP_BOOT_ID, home_url=url_for("home", ok=1, msg="App updated"))
 
 
+BACKUP_DIR = os.path.join(APP_ROOT, "backups")
+BACKUP_KEEP = 14                      # how many backup files to keep on the Pi
+BACKUP_HOUR = 2                       # the daily backup runs from 2am
+BACKUP_CHECK_INTERVAL_SECONDS = 600
+BACKUP_PREFIX = "whole_app_backup_"
+BACKUP_SKIP_NAMES = {".DS_Store", "__pycache__", ".git", "backups"}
+SQLITE_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+_backup_lock = threading.Lock()
+LAST_BACKUP_ERROR = {"message": "", "at": ""}
+
+
+def sqlite_snapshot_bytes(path):
+    """A consistent copy of a SQLite database, even while the app is writing to it."""
+    fd, temp_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        source = sqlite3.connect(path)
+        target = sqlite3.connect(temp_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        with open(temp_path, "rb") as handle:
+            return handle.read()
+    except sqlite3.Error:
+        return None
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+def add_backup_file(archive, file_path, archive_name):
+    name = os.path.basename(file_path)
+    if name in BACKUP_SKIP_NAMES or name.endswith((".tmp", ".pyc", "-wal", "-shm", "-journal")) or name.startswith("~$"):
+        return
+    if name.endswith(SQLITE_SUFFIXES):
+        snapshot = sqlite_snapshot_bytes(file_path)
+        if snapshot is not None:
+            archive.writestr(archive_name, snapshot)
+            return
+    archive.write(file_path, archive_name)
+
+
+def add_backup_folder(archive, folder, archive_root):
+    if not os.path.isdir(folder):
+        return
+    for current, dirs, names in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if d not in BACKUP_SKIP_NAMES)
+        if os.path.abspath(current).startswith(os.path.abspath(BACKUP_DIR)):
+            continue
+        for name in sorted(names):
+            file_path = os.path.join(current, name)
+            add_backup_file(archive, file_path, os.path.join(archive_root, os.path.relpath(file_path, folder)))
+
+
+def write_whole_app_backup(target):
+    """Everything needed to rebuild the app: the code, settings workbooks, and every part's data
+    (muck spreading, gritting, straw, beet, maintenance, timesheets, invoices, photos)."""
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in sorted(os.listdir(APP_ROOT)):
+            file_path = os.path.join(APP_ROOT, name)
+            if os.path.isfile(file_path) and not name.startswith("."):
+                add_backup_file(archive, file_path, name)
+        for folder in ("templates", "static"):
+            add_backup_folder(archive, os.path.join(APP_ROOT, folder), folder)
+        add_backup_folder(archive, DATA_DIR, "data")
+        for folder, archive_root in ((ISSUE_PHOTOS_DIR, "data/job_issue_photos"), (INVOICE_ARCHIVE_DIR, "data/invoices")):
+            if not os.path.abspath(folder).startswith(os.path.abspath(DATA_DIR) + os.sep):
+                add_backup_folder(archive, folder, archive_root)
+        gritting_root = os.path.dirname(gritting.DATABASE_PATH)
+        if not os.path.abspath(gritting_root).startswith(os.path.abspath(DATA_DIR) + os.sep):
+            add_backup_folder(archive, gritting_root, "data/gritting")
+
+
+def list_backups():
+    if not os.path.isdir(BACKUP_DIR):
+        return []
+    backups = []
+    for name in sorted(os.listdir(BACKUP_DIR), reverse=True):
+        if not (name.startswith(BACKUP_PREFIX) and name.endswith(".zip")):
+            continue
+        path = os.path.join(BACKUP_DIR, name)
+        try:
+            made_at = datetime.strptime(name[len(BACKUP_PREFIX):-4], "%Y%m%d_%H%M%S")
+        except ValueError:
+            continue
+        size = os.path.getsize(path)
+        backups.append({
+            "name": name,
+            "made_at": made_at,
+            "label": made_at.strftime("%a %d %b %Y, %H:%M"),
+            "size_label": "%.1f MB" % (size / 1048576.0) if size >= 1048576 else "%d KB" % max(1, round(size / 1024.0)),
+        })
+    return backups
+
+
+def prune_backups(keep=BACKUP_KEEP):
+    for backup in list_backups()[keep:]:
+        try:
+            os.remove(os.path.join(BACKUP_DIR, backup["name"]))
+        except OSError:
+            pass
+
+
+def make_backup_file(now=None):
+    """Write a whole-app backup into the backups folder and keep only the newest ones."""
+    now = now or datetime.now()
+    with _backup_lock:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        name = "%s%s.zip" % (BACKUP_PREFIX, now.strftime("%Y%m%d_%H%M%S"))
+        path = os.path.join(BACKUP_DIR, name)
+        fd, temp_path = tempfile.mkstemp(prefix=".backup_", suffix=".zip", dir=BACKUP_DIR)
+        os.close(fd)
+        try:
+            write_whole_app_backup(temp_path)
+            os.replace(temp_path, path)
+        except Exception:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
+        prune_backups()
+        return path
+
+
+def maybe_run_daily_backup(now=None):
+    """Make today's backup once it is past BACKUP_HOUR and none has been made today."""
+    now = now or datetime.now()
+    if now.hour < BACKUP_HOUR:
+        return None
+    if any(backup["made_at"].date() == now.date() for backup in list_backups()):
+        return None
+    return make_backup_file(now)
+
+
+def daily_backup_worker():
+    while True:
+        try:
+            maybe_run_daily_backup()
+            LAST_BACKUP_ERROR.update(message="", at="")
+        except Exception as exc:
+            LAST_BACKUP_ERROR.update(message=str(exc) or exc.__class__.__name__, at=datetime.now().strftime("%d %b %Y, %H:%M"))
+        time.sleep(BACKUP_CHECK_INTERVAL_SECONDS)
+
+
 @app.route("/backup/export.zip")
 def backup_export_zip():
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        candidate_paths = [
-            ("app.py", os.path.join(APP_ROOT, "app.py")),
-            ("settings_workbook.py", os.path.join(APP_ROOT, "settings_workbook.py")),
-            ("gritting.py", os.path.join(APP_ROOT, "gritting.py")),
-            ("weather.py", os.path.join(APP_ROOT, "weather.py")),
-            ("settings.xlsx", SETTINGS_WORKBOOK_PATH),
-            ("README.md", os.path.join(APP_ROOT, "README.md")),
-            ("email_config.example.json", os.path.join(APP_ROOT, "email_config.example.json")),
-            ("muckspreading-app.service", os.path.join(APP_ROOT, "muckspreading-app.service")),
-            ("weekly_summary_layout_template.xlsx", os.path.join(APP_ROOT, "weekly_summary_layout_template.xlsx")),
-        ]
-        for archive_name, file_path in candidate_paths:
-            if os.path.exists(file_path):
-                archive.write(file_path, archive_name)
-        if os.path.isdir(DATA_DIR):
-            for name in sorted(os.listdir(DATA_DIR)):
-                file_path = os.path.join(DATA_DIR, name)
-                if os.path.isfile(file_path):
-                    archive.write(file_path, os.path.join("data", name))
-        if os.path.isdir(ISSUE_PHOTOS_DIR):
-            for name in sorted(os.listdir(ISSUE_PHOTOS_DIR)):
-                file_path = os.path.join(ISSUE_PHOTOS_DIR, name)
-                if os.path.isfile(file_path):
-                    archive.write(file_path, os.path.join("data", "job_issue_photos", name))
-        if os.path.isdir(INVOICE_ARCHIVE_DIR):
-            for name in sorted(os.listdir(INVOICE_ARCHIVE_DIR)):
-                file_path = os.path.join(INVOICE_ARCHIVE_DIR, name)
-                if os.path.isfile(file_path):
-                    archive.write(file_path, os.path.join("data", "invoices", name))
-        gritting_root = os.path.join(DATA_DIR, "gritting")
-        for folder, _, names in sorted(os.walk(gritting_root)):
-            for name in sorted(names):
-                file_path = os.path.join(folder, name)
-                archive.write(file_path, os.path.join("data", "gritting", os.path.relpath(file_path, gritting_root)))
+    write_whole_app_backup(output)
     output.seek(0)
-    filename = "muckspreading_backup_%s.zip" % datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = "%s%s.zip" % (BACKUP_PREFIX, datetime.now().strftime("%Y%m%d_%H%M%S"))
     return Response(
         output.getvalue(),
         mimetype="application/zip",
         headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
     )
+
+
+@app.route("/backup/now", methods=["POST"])
+def backup_now():
+    try:
+        path = make_backup_file()
+    except Exception as exc:
+        return redirect(url_for("settings_home", ok=0, msg="Backup failed: %s" % (str(exc) or exc.__class__.__name__)) + "#backups")
+    return redirect(url_for("settings_home", ok=1, msg="Backup saved: %s" % os.path.basename(path)) + "#backups")
+
+
+@app.route("/backup/files/<name>")
+def backup_download(name):
+    if not (name.startswith(BACKUP_PREFIX) and name.endswith(".zip")) or os.path.basename(name) != name:
+        return Response("Not found", status=404)
+    path = os.path.join(BACKUP_DIR, name)
+    if not os.path.isfile(path):
+        return Response("Not found", status=404)
+    with open(path, "rb") as handle:
+        data = handle.read()
+    return Response(data, mimetype="application/zip", headers={"Content-Disposition": 'attachment; filename="%s"' % name})
 
 
 @app.route("/summary/export/<period_key>.xlsx")

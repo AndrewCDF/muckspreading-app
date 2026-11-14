@@ -32,7 +32,12 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIn(b"/gritting/live-jobs", page.data)
 
     def test_every_page_loads_with_an_empty_database(self):
-        for path in ["/gritting/", "/gritting/live-jobs", "/gritting/new-callout", "/gritting/customers", "/gritting/settings",
+        settings = self.client.get("/gritting/settings")  # gritting settings are a section of the app's one Settings page
+        self.assertTrue(settings.headers["Location"].endswith("/settings#gritting"))
+        page = self.client.get("/settings").get_data(as_text=True)
+        for heading in ("Gritting email account", "Gritting email wording", "Special dates (match days)", "Gritting season", "Diesel escalator", "Invoice emails", "Backups"):
+            self.assertIn(heading, page)
+        for path in ["/gritting/", "/gritting/live-jobs", "/gritting/new-callout", "/gritting/customers",
                      "/gritting/callouts", "/gritting/monthly-summary", "/gritting/email-signature-preview",
                      "/gritting/monthly-summary/export?month=2026-01"]:
             with self.subTest(path=path):
@@ -187,7 +192,7 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIn("Not needed", page)
         self.assertNotIn("Mark complete", page)  # nothing can be completed until the list is finalised
 
-    def test_cancel_then_finalise_then_print_the_final_list(self):
+    def test_cancel_then_finalise_the_list(self):
         site_ids = self.make_sites(("Main yard", "Loading bay", "Back gate"))
         self.bulk_callout(site_ids)
         db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
@@ -205,32 +210,20 @@ class GrittingModuleTests(unittest.TestCase):
         finalised = self.client.post("/gritting/batches/%d/finalise" % batch_id, follow_redirects=True).get_data(as_text=True)
         self.assertIn("List finalised: 2 sites to grit, 1 not needed.", finalised)
         self.assertIn("Final ·", finalised)
-        self.assertIn("Open the final list to print", finalised)
+        self.assertNotIn("to print", finalised)  # there is no printed list any more
         self.assertNotIn("Draft list: you can open a job", finalised)
         self.assertIn("Mark complete", finalised)
         # once the list is final there is no Not needed button on it, nor on its jobs' pages
         self.assertNotIn("Not needed</button>", finalised)
         self.assertNotIn("Customer doesn&#39;t need us", self.client.get("/gritting/callouts/%d" % call_outs[0]).get_data(as_text=True).replace("doesn't", "doesn&#39;t"))
-        # the final list: sites to grit, and who was cancelled
-        sheet = self.client.get("/gritting/batches/%d/run-sheet" % batch_id).get_data(as_text=True)
-        self.assertIn("Final list", sheet)
-        self.assertIn("To grit (2)", sheet)
-        self.assertIn("Not needed (1)", sheet)
-        to_grit_part = sheet.split("Not needed (1)")[0]
-        self.assertIn("Acme Ltd · Main yard", to_grit_part)
-        self.assertIn("Acme Ltd · Back gate", to_grit_part)
-        self.assertNotIn("Loading bay", to_grit_part)
-        self.assertIn("Acme Ltd · Loading bay", sheet.split("Not needed (1)")[1])
-        # a late cancellation after finalising says to reprint
-        late = self.client.post("/gritting/callouts/%d/cancel" % call_outs[2], data={"next": "live_jobs"}, follow_redirects=True).get_data(as_text=True)
-        self.assertIn("This list was already finalised, so print the final list again.", late)
+        self.assertEqual(self.client.get("/gritting/batches/%d/run-sheet" % batch_id).status_code, 404)  # the print page has gone
         # reopening the list and putting a site back
         self.client.post("/gritting/batches/%d/reopen" % batch_id)
         draft = self.client.get("/gritting/live-jobs").get_data(as_text=True)
         self.assertIn(">Draft<", draft)
         back = self.client.post("/gritting/callouts/%d/reopen" % call_outs[1], data={"next": "live_jobs"})
         self.assertTrue(back.headers["Location"].endswith("/gritting/live-jobs"))
-        self.assertIn("<strong>2</strong> to grit · 1 not needed · 0 done", self.client.get("/gritting/live-jobs").get_data(as_text=True))
+        self.assertIn("<strong>3</strong> to grit · 0 not needed · 0 done", self.client.get("/gritting/live-jobs").get_data(as_text=True))
 
     def test_a_list_with_nothing_left_cannot_be_finalised_and_finished_lists_drop_off(self):
         site_ids = self.make_sites(("Main yard", "Loading bay"))
@@ -248,7 +241,6 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIsNone(db.execute("SELECT finalised_at FROM dispatch_batches").fetchone()[0])
         db.close()
         self.assertEqual(self.client.post("/gritting/batches/999/finalise").status_code, 302)
-        self.assertEqual(self.client.get("/gritting/batches/999/run-sheet").status_code, 302)
 
     def test_jobs_on_a_draft_list_cannot_be_completed_until_it_is_finalised(self):
         site_ids = self.make_sites(("Main yard", "Loading bay"))
@@ -259,10 +251,16 @@ class GrittingModuleTests(unittest.TestCase):
         db.close()
         status = lambda call_out_id: gritting.sqlite3.connect(gritting.DATABASE_PATH).execute("SELECT status FROM call_outs WHERE id=?", (call_out_id,)).fetchone()[0]
         draft = gritting.DRAFT_LIST_MESSAGE
-        # the live list offers Open and Not needed only
+        # the call-out list offers Open and Cancel only (no Mark complete or No access until the list is finalised)
         page = self.client.get("/gritting/live-jobs").get_data(as_text=True)
         self.assertNotIn("Mark complete", page)
-        self.assertEqual(page.count("Not needed</button>"), 2)
+        self.assertNotIn("No access</button>", page)
+        self.assertEqual(page.count("Cancel</button>"), 2)
+        # once finalised: Mark complete, Open and No access, and no Cancel (jobs are cancelled on the call-out list)
+        self.client.post("/gritting/batches/%d/finalise" % batch_id)
+        final = self.client.get("/gritting/live-jobs").get_data(as_text=True)
+        self.assertEqual((final.count("Mark complete</button>"), final.count("No access</button>"), final.count("Cancel</button>")), (2, 2, 0))
+        self.client.post("/gritting/batches/%d/reopen" % batch_id)
         # the quick button and the full form are both refused on the server
         quick = self.client.post("/gritting/callouts/%d/complete-quick" % first, data={"next": "live_jobs"}, follow_redirects=True)
         self.assertIn(draft, quick.get_data(as_text=True))
@@ -509,9 +507,7 @@ class GrittingModuleTests(unittest.TestCase):
         live = self.client.get("/gritting/live-jobs").get_data(as_text=True)
         self.assertIn("Includes extras: Rear bay +£20.00, Bin store +£5.00", live)
         self.client.post("/gritting/batches/%d/finalise" % batch_id)
-        sheet = self.client.get("/gritting/batches/%d/run-sheet" % batch_id).get_data(as_text=True)
-        self.assertIn("Includes:", sheet)
-        self.assertIn("Rear bay +£20.00, Bin store +£5.00", sheet)
+        self.assertIn("Includes extras: Rear bay +£20.00, Bin store +£5.00", self.client.get("/gritting/live-jobs").get_data(as_text=True))
 
     def test_the_customer_page_shows_and_manages_extras(self):
         site_id = self.make_priced_site("100")
@@ -688,16 +684,16 @@ class GrittingModuleTests(unittest.TestCase):
         page = self.client.get("/gritting/customers").get_data(as_text=True)
         self.assertIn('value="07700 900999"', page)
 
-    def test_the_final_list_shows_the_postcode_and_every_emergency_contact(self):
+    def test_the_job_shows_the_postcode_and_every_emergency_contact(self):
         self.client.post("/gritting/customers", data=self.contact_form())
         db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
         site_id = db.execute("SELECT id FROM sites").fetchone()[0]
         db.close()
         self.bulk_callout([site_id])
         self.client.post("/gritting/batches/1/finalise")
-        sheet = self.client.get("/gritting/batches/1/run-sheet").get_data(as_text=True)
-        self.assertIn("7 Quay St, NR15 1BE", sheet)
-        self.assertIn("Emergency: Ann Lee 07700 900111 · Bob Ray 07700 900222", sheet)
+        job = self.client.get("/gritting/callouts/1").get_data(as_text=True)
+        self.assertIn("NR15 1BE", job)
+        self.assertIn("Ann Lee 07700 900111 · Bob Ray 07700 900222", job)
         self.assertIn("7 Quay St, NR15 1BE", self.client.get("/gritting/live-jobs").get_data(as_text=True))
 
     def test_the_spreadsheet_import_reads_several_emails_a_contact_name_postcode_and_site_emails(self):
@@ -880,7 +876,7 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertIn("No job number", self.client.get("/gritting/callouts/1").get_data(as_text=True))
         self.assertIn("Job number 1", self.client.get("/gritting/callouts/2").get_data(as_text=True))
         self.assertIn("Job 1", self.client.get("/gritting/live-jobs").get_data(as_text=True))
-        self.assertIn("Job 2", self.client.get("/gritting/batches/1/run-sheet").get_data(as_text=True))
+        self.assertIn("Job 2", self.client.get("/gritting/live-jobs").get_data(as_text=True))
         # reopening the list takes the numbers back so a late cancellation cannot leave a numbered job behind
         self.client.post("/gritting/batches/1/reopen")
         self.assertEqual([row[2] for row in self.job_numbers()], [None, None, None])
@@ -942,7 +938,6 @@ class GrittingModuleTests(unittest.TestCase):
         detail = self.client.get("/gritting/callouts/1").get_data(as_text=True)
         self.assertIn("We could not get in", detail)
         self.assertIn("could not access", detail)  # the email is in the job's notifications
-        self.assertIn("No access (1)", self.client.get("/gritting/batches/1/run-sheet").get_data(as_text=True))
         # it is not done, so it cannot be completed or cancelled until it is put back
         self.assertIn("marked no access", self.client.post("/gritting/callouts/1/complete", data={"service_notes": "", "completed_at": "2026-01-12T23:00"}, follow_redirects=True).get_data(as_text=True))
         self.assertIn("marked no access", self.client.post("/gritting/callouts/1/complete-quick", follow_redirects=True).get_data(as_text=True))
@@ -963,59 +958,6 @@ class GrittingModuleTests(unittest.TestCase):
         with patch.object(gritting, "smtp_configured", return_value=True), patch.object(gritting, "send_email_message", side_effect=lambda r, s, b, a=None: sent.append(s) or ("sent", "ok")):
             self.assertIn("Resent: 1 sent", self.client.post("/gritting/callouts/1/resend-emails", follow_redirects=True).get_data(as_text=True))
         self.assertTrue(sent and "could not access" in sent[0])
-
-    # ---- checking the forecast against real road readings -------------------------------------------------------
-
-    def test_road_readings_are_saved_beside_the_forecast_and_correct_it_once_there_are_enough(self):
-        from datetime import timedelta as delta
-        site_ids = self.make_sites(names=("Main yard",))
-        self.bulk_callout(site_ids)
-        self.client.post("/gritting/batches/1/finalise")
-        start = (datetime.now() - delta(days=2)).strftime("%Y-%m-%dT00:00")
-        fixture = raw_forecast(lambda stamp: 1.0, start=start, hours=24 * 6)
-        with patch.object(gritting, "fetch_open_meteo_forecast", return_value=(fixture, False)):
-            self.assertIn("Log road temperature", self.client.get("/gritting/live-jobs").get_data(as_text=True))
-            first = self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0", "next": "live_jobs"}, follow_redirects=True).get_data(as_text=True)
-            self.assertIn("Saved -1.0°C", first)
-            self.assertIn("2.0°C colder than forecast", first)  # the forecast said 1.0
-            for bad in ("", "abc", "99", "-50"):
-                self.assertNotIn("Saved", self.client.post("/gritting/callouts/1/road-reading", data={"reading": bad}, follow_redirects=True).get_data(as_text=True))
-            db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
-            self.assertEqual(db.execute("SELECT reading, forecast_surface FROM road_readings").fetchall(), [(-1.0, 1.0)])
-            db.close()
-            # four readings are not enough to move the forecast, five are, and the move is smaller than the miss
-            accuracy = lambda: self.client.get("/gritting/road-forecast.json").get_json()
-            for _ in range(3):
-                self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0"})
-            self.assertEqual((accuracy()["bias"], accuracy()["readings"]), (0.0, 4))
-            self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0"})
-            self.assertEqual(accuracy()["readings"], 5)
-            self.assertEqual(accuracy()["bias"], -1.0)  # median miss -2.0, trusted 5 parts in 10
-            for _ in range(15):
-                self.client.post("/gritting/callouts/1/road-reading", data={"reading": "-1.0"})
-            self.assertEqual(accuracy()["bias"], -1.6)  # 20 readings: trusted 20 parts in 25
-            page = self.client.get("/gritting/road-accuracy").get_data(as_text=True)
-            self.assertIn("-2.0°C", page)
-            self.assertIn("colder than the forecast", page)
-        # a correction moves the night's figures the same amount
-        now = datetime(2026, 11, 10, 19, 0)
-        freezing = raw_forecast(lambda stamp: 3.0, hours=24 * 12)
-        plain = gritting.road_forecast_from_open_meteo(freezing, now)["nights"][0]
-        lowered = gritting.road_forecast_from_open_meteo(freezing, now, bias=-2.0)["nights"][0]
-        self.assertEqual((plain["min_surface"], lowered["min_surface"]), (3.0, 1.0))
-        self.assertEqual(plain["level"], "ok")
-        self.assertEqual(lowered["level"], "watch")
-
-    def test_the_accuracy_page_loads_with_no_readings_and_the_bias_is_limited(self):
-        self.assertIn("No readings yet", self.client.get("/gritting/road-accuracy").get_data(as_text=True))
-        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
-        now = datetime.now().strftime("%Y-%m-%dT%H:%M")
-        for _ in range(40):
-            db.execute("INSERT INTO road_readings (read_at, reading, forecast_surface) VALUES (?, 12.0, 0.0)", (now,))
-        db.commit()
-        db.close()
-        with app.app.app_context():
-            self.assertEqual(gritting.road_accuracy(gritting.get_db())["bias"], 3.0)  # never more than 3 degrees
 
     def test_urls_inside_pages_point_at_gritting(self):
         page = self.client.get("/gritting/customers").data.decode()

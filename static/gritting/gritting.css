@@ -1,18 +1,18 @@
-/* Gritting pages: the Norwich Gritting Services light blue look, laid out phone first. */
+/* Gritting pages: the layered hero theme (green banner, floating cards), laid out phone first. */
 :root {
-  --sky: #8da8ea;
-  --blue: #5f80cd;
-  --blue-deep: #3f62af;
-  --tint: #eef3ff;
-  --ink: #11275d;
-  --muted: #6d7ea6;
-  --line: rgba(36, 65, 143, 0.14);
-  --green: #24418f;          /* the main accent (navy) */
-  --green-soft: #dbe5fb;
-  --gold: #5f80cd;           /* focus and marker accent */
-  --gold-soft: rgba(49, 86, 180, 0.12);
-  --on-blue: #f6f8ff;
-  --shadow: 0 16px 36px rgba(6, 14, 42, 0.22);
+  --sky: #1f4a33;
+  --blue: #1b3d2a;
+  --blue-deep: #0f2619;
+  --tint: #eef4ef;
+  --ink: #14261b;
+  --muted: #5b6b60;
+  --line: rgba(27, 61, 42, 0.12);
+  --green: #1b3d2a;          /* the main accent (deep green) */
+  --green-soft: #e3eee6;
+  --gold: #c79e4f;           /* focus and marker accent */
+  --gold-soft: rgba(199, 158, 79, 0.16);
+  --on-blue: #ffffff;
+  --shadow: 0 2px 4px rgba(15, 38, 25, 0.08), 0 10px 22px rgba(15, 38, 25, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -239,11 +239,6 @@ details.sub-disclosure > .disclosure-body { padding: 0 14px 14px; display: grid;
 .job-card.is-cancelled strong { text-decoration: line-through; }
 .job-card.is-done { background: #f3f8f4; }
 .job-card .job-actions form { flex: 1 1 120px; }
-.run-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 12px; }
-.run-list li { display: flex; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-.run-list p { margin: 2px 0 0; }
-.run-box { flex: 0 0 24px; height: 24px; margin-top: 2px; border: 2px solid var(--ink); border-radius: 6px; }
-.run-plain { margin: 8px 0 0; padding-left: 20px; line-height: 1.6; }
 @media print {
   body.gr { background: #fff; color: #000; }
   .gr-top, .gr-nav, .no-print, .flash-stack { display: none !important; }
@@ -306,3 +301,217 @@ details.sub-disclosure > .disclosure-body { padding: 0 14px 14px; display: grid;
 .no-access-box summary { cursor: pointer; font-weight: 700; color: #7a5410; }
 .no-access-box form { margin-top: 10px; }
 .status-no_access { background: #faeccd; color: #7a5410; }
+
+
+/* =====================================================================
+   Layered hero theme
+   ===================================================================== */
+html body.gr {
+  position: relative;
+  background: #f1f4f1;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+html body.gr::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 190px;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 85% 0%, rgba(220, 180, 96, 0.22), transparent 42%),
+    linear-gradient(160deg, #1f4a33 0%, #0f2619 100%);
+  background-size: 140% 140%, 100% 100%;
+  border-radius: 0 0 30px 30px;
+  box-shadow: 0 14px 30px rgba(15, 38, 25, 0.22);
+  animation: gr-drift 22s ease-in-out infinite alternate;
+}
+.gr-shell { position: relative; z-index: 1; padding-bottom: 104px; }
+.gr-top { animation: gr-rise 0.5s var(--gr-ease, cubic-bezier(0.22, 0.8, 0.3, 1)) both; }
+.gr-brand img { border: 0; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25); }
+.gr-top-links a { background: rgba(255, 255, 255, 0.14); color: #fff; border: 1px solid rgba(255, 255, 255, 0.22); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18); transition: transform 0.15s ease, background 0.2s ease; }
+.gr-top-links a:hover { background: rgba(255, 255, 255, 0.24); transform: translateY(-2px); }
+.gr-top-links a:active { transform: scale(0.94); }
+
+/* Text that now sits on the pale page, below the banner */
+.gr main > h3, .gr main > .muted, .gr main > .stack-list > p.muted { color: var(--ink); }
+.gr main > .muted, .gr main > .stack-list > p.muted { color: var(--muted); }
+.hero h2, .detail-header h2 { text-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); }
+.hero, .detail-header { animation: gr-rise 0.55s cubic-bezier(0.22, 0.8, 0.3, 1) both; }
+
+/* Floating cards */
+.panel, .list-card, .job-card, .stat-card, details.disclosure {
+  border: 1px solid rgba(27, 61, 42, 0.07);
+  box-shadow: var(--shadow);
+  animation: gr-rise 0.55s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+  transition: transform 0.25s cubic-bezier(0.22, 0.8, 0.3, 1), box-shadow 0.25s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+.stack-list > :nth-child(2), .stats-grid > :nth-child(2), .panel:nth-of-type(2) { animation-delay: 0.06s; }
+.stack-list > :nth-child(3), .stats-grid > :nth-child(3), .panel:nth-of-type(3) { animation-delay: 0.12s; }
+.stack-list > :nth-child(4), .stats-grid > :nth-child(4), .panel:nth-of-type(4) { animation-delay: 0.18s; }
+.stack-list > :nth-child(n+5) { animation-delay: 0.22s; }
+@media (hover: hover) {
+  .job-card:hover, .stat-card:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(15, 38, 25, 0.08), 0 18px 34px rgba(15, 38, 25, 0.18); }
+}
+.sub-panel { background: var(--tint); animation: none; }
+.stat-card { border-top: 3px solid var(--gold); }
+
+/* Raised buttons */
+.button { transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.2s ease; }
+.button.primary {
+  background: linear-gradient(180deg, #2f5d41, #1b3d2a);
+  box-shadow: 0 5px 0 #0f2619, 0 10px 16px rgba(15, 38, 25, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.button.primary:active { transform: translateY(4px); box-shadow: 0 1px 0 #0f2619, 0 3px 6px rgba(15, 38, 25, 0.25); }
+.button.gold {
+  background: linear-gradient(180deg, #dcb460, #b68b38); color: #fff; text-shadow: 0 1px 1px rgba(90, 64, 12, 0.35);
+  box-shadow: 0 5px 0 #8c6a22, 0 10px 16px rgba(140, 106, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.button.gold:active { transform: translateY(4px); box-shadow: 0 1px 0 #8c6a22; }
+.button.subtle {
+  background: linear-gradient(180deg, #fff, #eef4ef); color: var(--green);
+  border: 1px solid rgba(27, 61, 42, 0.12);
+  box-shadow: 0 3px 0 rgba(27, 61, 42, 0.14), 0 6px 12px rgba(15, 38, 25, 0.08);
+}
+.button.subtle:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(27, 61, 42, 0.14); }
+@media (hover: hover) { .button:hover { transform: translateY(-2px); filter: brightness(1.04); } .button:active { filter: none; } }
+.hero-actions .button.primary.big { background: linear-gradient(180deg, #dcb460, #b68b38); text-shadow: 0 1px 1px rgba(90, 64, 12, 0.35); box-shadow: 0 5px 0 #8c6a22, 0 10px 16px rgba(140, 106, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+.hero-actions .button.primary.big:active { box-shadow: 0 1px 0 #8c6a22; }
+
+/* Fields sit slightly pressed in */
+.gr input, .gr select, .gr textarea { background: #fbfcfb; border: 1px solid rgba(27, 61, 42, 0.14); box-shadow: inset 0 2px 4px rgba(15, 38, 25, 0.05); transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+.gr input:focus, .gr select:focus, .gr textarea:focus { background: #fff; border-color: var(--gold); box-shadow: 0 0 0 4px rgba(199, 158, 79, 0.2); }
+.price-row, .rf-night { background: #f7faf7; }
+
+/* Statuses, flashes and badges in green and gold */
+.status { background: rgba(27, 61, 42, 0.1); color: #1b3d2a; }
+.status-on_site { background: rgba(199, 158, 79, 0.2); color: #6b4c10; }
+.status-completed { background: rgba(27, 61, 42, 0.14); color: #14261b; }
+.status-cancelled { background: rgba(91, 107, 96, 0.18); color: #44524a; }
+.flash { background: #fff; border: 1px solid rgba(199, 158, 79, 0.5); border-left: 5px solid var(--gold); box-shadow: var(--shadow); animation: gr-rise 0.4s ease both; }
+.rf-night-chevron { color: var(--gold); }
+.rf-line-surface { stroke: #1b3d2a; }
+.rf-grid { stroke: rgba(27, 61, 42, 0.12); }
+.rf-line-air { stroke: #8aa392; }
+.rf-key-air { border-top-color: #8aa392; }
+.rf-night.rf-grit .rf-badge-grit { animation: gr-pulse 2.4s ease-in-out infinite; }
+.rf-advice { background: #e8f1ea; color: #1b3d2a; }
+.job-card.is-cancelled { background: #f1f4f1; }
+.job-card.is-done { background: #f3f8f4; }
+
+/* Floating bottom nav */
+.gr-nav {
+  left: 12px; right: 12px; max-width: 600px; margin: 0 auto;
+  bottom: calc(10px + env(safe-area-inset-bottom) * 0.4);
+  gap: 3px; padding: 5px;
+  background: #fff; border: 1px solid rgba(27, 61, 42, 0.08); border-radius: 20px;
+  box-shadow: 0 12px 26px rgba(15, 38, 25, 0.22), 0 2px 4px rgba(15, 38, 25, 0.1);
+  animation: gr-nav-in 0.6s cubic-bezier(0.22, 0.8, 0.3, 1) 0.15s both;
+}
+.gr-nav a { border-radius: 15px; padding: 5px 2px 4px; transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease; }
+.gr-nav a:active { transform: scale(0.93); }
+.gr-nav a[aria-current="page"] { background: linear-gradient(180deg, #2f5d41, #1b3d2a); color: #fff; box-shadow: 0 3px 0 #0f2619; }
+
+/* Motion */
+@keyframes gr-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gr-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes gr-nav-in { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: none; } }
+@keyframes gr-drift { from { background-position: 0% 0%, 0 0; } to { background-position: 100% 100%, 0 0; } }
+@keyframes gr-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(179, 64, 47, 0.35); } 50% { box-shadow: 0 0 0 7px rgba(179, 64, 47, 0); } }
+@media (prefers-reduced-motion: reduce) {
+  html body.gr::before, .gr-top, .hero, .detail-header, .panel, .list-card, .job-card, .stat-card, details.disclosure, .flash, .gr-nav, .rf-badge-grit { animation: none !important; }
+  .gr * { transition-duration: 0.01ms !important; }
+}
+@media print {
+  html body.gr::before { display: none; }
+}
+.gr-top-links { gap: 6px; }
+.gr-top-links a { width: 40px; height: 40px; border-radius: 13px; }
+.gr-brand span { font-size: 20px; }
+
+/* Section headings and notes that sit straight on the page (they can land on the banner edge, so they get a light chip) */
+.gr main > h3 { display: inline-block; margin: 4px 0 10px; padding: 6px 14px; border-radius: 999px; background: #fff; color: var(--green); font-size: 16px; box-shadow: var(--shadow); text-shadow: none; }
+.gr main > .muted, .gr main > .stack-list > p.muted { padding: 8px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.94); color: var(--muted); box-shadow: var(--shadow); }
+
+/* Bottom nav: the same four-button bar as the rest of the app (Back, Home, Settings, Menu) */
+.gr-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 560px; gap: 4px; z-index: 40; }
+.gr-nav a, .gr-nav button {
+  display: block; appearance: none; border: 0; background: transparent; font: inherit;
+  padding: 6px 6px 5px; border-radius: 15px; cursor: pointer;
+  color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; text-align: center;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+.gr-nav a strong, .gr-nav button strong { display: block; font-size: 17px; line-height: 1; margin-bottom: 2px; }
+.gr-nav a:hover, .gr-nav button:hover, .gr-nav a:focus-visible, .gr-nav button:focus-visible { background: rgba(27, 61, 42, 0.06); color: var(--green); }
+.gr-nav a:active, .gr-nav button:active { transform: scale(0.94); }
+.gr-nav a[aria-current="page"], .gr-nav button[aria-expanded="true"] { background: linear-gradient(180deg, #2f5d41, #1b3d2a); color: #fff; box-shadow: 0 3px 0 #0f2619; }
+.gr-nav button strong { transition: transform 0.25s cubic-bezier(0.22, 0.8, 0.3, 1); }
+.gr-nav button[aria-expanded="true"] strong { transform: rotate(180deg); }
+
+/* The menu that slides up from the bottom */
+.gr-menu-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(10, 24, 16, 0.45); opacity: 0; transition: opacity 0.25s ease; }
+.gr-menu {
+  position: fixed; left: 12px; right: 12px; z-index: 35; max-width: 560px; margin: 0 auto;
+  bottom: calc(76px + env(safe-area-inset-bottom) * 0.4);
+  padding: 10px 14px 16px; border-radius: 24px; background: #fff;
+  box-shadow: 0 24px 48px rgba(10, 24, 16, 0.35), 0 2px 6px rgba(10, 24, 16, 0.12);
+  opacity: 0; transform: translateY(24px) scale(0.98); transform-origin: bottom center;
+  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+.gr-menu-open .gr-menu-backdrop { opacity: 1; }
+.gr-menu-open .gr-menu { opacity: 1; transform: none; }
+.gr-menu-handle { width: 40px; height: 4px; margin: 0 auto 10px; border-radius: 4px; background: rgba(27, 61, 42, 0.18); }
+.gr-menu-title { margin: 0 4px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.gr-menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.gr-menu-item {
+  display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 10px 12px;
+  border-radius: 16px; background: linear-gradient(180deg, #fff, #eef4ef); border: 1px solid rgba(27, 61, 42, 0.1);
+  box-shadow: 0 3px 0 rgba(27, 61, 42, 0.12); color: var(--green); font-weight: 700; font-size: 15px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.gr-menu-item span { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: 10px; background: var(--green-soft); font-size: 17px; }
+.gr-menu-item:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(27, 61, 42, 0.12); }
+.gr-menu-item[aria-current="page"] { background: linear-gradient(180deg, #2f5d41, #1b3d2a); color: #fff; border-color: transparent; box-shadow: 0 3px 0 #0f2619; }
+.gr-menu-item[aria-current="page"] span { background: rgba(255, 255, 255, 0.16); }
+.gr-menu-open .gr-menu-item { animation: gr-rise 0.35s cubic-bezier(0.22, 0.8, 0.3, 1) both; }
+.gr-menu-open .gr-menu-item:nth-child(2) { animation-delay: 0.03s; }
+.gr-menu-open .gr-menu-item:nth-child(3) { animation-delay: 0.06s; }
+.gr-menu-open .gr-menu-item:nth-child(4) { animation-delay: 0.09s; }
+.gr-menu-open .gr-menu-item:nth-child(5) { animation-delay: 0.12s; }
+.gr-menu-open .gr-menu-item:nth-child(6) { animation-delay: 0.15s; }
+.gr-menu-open .gr-menu-item:nth-child(n+7) { animation-delay: 0.18s; }
+@media (prefers-reduced-motion: reduce) { .gr-menu-open .gr-menu-item { animation: none; } }
+@media print { .gr-menu, .gr-menu-backdrop { display: none !important; } }
+
+/* The 7-day chart folds away under a tap-to-open bar */
+.rf-chart-details { margin: 14px 0 6px; border-radius: 16px; border: 1px solid var(--line); background: #f7faf7; overflow: hidden; }
+.rf-chart-details > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 52px; padding: 12px 44px 12px 14px; position: relative; list-style: none; cursor: pointer; font-weight: 800; color: var(--green); }
+.rf-chart-details > summary::-webkit-details-marker { display: none; }
+.rf-chart-details > summary small { font-weight: 600; color: var(--muted); }
+.rf-chart-details > summary::after { content: "＋"; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--gold); font-size: 20px; transition: transform 0.25s ease; }
+.rf-chart-details[open] > summary::after { transform: translateY(-50%) rotate(45deg); }
+.rf-chart-details[open] > summary { border-bottom: 1px solid var(--line); }
+.rf-chart-details .rf-chart { margin: 0; padding: 10px 12px 6px; }
+.rf-chart-details[open] .rf-chart { animation: gr-rise 0.35s cubic-bezier(0.22, 0.8, 0.3, 1) both; }
+
+/* Live job buttons: Mark complete across the card on a finalised list */
+.job-complete { margin-top: 8px; }
+.job-complete .button { width: 100%; }
+.button.cancel { background: linear-gradient(180deg, #fff, #fbeeea); color: #8b3a2b; border: 1px solid rgba(139, 58, 43, 0.2); box-shadow: 0 3px 0 rgba(139, 58, 43, 0.2), 0 6px 12px rgba(15, 38, 25, 0.06); }
+.button.cancel:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(139, 58, 43, 0.2); }
+form.no-access-box { margin-top: 10px; border-style: solid; }
+
+/* Live job buttons in two columns: Open + Cancel on the call-out list, Open + No access once it is finalised */
+.job-actions-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; align-items: stretch; }
+.job-actions-2 > form { display: grid; margin: 0; min-width: 0; }
+.job-actions-2 > .button, .job-actions-2 > form .button { width: 100%; height: 100%; min-height: 48px; padding: 10px 8px; font-size: 15px; }
+.job-actions-2 form.is-confirming { grid-column: 1 / -1; }
+
+/* Red raised button: No access */
+.button.danger {
+  background: linear-gradient(180deg, #c4503d, #9e3424); color: #fff; border: 0;
+  box-shadow: 0 5px 0 #6e2216, 0 10px 16px rgba(110, 34, 22, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.button.danger:active { transform: translateY(4px); box-shadow: 0 1px 0 #6e2216, 0 3px 6px rgba(110, 34, 22, 0.25); }
+.button.danger[aria-expanded="true"] { filter: brightness(0.92); }

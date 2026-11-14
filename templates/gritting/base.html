@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#3f62af">
+    <meta name="theme-color" content="#1b3d2a">
     <title>{% block title %}Gritting{% endblock %}</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='gritting/brand/ngs-logo.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='gritting/gritting.css') }}">
@@ -16,11 +16,6 @@
           <img src="{{ url_for('static', filename='gritting/brand/ngs-logo.png') }}" alt="Norwich Gritting Services">
           <span>Gritting</span>
         </a>
-        <div class="gr-top-links">
-          <a href="{{ url_for('gritting.dashboard') }}" aria-label="Back" title="Back" onclick="if (window.history.length > 1) { window.history.back(); return false; }">←</a>
-          <a href="/" aria-label="Home: back to the main app" title="Home">⌂</a>
-          <a href="{{ url_for('gritting.settings') }}" aria-label="Gritting settings">⚙</a>
-        </div>
       </header>
 
       {% with messages = get_flashed_messages() %}
@@ -38,13 +33,61 @@
       </main>
     </div>
 
+    {% set menu_items = [
+      ('gritting.dashboard', '❄', 'Gritting home', ('gritting.dashboard',)),
+      ('gritting.live_jobs', '◉', 'Live jobs', ('gritting.live_jobs',)),
+      ('gritting.new_callout', '＋', 'New call-out', ('gritting.new_callout',)),
+      ('gritting.callouts', '≡', 'Call-outs', ('gritting.callouts', 'gritting.callout_detail')),
+      ('gritting.customers', '☷', 'Customers', ('gritting.customers', 'gritting.sites')),
+      ('gritting.monthly_summary', '▤', 'Monthly summary', ('gritting.monthly_summary',)),
+    ] %}
+    <div class="gr-menu-backdrop" id="gr-menu-backdrop" hidden></div>
+    <section class="gr-menu" id="gr-menu" aria-label="Gritting menu" hidden>
+      <div class="gr-menu-handle" aria-hidden="true"></div>
+      <p class="gr-menu-title">Gritting</p>
+      <div class="gr-menu-grid">
+        {% for endpoint, icon, label, pages in menu_items %}
+          <a class="gr-menu-item" href="{{ url_for(endpoint) }}" {% if page in pages %}aria-current="page"{% endif %}><span aria-hidden="true">{{ icon }}</span>{{ label }}</a>
+        {% endfor %}
+      </div>
+    </section>
+
     <nav class="gr-nav" aria-label="Gritting navigation">
-      <a href="{{ url_for('gritting.live_jobs') }}" {% if page == 'gritting.live_jobs' %}aria-current="page"{% endif %}><strong aria-hidden="true">◉</strong>Live</a>
-      <a href="{{ url_for('gritting.new_callout') }}" {% if page == 'gritting.new_callout' %}aria-current="page"{% endif %}><strong aria-hidden="true">＋</strong>New</a>
-      <a href="{{ url_for('gritting.callouts') }}" {% if page in ('gritting.callouts', 'gritting.callout_detail') %}aria-current="page"{% endif %}><strong aria-hidden="true">≡</strong>Call-Outs</a>
-      <a href="{{ url_for('gritting.customers') }}" {% if page == 'gritting.customers' %}aria-current="page"{% endif %}><strong aria-hidden="true">☷</strong>Customers</a>
-      <a href="{{ url_for('gritting.monthly_summary') }}" {% if page == 'gritting.monthly_summary' %}aria-current="page"{% endif %}><strong aria-hidden="true">▤</strong>Summary</a>
+      <a href="{{ url_for('gritting.dashboard') }}" aria-label="Back" title="Back" onclick="if (window.history.length > 1) { window.history.back(); return false; }"><strong aria-hidden="true">←</strong>Back</a>
+      <a href="/" aria-label="Home: back to the main app" title="Home"><strong aria-hidden="true">⌂</strong>Home</a>
+      <a href="{{ url_for('settings_home') }}#gritting"><strong aria-hidden="true">⚙</strong>Settings</a>
+      <button type="button" id="gr-menu-button" aria-controls="gr-menu" aria-expanded="false"><strong aria-hidden="true">☰</strong>Menu</button>
     </nav>
+    <script>
+      // The menu button slides up a panel holding every gritting page.
+      (function () {
+        const button = document.getElementById("gr-menu-button");
+        const menu = document.getElementById("gr-menu");
+        const backdrop = document.getElementById("gr-menu-backdrop");
+        function setOpen(open) {
+          button.setAttribute("aria-expanded", open ? "true" : "false");
+          button.querySelector("strong").textContent = open ? "✕" : "☰";
+          if (open) {
+            menu.hidden = false;
+            backdrop.hidden = false;
+            requestAnimationFrame(function () { document.body.classList.add("gr-menu-open"); });
+            const current = menu.querySelector("[aria-current]") || menu.querySelector("a");
+            if (current) { current.focus({ preventScroll: true }); }
+          } else {
+            document.body.classList.remove("gr-menu-open");
+            setTimeout(function () {
+              if (!document.body.classList.contains("gr-menu-open")) { menu.hidden = true; backdrop.hidden = true; }
+            }, 260);
+          }
+        }
+        button.addEventListener("click", function () { setOpen(!document.body.classList.contains("gr-menu-open")); });
+        backdrop.addEventListener("click", function () { setOpen(false); });
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape" && document.body.classList.contains("gr-menu-open")) { setOpen(false); button.focus(); }
+        });
+        window.addEventListener("pageshow", function () { document.body.classList.remove("gr-menu-open"); menu.hidden = true; backdrop.hidden = true; button.setAttribute("aria-expanded", "false"); button.querySelector("strong").textContent = "☰"; });
+      })();
+    </script>
     <script>
       // Ask "are you sure?" on the page itself. Browser pop-up boxes are blocked in some phone browsers, which made buttons do nothing.
       document.addEventListener("submit", function (event) {

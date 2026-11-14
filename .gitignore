@@ -11,3 +11,5 @@ email_settings.csv
 settings.xlsx
 email_config.json
 data/email_config.json
+
+backups/

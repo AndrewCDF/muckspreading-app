@@ -22,12 +22,14 @@
     </div>
     <div id="rf-nights" class="stack-list compact-stack"></div>
     <p class="rf-rain-now job-meta" id="rf-next-rain"></p>
-    <figure class="rf-chart" id="rf-chart" hidden>
-      <figcaption class="job-meta">Next 7 days, hour by hour: road surface <span class="rf-key rf-key-surface"></span> air <span class="rf-key rf-key-air"></span> rain <span class="rf-key rf-key-rain"></span>. Later days are less certain.</figcaption>
-      <div id="rf-svg"></div>
-    </figure>
+    <details class="rf-chart-details" id="rf-chart" hidden>
+      <summary><span>7-day chart</span><small>Road surface, air and rain hour by hour</small></summary>
+      <figure class="rf-chart">
+        <figcaption class="job-meta">Next 7 days, hour by hour: road surface <span class="rf-key rf-key-surface"></span> air <span class="rf-key rf-key-air"></span> rain <span class="rf-key rf-key-rain"></span>. Later days are less certain.</figcaption>
+        <div id="rf-svg"></div>
+      </figure>
+    </details>
     <p class="job-meta" id="rf-updated"></p>
-    <p class="job-meta" id="rf-bias"></p>
     <p class="job-meta">A guide from the Met Office UK model for {{ forecast_place }}, not a road sensor reading. Real road temperatures can differ by a few degrees, especially on clear, calm nights and on bridges and exposed routes, so use your own judgement.</p>
   </section>
 
@@ -275,9 +277,6 @@
               : "No rain forecast in the next 7 days.";
             renderNights(data.nights);
             renderChart();
-            const biasNote = document.getElementById("rf-bias");
-            const link = ' <a href="{{ url_for('gritting.road_accuracy_page') }}">See how accurate it is</a>';
-            biasNote.innerHTML = (data.bias ? "Corrected " + (data.bias > 0 ? "+" : "") + data.bias + "°C using " + data.readings + " of your road readings." : (data.readings < 5 ? "Log road temperatures on jobs to check this forecast (" + data.readings + " of 5 so far)." : "The forecast matches your road readings, so no correction is applied.")) + link;
             updated.textContent = "Updated " + data.updated + (data.stale ? " (the forecast service did not answer, so this may be a little out of date)" : "") + ".";
           })
           .catch(function () {
@@ -285,6 +284,12 @@
             updated.textContent = "The forecast could not be loaded just now.";
           });
       }
+
+      // The chart starts folded away; remember whether it was left open on this device.
+      try { chart.open = window.localStorage.getItem("gr-rf-chart-open") === "1"; } catch (error) {}
+      chart.addEventListener("toggle", function () {
+        try { window.localStorage.setItem("gr-rf-chart-open", chart.open ? "1" : "0"); } catch (error) {}
+      });
 
       load();
       window.setInterval(load, 15 * 60 * 1000);

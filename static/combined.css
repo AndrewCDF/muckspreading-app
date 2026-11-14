@@ -105,21 +105,29 @@ h1 {
   font-size: 1.2rem;
 }
 
-/* Home tiles alternate green and gold: every other tile in a single column, a checkerboard in two columns. */
+/* Home tiles alternate gold and green, starting with gold so the first tile stands out from the green banner. */
+.branch-grid > .primary:nth-child(odd) {
+  background: linear-gradient(180deg, var(--af-gold-1), var(--af-gold-2));
+  box-shadow: 0 5px 0 var(--af-gold-edge), 0 10px 16px rgba(140, 106, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  text-shadow: 0 1px 1px rgba(90, 64, 12, 0.35);
+}
 .branch-grid > .primary:nth-child(even) {
-  background: linear-gradient(135deg, var(--af-gold), var(--af-gold-deep));
-  box-shadow: 0 12px 22px rgba(199, 158, 79, 0.18);
+  background: linear-gradient(180deg, var(--af-green-1), var(--af-green-2));
+  box-shadow: 0 5px 0 var(--af-green-edge), 0 10px 16px rgba(15, 38, 25, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 @media (min-width: 761px) {
-  .branch-grid > .primary:nth-child(even) {
-    background: var(--af-green);
-    box-shadow: 0 10px 18px rgba(36, 68, 47, 0.14);
+  .branch-grid > .primary:nth-child(4n + 1),
+  .branch-grid > .primary:nth-child(4n) {
+    background: linear-gradient(180deg, var(--af-gold-1), var(--af-gold-2));
+    box-shadow: 0 5px 0 var(--af-gold-edge), 0 10px 16px rgba(140, 106, 34, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    text-shadow: 0 1px 1px rgba(90, 64, 12, 0.35);
   }
   .branch-grid > .primary:nth-child(4n + 2),
   .branch-grid > .primary:nth-child(4n + 3) {
-    background: linear-gradient(135deg, var(--af-gold), var(--af-gold-deep));
-    box-shadow: 0 12px 22px rgba(199, 158, 79, 0.18);
+    background: linear-gradient(180deg, var(--af-green-1), var(--af-green-2));
+    box-shadow: 0 5px 0 var(--af-green-edge), 0 10px 16px rgba(15, 38, 25, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    text-shadow: none;
   }
 }
 

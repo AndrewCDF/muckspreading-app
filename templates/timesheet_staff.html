@@ -12,7 +12,7 @@
 </head>
 <body>
   <div class="shell">
-    <header class="topbar"><div class="brand-block"><p class="eyebrow">A. Farrell Contracting</p><h1>Timesheets</h1></div></header>
+    <header class="topbar"><div class="brand-block"><p class="eyebrow">Cherry Dene Farm &amp; A. Farrell Contracting</p><h1>Timesheets</h1></div></header>
     <main class="layout">
       {% if status_msg %}<div class="status {{ 'ok' if status_ok else 'error' }}">{{ status_msg }}</div>{% endif %}
       <section class="panel quick-card staff-selector" aria-labelledby="choose-staff">
@@ -31,7 +31,7 @@
   <nav class="bottom-fixed-nav" aria-label="Bottom navigation">
     <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">←</strong>Back</a>
     <a class="bottom-nav-btn" href="{{ url_for('home') }}"><strong aria-hidden="true">⌂</strong>Home</a>
-    <a class="bottom-nav-btn" href="{{ url_for('settings_home') }}"><strong aria-hidden="true">⚙</strong>Settings</a>
+    <a class="bottom-nav-btn" href="{{ url_for('settings_home') }}#lists"><strong aria-hidden="true">⚙</strong>Settings</a>
   </nav>
 </body>
 </html>

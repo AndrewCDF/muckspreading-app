@@ -82,44 +82,32 @@
               {% if group.email_problems.get(row.id) %}<p class="email-flag">⚠ {{ group.email_problems.get(row.id) }}</p>{% endif %}
 
               {% if row.extras_json|extras_summary %}<p class="job-meta rf-rain-line">Includes extras: {{ row.extras_json|extras_summary }}</p>{% endif %}
-              <div class="job-actions">
-                {% if not group.finalised_at %}
-                  <form method="post" action="{{ url_for('gritting.cancel_callout', call_out_id=row.id) }}" data-confirm="Not needed tonight? The customer does not need us to attend.">
-                    <input type="hidden" name="next" value="live_jobs">
-                    <button class="button subtle" type="submit">Not needed</button>
-                  </form>
-                {% endif %}
+              {% if group.finalised_at or not group.batch_id %}
+                <form method="post" action="{{ url_for('gritting.quick_complete_callout', call_out_id=row.id) }}" class="job-complete">
+                  <input type="hidden" name="next" value="live_jobs">
+                  <button class="button primary big" type="submit">Mark complete</button>
+                </form>
+              {% endif %}
+              <div class="job-actions-2">
                 <a class="button subtle" href="{{ url_for('gritting.callout_detail', call_out_id=row.id) }}">Open</a>
                 {% if group.finalised_at or not group.batch_id %}
-                  <form method="post" action="{{ url_for('gritting.quick_complete_callout', call_out_id=row.id) }}">
+                  <button class="button danger" type="button" aria-expanded="false" aria-controls="no-access-{{ row.id }}" onclick="var box = document.getElementById('no-access-{{ row.id }}'); box.hidden = !box.hidden; this.setAttribute('aria-expanded', box.hidden ? 'false' : 'true'); if (!box.hidden) { box.querySelector('input[type=text]').focus(); }">No access</button>
+                {% else %}
+                  <form method="post" action="{{ url_for('gritting.cancel_callout', call_out_id=row.id) }}" data-confirm="Not needed tonight? The customer does not need us to attend.">
                     <input type="hidden" name="next" value="live_jobs">
-                    <button class="button primary" type="submit">Mark complete</button>
+                    <button class="button cancel" type="submit">Cancel</button>
                   </form>
                 {% endif %}
               </div>
               {% if group.finalised_at or not group.batch_id %}
-              <details class="no-access-box">
-                <summary>Log road temperature</summary>
-                <form method="post" action="{{ url_for('gritting.save_road_reading', call_out_id=row.id) }}" class="form-grid">
+                <form method="post" action="{{ url_for('gritting.no_access_callout', call_out_id=row.id) }}" class="no-access-box form-grid" id="no-access-{{ row.id }}" hidden data-confirm="Mark {{ row.site_name }} as no access, email {{ row.customer_name }} and take it off the list?">
                   <input type="hidden" name="next" value="live_jobs">
-                  <label>
-                    Road temperature now (°C)
-                    <input type="number" name="reading" step="0.1" inputmode="decimal" placeholder="-1.5" required>
+                  <label class="full-width">
+                    Couldn't access the site: what stopped us (goes in the email)
+                    <input type="text" name="access_note" maxlength="500" placeholder="Gate locked, vehicle blocking the entrance..." required>
                   </label>
-                  <button class="button primary full-width" type="submit">Save reading</button>
+                  <button class="button danger full-width" type="submit">Send no access email and remove</button>
                 </form>
-              </details>
-                <details class="no-access-box">
-                  <summary>Couldn't access the site</summary>
-                  <form method="post" action="{{ url_for('gritting.no_access_callout', call_out_id=row.id) }}" class="form-grid" data-confirm="Mark {{ row.site_name }} as no access, email {{ row.customer_name }} and take it off the list?">
-                    <input type="hidden" name="next" value="live_jobs">
-                    <label class="full-width">
-                      What stopped us (goes in the email)
-                      <input type="text" name="access_note" maxlength="500" placeholder="Gate locked, vehicle blocking the entrance..." required>
-                    </label>
-                    <button class="button primary full-width" type="submit">Send no access email and remove</button>
-                  </form>
-                </details>
               {% endif %}
             </article>
           {% endif %}
@@ -131,7 +119,7 @@
           <strong>⚠ {{ group.email_problems|length }} {{ 'email has' if group.email_problems|length == 1 else 'emails have' }} not been sent</strong>
           <span>Look for the red "Email not sent" line on each job below.</span>
           {% if group.batch_id and group.unsent_emails and not group.smtp_ready %}
-            <a class="button primary big full-width" href="{{ url_for('gritting.settings') }}">Set up the mail server, then resend</a>
+            <a class="button primary big full-width" href="{{ url_for('settings_home') }}#gritting">Set up the mail server, then resend</a>
           {% elif group.batch_id and group.unsent_emails %}
             <form method="post" action="{{ url_for('gritting.resend_batch_emails', batch_id=group.batch_id) }}" data-confirm="Send {{ group.unsent_emails }} call-out {{ 'email' if group.unsent_emails == 1 else 'emails' }} that were not sent?">
               <button class="button primary big full-width" type="submit">Resend {{ group.unsent_emails }} unsent {{ 'email' if group.unsent_emails == 1 else 'emails' }}</button>
@@ -142,7 +130,6 @@
       {% if group.batch_id %}
         <div class="night-list-actions">
           {% if group.finalised_at %}
-            <a class="button primary big" href="{{ url_for('gritting.run_sheet', batch_id=group.batch_id) }}" target="_blank" rel="noopener">Open the final list to print</a>
             {% if not group.counts.done %}
               <form method="post" action="{{ url_for('gritting.reopen_batch', batch_id=group.batch_id) }}">
                 <button class="button subtle" type="submit">Reopen the list</button>

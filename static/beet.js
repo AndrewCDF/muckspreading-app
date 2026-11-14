@@ -9,8 +9,6 @@
   const fieldNames = ['job_date', 'customer', 'area', 'diesel_used', 'tractor_diesel', 'diesel_price'];
   const fieldRows = document.getElementById('field-rows');
   const settings = window.BEET_SETTINGS;
-  const settingsForm = document.getElementById('beet-settings-form');
-  const settingsStatus = document.getElementById('settings-status');
   const preview = document.getElementById('escalator-preview');
   const money = value => `£${Number(value).toFixed(2)}`;
   let entries = [];
@@ -297,8 +295,9 @@
       if (!response.ok) throw new Error(result.error || 'Unable to save the sugar beet job.');
       dirty = false;
       replaceEntry(result.entry);
-      fill(null);
-      message(`Saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`);
+      fill(null);  // a clear form, ready for the next job
+      message(`Saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. The form is clear for the next job.`);
+      form.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       message(`${error.message} Your changes remain in the form.`, true);
     } finally {
@@ -306,45 +305,7 @@
       document.getElementById('save-record').disabled = false;
     }
   });
-  document.getElementById('new-record').addEventListener('click', () => {
-    if (dirty && !window.confirm('Discard your unsaved changes and start a new job?')) return;
-    fill(null);
-  });
-  settingsForm.elements.base_price.value = settings.base_price;
-  settingsForm.elements.trigger_pct.value = settings.trigger_pct;
-  settingsForm.addEventListener('input', () => { settingsStatus.textContent = 'Unsaved changes — press Save Escalator Settings.'; settingsStatus.dataset.error = 'false'; });
-  settingsForm.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!settingsForm.reportValidity()) return;
-    try {
-      const response = await fetch('/api/beet/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base_price: settingsForm.elements.base_price.value, trigger_pct: settingsForm.elements.trigger_pct.value }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Unable to save the escalator settings.');
-      Object.assign(settings, result.settings);
-      showTerms();
-      settingsStatus.textContent = 'Saved. New jobs will use these figures.';
-      settingsStatus.dataset.error = 'false';
-      updatePreview();
-    } catch (error) {
-      settingsStatus.textContent = error.message;
-      settingsStatus.dataset.error = 'true';
-    }
-  });
   showTerms();
-  const settingsPanel = document.getElementById('escalator-settings');
-  const settingsToggle = document.getElementById('toggle-settings');
-  settingsToggle.addEventListener('click', () => {
-    const open = settingsPanel.hidden;
-    settingsPanel.hidden = !open;
-    settingsToggle.setAttribute('aria-expanded', String(open));
-    settingsToggle.textContent = open ? 'Hide Diesel Escalator Settings' : 'Diesel Escalator Settings';
-    if (open) settingsPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  });
   filter.addEventListener('change', render);
   window.addEventListener('beforeunload', event => {
     if (dirty || saving) { event.preventDefault(); event.returnValue = ''; }

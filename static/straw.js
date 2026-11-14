@@ -2,6 +2,8 @@ const STORAGE_KEY = 'straw-bale-recorder-v1';
 const state = { fields: [], stocktakes: [], loads: [], stockMovements: [], customers: [] };
 let map = null;
 let markerLayer = null;
+let dashMap = null;
+let dashMarkerLayer = null;
 let mapOpened = false;
 let pendingFieldLocation = null;
 let serverStateAvailable = false;
@@ -64,7 +66,15 @@ function bindEvents() {
 
 function showView(viewName) {
   document.querySelectorAll('.view').forEach((view) => view.classList.toggle('active', view.id === `${viewName}View`));
-  document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.nav === viewName));
+  document.querySelectorAll('[data-nav]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.nav === viewName);
+    if (button.classList.contains('af-menu-item')) {
+      if (button.dataset.nav === viewName) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+    }
+  });
+  if (viewName === 'dashboard' && dashMap) {
+    setTimeout(() => { dashMap.invalidateSize(); renderMapMarkers(); }, 80);
+  }
   if (viewName === 'map' && map) {
     setTimeout(() => {
       map.invalidateSize();
@@ -571,18 +581,13 @@ function handlePhotoSelection(event) {
 function initMap() {
   if (!window.L) {
     els.mapFallback.classList.add('active');
+    document.getElementById('dashboardMapPanel')?.setAttribute('hidden', '');
     return;
   }
   map = L.map('map', { zoomControl: true }).setView([52.569259, 1.406654], 11);
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
-    attribution: 'Tiles &copy; Esri'
-  }).addTo(map);
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
-    attribution: 'Labels &copy; Esri'
-  }).addTo(map);
+  addMapTiles(map);
   markerLayer = L.layerGroup().addTo(map);
+  initDashboardMap();
   map.on('click', (event) => {
     pendingFieldLocation = {
       lat: Math.round(event.latlng.lat * 1000000) / 1000000,
@@ -591,6 +596,38 @@ function initMap() {
     openFieldDialog();
   });
   renderMapMarkers();
+}
+
+function addMapTiles(target) {
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri'
+  }).addTo(target);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Labels &copy; Esri'
+  }).addTo(target);
+}
+
+// The smaller map on the dashboard: the same pins, but it does not add fields when tapped,
+// and on a phone it pans with two fingers so the page still scrolls past it.
+function initDashboardMap() {
+  const holder = document.getElementById('dashboardMap');
+  if (!holder) return;
+  dashMap = L.map(holder, { zoomControl: true, scrollWheelZoom: false, dragging: !L.Browser.mobile, tap: false }).setView([52.569259, 1.406654], 11);
+  addMapTiles(dashMap);
+  dashMarkerLayer = L.layerGroup().addTo(dashMap);
+  fitDashboardMap();
+}
+
+function fitDashboardMap() {
+  if (!dashMap) return;
+  const locations = state.fields.filter(fieldHasLocation).map((field) => [Number(field.lat), Number(field.lng)]);
+  if (locations.length) {
+    dashMap.fitBounds(L.latLngBounds(locations), { padding: [28, 28], maxZoom: 15 });
+  } else {
+    dashMap.setView([52.569259, 1.406654], 11);
+  }
 }
 
 function fieldHasLocation(field) {
@@ -620,10 +657,13 @@ function makeFieldIcon(field) {
 }
 
 function renderMapMarkers() {
-  if (!markerLayer) return;
-  markerLayer.clearLayers();
+  [markerLayer, dashMarkerLayer].filter(Boolean).forEach(addFieldMarkers);
+}
+
+function addFieldMarkers(layer) {
+  layer.clearLayers();
   state.fields.filter(fieldHasLocation).forEach((field) => {
-    const marker = L.marker([Number(field.lat), Number(field.lng)], { icon: makeFieldIcon(field) }).addTo(markerLayer);
+    const marker = L.marker([Number(field.lat), Number(field.lng)], { icon: makeFieldIcon(field) }).addTo(layer);
     marker.bindPopup(`<strong>${escapeHtml(field.name || 'Unnamed field')}</strong><br>${escapeHtml(field.customer || 'No customer')} · ${escapeHtml(field.farm || 'No farm')}<br>${escapeHtml(field.crop || 'Other')} · ${Number(field.bales || 0)} bales<br><button class="map-edit-field" type="button">Edit field</button>`);
     marker.on('popupopen', () => {
       marker.getPopup().getElement()?.querySelector('.map-edit-field')?.addEventListener('click', () => openFieldDialog(field.id));

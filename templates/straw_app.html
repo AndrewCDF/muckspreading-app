@@ -4,9 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#24442f">
-    <title>Straw Bale Records</title>
+    <title>Hay &amp; Straw</title>
     <link rel="icon" type="image/png" href="{{ url_for('app_icon_png', size=180) }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='af_brand.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='straw.css') }}">
   </head>
   <body>
@@ -14,7 +15,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Harvest <span id="seasonYear"></span></p>
-          <h1>Straw Bales</h1>
+          <h1>Hay &amp; Straw</h1>
         </div>
         <button class="add-delivery-button" id="addDeliveryButton" type="button" aria-label="Log Load Out">+</button>
       </header>
@@ -27,6 +28,13 @@
           </div>
           <h2 class="dashboard-section-title">Crop totals</h2>
           <div class="crop-grid" id="cropTotals"></div>
+          <section class="panel dash-map-panel" id="dashboardMapPanel">
+            <div class="panel-heading">
+              <h2>Field map</h2>
+              <button class="text-button" data-nav="map" type="button">Open full map</button>
+            </div>
+            <div class="dashboard-map" id="dashboardMap"></div>
+          </section>
           <h2 class="dashboard-section-title">Customer totals</h2>
           <div class="customer-total-list" id="customerTotals"></div>
           <div class="daily-totals">
@@ -122,34 +130,24 @@
         </section>
       </main>
 
-      <nav class="straw-app-nav" aria-label="Straw sections">
-        <button class="nav-button" data-nav="map" type="button">
-          <span aria-hidden="true">⌖</span>
-          <small>Map</small>
-        </button>
-        <button class="nav-button" data-nav="fields" type="button">
-          <span aria-hidden="true">▤</span>
-          <small>Fields</small>
-        </button>
-        <button class="nav-button" data-nav="stock" type="button">
-          <span aria-hidden="true">▥</span>
-          <small>Stock</small>
-        </button>
-      </nav>
+      <div class="af-menu-backdrop" id="af-menu-backdrop" hidden></div>
+      <section class="af-menu" id="af-menu" aria-label="Straw menu" hidden>
+        <div class="af-menu-handle" aria-hidden="true"></div>
+        <p class="af-menu-title">Hay &amp; Straw</p>
+        <div class="af-menu-grid">
+          <button class="af-menu-item" data-nav="dashboard" type="button" aria-current="page"><span aria-hidden="true">◎</span>Dashboard</button>
+          <button class="af-menu-item" data-nav="map" type="button"><span aria-hidden="true">⌖</span>Map</button>
+          <button class="af-menu-item" data-nav="fields" type="button"><span aria-hidden="true">▤</span>Fields</button>
+          <button class="af-menu-item" data-nav="stock" type="button"><span aria-hidden="true">▥</span>Stock</button>
+          <button class="af-menu-item is-gold" type="button" onclick="document.getElementById('addDeliveryButton').click()"><span aria-hidden="true">＋</span>Log load out</button>
+        </div>
+      </section>
 
-      <nav class="bottom-nav" aria-label="Navigation">
-        <button class="nav-button" type="button" onclick="window.history.back()">
-          <span aria-hidden="true">←</span>
-          <small>Back</small>
-        </button>
-        <button class="nav-button active" type="button" onclick="window.location.href='/'">
-          <span aria-hidden="true">⌂</span>
-          <small>Home</small>
-        </button>
-        <button class="nav-button" type="button" onclick="window.location.href='/settings'">
-          <span aria-hidden="true">⚙</span>
-          <small>Settings</small>
-        </button>
+      <nav class="bottom-fixed-nav has-menu" aria-label="Bottom navigation">
+        <a class="bottom-nav-btn" href="/" aria-label="Back" onclick="if (window.history.length > 1) { window.history.back(); return false; }"><strong aria-hidden="true">←</strong>Back</a>
+        <a class="bottom-nav-btn" href="/"><strong aria-hidden="true">⌂</strong>Home</a>
+        <a class="bottom-nav-btn" href="/settings#lists"><strong aria-hidden="true">⚙</strong>Settings</a>
+        <button class="bottom-nav-btn" id="af-menu-button" type="button" aria-controls="af-menu" aria-expanded="false"><strong aria-hidden="true">☰</strong>Menu</button>
       </nav>
     </div>
 
@@ -279,5 +277,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="{{ url_for('static', filename='straw.js') }}"></script>
+    <script src="{{ url_for('static', filename='af_menu.js') }}"></script>
   </body>
 </html>
