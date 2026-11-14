@@ -1,51 +1,88 @@
 {% extends "gritting/base.html" %}
 
-{% block title %}Monthly Summary | Norwich Gritting Services{% endblock %}
+{% block title %}Season Summary | Norwich Gritting Services{% endblock %}
 
 {% block content %}
   <section class="hero">
     <div>
-      <p class="eyebrow">Monthly summary</p>
-      <h2>{{ month_value|month_label }}</h2>
+      <p class="eyebrow">Season summary</p>
+      <h2>{% if month_value %}{{ month_value|month_label }}{% else %}{{ season_name }}{% endif %}</h2>
+      {% if month_value %}<p class="muted">{{ season_name }}</p>{% endif %}
     </div>
-    <div class="hero-actions">
-      <form method="get" class="inline-form">
-        <input type="month" name="month" value="{{ month_value }}">
-        <button class="button subtle" type="submit">Load Month</button>
-      </form>
-      <div class="monthly-summary-actions">
-        <a class="button primary" href="{{ url_for('gritting.export_monthly_summary', month=month_value) }}">Export CSV</a>
-        <form method="post" action="{{ url_for('gritting.email_monthly_summary') }}" class="inline-form">
-          <input type="hidden" name="month" value="{{ month_value }}">
-          <button class="button primary" type="submit">Email summary</button>
-        </form>
-      </div>
-    </div>
+  </section>
+
+  <section class="summary-filter" aria-label="Choose the season and month">
+    <form method="get" class="summary-season">
+      <label for="summary-season" class="visually-hidden">Season</label>
+      <select id="summary-season" name="season" onchange="this.form.submit()">
+        {% for year, label in seasons %}
+          <option value="{{ year }}" {% if year == start_year %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button class="button subtle" type="submit">Show</button></noscript>
+    </form>
+    <nav class="month-chips" aria-label="Filter by month">
+      <a href="{{ url_for('gritting.monthly_summary', season=start_year) }}" {% if not month_value %}aria-current="page"{% endif %}>Whole season <small>{{ season_totals.jobs }}</small></a>
+      {% for month in month_breakdown %}
+        <a href="{{ url_for('gritting.monthly_summary', season=start_year, month=month.value) }}" {% if month_value == month.value %}aria-current="page"{% endif %} {% if not month.jobs %}class="is-empty"{% endif %}>{{ month.short }} <small>{{ month.jobs }}</small></a>
+      {% endfor %}
+    </nav>
   </section>
 
   <section class="stats-grid">
     <article class="stat-card">
       <p>Total jobs</p>
-      <strong>{{ rows|length }}</strong>
+      <strong>{{ totals.jobs }}</strong>
     </article>
     <article class="stat-card">
       <p>Completed jobs</p>
-      <strong>{{ completed_jobs }}</strong>
+      <strong>{{ totals.completed }}</strong>
     </article>
     <article class="stat-card">
       <p>Net value</p>
-      <strong>{{ total_revenue|currency_display }}</strong>
+      <strong>{{ totals.net|currency_display }}</strong>
     </article>
     <article class="stat-card">
       <p>Total incl. VAT</p>
-      <strong>{{ total_revenue_inc_vat|currency_display }}</strong>
+      <strong>{{ totals.gross|currency_display }}</strong>
     </article>
   </section>
+
+  <section class="monthly-summary-actions summary-actions">
+    <a class="button subtle" href="{{ url_for('gritting.export_monthly_summary', season=start_year, month=month_value or None) }}">Export CSV{% if not month_value %} (whole season){% endif %}</a>
+    {% if month_value %}
+      <form method="post" action="{{ url_for('gritting.email_monthly_summary') }}" class="inline-form">
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <button class="button primary" type="submit">Email {{ month_value|month_label }} summary</button>
+      </form>
+    {% endif %}
+  </section>
+
+  {% if not month_value %}
+    <section class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">{{ season_name }}</p>
+          <h3>Month by month</h3>
+        </div>
+      </div>
+      <div class="month-breakdown">
+        {% set busiest = month_breakdown|map(attribute='net')|max if month_breakdown else 0 %}
+        {% for month in month_breakdown %}
+          <a class="month-row {% if not month.jobs %}is-empty{% endif %}" href="{{ url_for('gritting.monthly_summary', season=start_year, month=month.value) }}">
+            <span class="month-row-name">{{ month.label }}</span>
+            <span class="month-row-bar" aria-hidden="true"><i style="width: {{ ((month.net / busiest * 100) if busiest else 0)|round(1) }}%"></i></span>
+            <span class="month-row-figures"><strong>{{ month.net|currency_display }}</strong><small>{{ month.jobs }} job{% if month.jobs != 1 %}s{% endif %} · {{ month.completed }} done</small></span>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
 
   <section class="panel">
     <div class="panel-heading">
       <div>
-        <p class="eyebrow">Month-End Register</p>
+        <p class="eyebrow">{% if month_value %}Month-end register{% else %}Season register{% endif %}</p>
         <h3>Recorded jobs</h3>
       </div>
     </div>
@@ -77,7 +114,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="8">No work logged for this month.</td>
+              <td colspan="8">No work logged for {% if month_value %}this month{% else %}this season{% endif %}.</td>
             </tr>
           {% endfor %}
         </tbody>

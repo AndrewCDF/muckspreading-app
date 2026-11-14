@@ -434,3 +434,27 @@ html body .settings-section + .settings-section { margin-top: 18px; }
 /* Home page title: the two business names on one line, sized to fit the screen */
 html body .topbar h1.home-title { white-space: nowrap; font-size: min(46px, calc((100vw - 32px) / 19.5)); letter-spacing: -0.035em; line-height: 1.1; }
 .settings-page .topbar .eyebrow { margin: 0 0 6px; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* iPhone: keep titles clear of the status bar (its blurred "glass" strip). The banner still runs up behind it. */
+html body .shell,
+html body .page,
+html body .app-shell { padding-top: calc(env(safe-area-inset-top, 0px) + 16px); }
+html body::before { height: calc(190px + env(safe-area-inset-top, 0px)); }
+
+/* iPhone Safari gives date and time fields a built-in width that can run off the screen: keep them inside their box */
+html body input[type="date"],
+html body input[type="datetime-local"],
+html body input[type="time"],
+html body input[type="month"] {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+html body input[type="date"]::-webkit-date-and-time-value,
+html body input[type="datetime-local"]::-webkit-date-and-time-value,
+html body input[type="time"]::-webkit-date-and-time-value,
+html body input[type="month"]::-webkit-date-and-time-value { text-align: left; }
+html body .field, html body label, html body .form-grid > * { min-width: 0; }

@@ -1437,7 +1437,7 @@ HTML = """
         <div class="muck-stat-card">
           <h2>{{ title }}</h2>
           <div class="muck-stat-row">
-            <div class="muck-stat"><strong>{{ jobs }}</strong><span>Jobs</span></div>
+            <div class="muck-stat muck-stat-jobs"><strong>{{ "{:,}".format(jobs) }}</strong><span>Jobs</span></div>
             <div class="muck-stat"><strong>{{ spreader }}<small>t</small></strong><span>Spreader</span></div>
             <div class="muck-stat"><strong>{{ ops }}<small>t</small></strong><span>Ops Center</span></div>
           </div>
@@ -8704,6 +8704,17 @@ def format_tons(value):
     return ("%.2f" % number).rstrip("0").rstrip(".")
 
 
+def format_tons_grouped(value):
+    """Tonnes for the dashboard totals, with thousands separators: 26372.82 -> 26,372.82."""
+    try:
+        number = float(value)
+    except Exception:
+        return "--"
+    if abs(number - round(number)) < 0.000001:
+        return "{:,}".format(int(round(number)))
+    return "{:,.2f}".format(number).rstrip("0").rstrip(".")
+
+
 def parse_decimal_or_zero(value):
     try:
         return float(value or 0)
@@ -9645,11 +9656,11 @@ def build_context(invoice_form=None, invoice_preview=None, status_msg_override=N
         "field_map_json": json.dumps(field_map),
         "recent_jobs": recent_jobs,
         "today_job_count": today_job_count,
-        "today_spreader_tons": format_tons(today_spreader),
-        "today_john_deere_tons": format_tons(today_john_deere),
+        "today_spreader_tons": format_tons_grouped(today_spreader),
+        "today_john_deere_tons": format_tons_grouped(today_john_deere),
         "year_job_count": year_job_count,
-        "year_spreader_tons": format_tons(year_spreader),
-        "year_john_deere_tons": format_tons(year_john_deere),
+        "year_spreader_tons": format_tons_grouped(year_spreader),
+        "year_john_deere_tons": format_tons_grouped(year_john_deere),
         "form_job": form_job,
         "form_title": form_title,
         "form_submit_label": form_submit_label,

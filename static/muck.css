@@ -54,3 +54,8 @@ html body .job-row .actions-inline .button { width: auto; min-height: 40px; padd
 .section-grid .card, .bottom-export .card { border-top: 4px solid rgba(27, 61, 42, 0.12); }
 .muck-stat strong small { margin-left: 2px; font-size: 0.55em; font-weight: 700; color: var(--af-muted); letter-spacing: 0; }
 .muck-stat span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Jobs tile narrower so the tonnes tiles have room for big figures like 26,372.82t */
+.muck-stat-row { grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.muck-stat { padding: 10px 8px; min-width: 0; }
+.muck-stat strong { font-size: clamp(16px, 4.6vw, 26px); white-space: nowrap; letter-spacing: -0.04em; }

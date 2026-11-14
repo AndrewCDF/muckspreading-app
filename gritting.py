@@ -3755,6 +3755,11 @@ def quick_complete_callout(call_out_id: int):
 
 
 def fetch_monthly_rows(month_value: str) -> list[sqlite3.Row]:
+    return fetch_summary_rows(month_value, month_value)
+
+
+def fetch_summary_rows(first_month: str, last_month: str) -> list[sqlite3.Row]:
+    """Every job called out from the first month to the last month (YYYY-MM, inclusive), newest first."""
     return get_db().execute(
         """
         SELECT
@@ -3775,12 +3780,50 @@ def fetch_monthly_rows(month_value: str) -> list[sqlite3.Row]:
         JOIN sites ON sites.id = call_outs.site_id
         JOIN customers ON customers.id = sites.customer_id
         LEFT JOIN notification_logs ON notification_logs.call_out_id = call_outs.id
-        WHERE substr(call_outs.called_out_at, 1, 7) = ?
+        WHERE substr(call_outs.called_out_at, 1, 7) BETWEEN ? AND ?
         GROUP BY call_outs.id
         ORDER BY call_outs.called_out_at DESC
         """,
-        (month_value,),
+        (first_month, last_month),
     ).fetchall()
+
+
+# ---- Season summary: the whole season, filtered down to a month -------------------------------------------
+SEASON_MONTHS = (10, 11, 12, 1, 2, 3, 4)  # October to April always show; other months only when they have jobs
+
+
+def season_start_year_for(month_value: str) -> int:
+    year, month = (int(part) for part in month_value.split("-"))
+    return year if month >= 10 else year - 1
+
+
+def season_month_values(start_year: int) -> list[str]:
+    """October to September: the twelve months that belong to a season, in order."""
+    return [f"{start_year if month >= 10 else start_year + 1}-{month:02d}" for month in (10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8, 9)]
+
+
+def season_label(start_year: int) -> str:
+    return f"{start_year}/{str(start_year + 1)[-2:]} Season"
+
+
+def summary_totals(rows: list[sqlite3.Row]) -> dict[str, Any]:
+    net = round(sum(row["pricing_amount"] or 0 for row in rows), 2)
+    vat = round(net * VAT_RATE, 2)
+    return {
+        "jobs": len(rows),
+        "completed": sum(1 for row in rows if row["status"] == "completed"),
+        "net": net,
+        "vat": vat,
+        "gross": round(net + vat, 2),
+    }
+
+
+def summary_seasons() -> list[int]:
+    """Seasons with work in them, plus the current one, newest first."""
+    current = current_gritting_season()["start_year"]
+    first = get_db().execute("SELECT MIN(substr(called_out_at, 1, 7)) FROM call_outs").fetchone()[0]
+    oldest = min(current, season_start_year_for(first)) if first else current
+    return list(range(current, oldest - 1, -1))
 
 
 def monthly_summary_export_header() -> list[str]:
@@ -4203,22 +4246,50 @@ def start_new_gritting_season_rollover() -> tuple[dict[str, Any], Path]:
     return season, archive_path
 
 
+def valid_month(value: str) -> str:
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m").strftime("%Y-%m")
+    except (AttributeError, ValueError):
+        return ""
+
+
+def summary_selection() -> tuple[int, str]:
+    """Which season and (optionally) which month the summary is showing, from ?season=2026&month=2026-11."""
+    month_value = valid_month(request.args.get("month", ""))
+    try:
+        start_year = int(request.args.get("season", ""))
+    except ValueError:
+        start_year = season_start_year_for(month_value) if month_value else current_gritting_season()["start_year"]
+    if month_value and month_value not in season_month_values(start_year):
+        start_year = season_start_year_for(month_value)
+    return start_year, month_value
+
+
 @bp.route("/monthly-summary")
 def monthly_summary() -> str:
-    month_value = request.args.get("month") or datetime.now().strftime("%Y-%m")
-    rows = fetch_monthly_rows(month_value)
-    total_revenue = sum(row["pricing_amount"] or 0 for row in rows)
-    total_vat = round(total_revenue * VAT_RATE, 2)
-    total_revenue_inc_vat = round(total_revenue + total_vat, 2)
-    completed_jobs = sum(1 for row in rows if row["status"] == "completed")
+    start_year, month_value = summary_selection()
+    months = season_month_values(start_year)
+    season_rows = fetch_summary_rows(months[0], months[-1])
+    by_month = {value: [] for value in months}
+    for row in season_rows:
+        by_month.setdefault(row["called_out_at"][:7], []).append(row)
+    month_breakdown = [
+        {"value": value, "label": format_month_label(value), "short": datetime.strptime(value, "%Y-%m").strftime("%b"), **summary_totals(by_month[value])}
+        for value in months
+        if int(value[5:]) in SEASON_MONTHS or by_month[value]
+    ]
+    rows = by_month.get(month_value, []) if month_value else season_rows
+    totals = summary_totals(rows)
     return render_template(
         "gritting/monthly_summary.html",
+        start_year=start_year,
+        season_name=season_label(start_year),
+        seasons=[(year, season_label(year)) for year in summary_seasons()],
         month_value=month_value,
+        month_breakdown=month_breakdown,
+        season_totals=summary_totals(season_rows),
         rows=rows,
-        total_revenue=total_revenue,
-        total_vat=total_vat,
-        total_revenue_inc_vat=total_revenue_inc_vat,
-        completed_jobs=completed_jobs,
+        totals=totals,
         report_settings=fetch_report_settings(),
         smtp_ready=smtp_configured(),
     )
@@ -4254,8 +4325,12 @@ def email_monthly_summary() -> Any:
 
 @bp.route("/monthly-summary/export")
 def export_monthly_summary() -> Response:
-    month_value = request.args.get("month") or datetime.now().strftime("%Y-%m")
-    rows = fetch_monthly_rows(month_value)
+    start_year, month_value = summary_selection()
+    if month_value:
+        rows = fetch_monthly_rows(month_value)
+    else:  # the whole season
+        months = season_month_values(start_year)
+        rows = fetch_summary_rows(months[0], months[-1])
     export_rows = monthly_summary_export_rows(rows)
     header = monthly_summary_export_header()
 
@@ -4268,7 +4343,7 @@ def export_monthly_summary() -> Response:
             csv.writer(row_buffer).writerow(single_row)
             yield row_buffer.getvalue()
 
-    filename = monthly_summary_filename(month_value, "csv")
+    filename = monthly_summary_filename(month_value or f"season-{start_year}-{str(start_year + 1)[-2:]}", "csv")
     return Response(
         generate(),
         mimetype="text/csv",

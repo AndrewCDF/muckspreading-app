@@ -91,6 +91,28 @@ class GrittingModuleTests(unittest.TestCase):
         self.assertEqual(export.status_code, 200)
         self.assertIn(b"Acme Ltd", export.data)
 
+    def test_the_summary_shows_the_whole_season_then_filters_to_a_month(self):
+        self.bulk_callout(self.make_sites(("Main yard", "Loading bay")))  # called out on 12 January 2026, the 2025/26 season
+        db = gritting.sqlite3.connect(gritting.DATABASE_PATH)
+        db.execute("UPDATE call_outs SET called_out_at = '2025-12-03T18:00' WHERE id = (SELECT MIN(id) FROM call_outs)")
+        db.commit()
+        db.close()
+        season = self.client.get("/gritting/monthly-summary?season=2025").get_data(as_text=True)
+        self.assertIn("2025/26 Season", season)
+        self.assertIn("Month by month", season)
+        self.assertIn("Main yard", season)
+        self.assertIn("Loading bay", season)  # both months are in the whole season
+        january = self.client.get("/gritting/monthly-summary?season=2025&month=2026-01").get_data(as_text=True)
+        self.assertIn("January 2026", january)
+        self.assertNotIn("Month by month", january)
+        self.assertEqual(january.count("<tr>") - 1, 1)  # one job in January (plus the header row)
+        self.assertIn("Email January 2026 summary", january)
+        # a month on its own (old links) picks its season; the season export holds every month
+        self.assertIn("2025/26 Season", self.client.get("/gritting/monthly-summary?month=2025-12").get_data(as_text=True))
+        export = self.client.get("/gritting/monthly-summary/export?season=2025")
+        self.assertIn("season-2025-26", export.headers["Content-Disposition"])
+        self.assertEqual(export.get_data(as_text=True).count("Acme Ltd"), 2)
+
     def test_backup_includes_gritting_data(self):
         import io
         import zipfile
