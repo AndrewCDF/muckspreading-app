@@ -29,7 +29,8 @@ function collectElements() {
     'fieldName', 'fieldHectares', 'fieldBales', 'fieldMoisture', 'fieldCrop', 'fieldPhoto', 'photoPreview',
     'deleteFieldButton', 'partCompleteButton', 'completeFieldButton', 'addDeliveryButton', 'recentDeliveries',
     'deliveryDialog', 'deliveryForm', 'deliveryDialogTitle', 'closeDeliveryDialogButton', 'deliveryId',
-    'deliveryCustomer', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight',
+    'deliveryCustomer', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight', 'deliveryBaleWeight',
+    'loadsList', 'loadsCount', 'loadsBales', 'loadsWeight', 'loadsAverage',
     'deliveryStatus', 'saveDeliveryButton', 'stocktakeDialog', 'stocktakeForm', 'closeStocktakeButton',
     'stocktakeDate', 'stocktakeBales', 'stocktakeNotes', 'stockMovementDialog', 'stockMovementForm',
     'stockMovementDialogTitle', 'closeStockMovementButton', 'stockMovementId', 'stockMovementType',
@@ -53,6 +54,11 @@ function bindEvents() {
   els.fieldDialog.addEventListener('close', () => { pendingFieldLocation = null; });
   els.addDeliveryButton.addEventListener('click', () => openDeliveryDialog());
   els.deliveryForm.addEventListener('submit', saveDeliveryFromForm);
+  els.deliveryBales.addEventListener('input', updateDeliveryBaleWeight);
+  document.querySelectorAll('[data-loads-filter]').forEach((button) => {
+    button.addEventListener('click', () => { loadsFilter = button.dataset.loadsFilter; renderLoadsPage(); });
+  });
+  els.deliveryWeight.addEventListener('input', updateDeliveryBaleWeight);
   els.closeDeliveryDialogButton.addEventListener('click', () => els.deliveryDialog.close());
   els.addStocktakeButton.addEventListener('click', openStocktakeDialog);
   els.stocktakeForm.addEventListener('submit', saveStocktake);
@@ -181,12 +187,25 @@ function formatDeliveryDate(value) {
   return new Date(`${value}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// Weight per bale from the load's total weight (kg) and bale count, e.g. 2940 kg over 12 bales -> 245 kg.
+function kgPerBale(weight, bales) {
+  const kg = Number(weight);
+  const count = Number(bales);
+  if (!(kg > 0) || !(count > 0)) return null;
+  return kg / count;
+}
+
+function formatKg(value) {
+  return `${Number(value).toLocaleString('en-GB', { maximumFractionDigits: 1 })} kg`;
+}
+
 function deliveryCards(deliveries) {
   return deliveries.map((delivery) => `
     <div class="field-card delivery-card">
       <div><strong>${escapeHtml(delivery.customer)}</strong><span class="delivery-reg">${escapeHtml(delivery.registration)}</span></div>
       <div>${escapeHtml(formatDeliveryDate(delivery.delivery_date))} at ${escapeHtml(delivery.delivery_time)}</div>
-      <div>${Number(delivery.bale_total || 0)} bales · ${delivery.weight_total ? `Weight: ${escapeHtml(delivery.weight_total)}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
+      <div>${Number(delivery.bale_total || 0)} bales · ${delivery.weight_total ? `Weight: ${escapeHtml(formatKg(delivery.weight_total))}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
+      ${kgPerBale(delivery.weight_total, delivery.bale_total) ? `<div class="bale-weight">${escapeHtml(formatKg(kgPerBale(delivery.weight_total, delivery.bale_total)))} per bale</div>` : ''}
       <div class="dialog-actions"><button class="secondary-action" type="button" data-edit-delivery="${delivery.id}">Edit Load Out</button></div>
     </div>
   `).join('');
@@ -198,10 +217,31 @@ function bindDeliveryEditButtons(container) {
   });
 }
 
+let loadsFilter = 'all';
+
 function renderDeliveries() {
   const recent = [...state.loads].slice(0, 5);
   els.recentDeliveries.innerHTML = recent.length ? deliveryCards(recent) : '<div class="field-card">No deliveries recorded yet.</div>';
   bindDeliveryEditButtons(els.recentDeliveries);
+  renderLoadsPage();
+}
+
+// The Loads out page: every load, newest first, with totals and a filter.
+function renderLoadsPage() {
+  if (!els.loadsList) return;
+  const loads = [...state.loads];
+  const weighed = loads.filter((load) => Number(load.weight_total) > 0);
+  const weighedKg = weighed.reduce((sum, load) => sum + Number(load.weight_total), 0);
+  const weighedBales = weighed.reduce((sum, load) => sum + Number(load.bale_total || 0), 0);
+  els.loadsCount.textContent = loads.length.toLocaleString('en-GB');
+  els.loadsBales.textContent = loads.reduce((sum, load) => sum + Number(load.bale_total || 0), 0).toLocaleString('en-GB');
+  els.loadsWeight.textContent = formatKg(weighedKg);
+  els.loadsAverage.textContent = weighedBales > 0 ? formatKg(weighedKg / weighedBales) : '–';
+  const shown = loads.filter((load) => loadsFilter === 'all' || (loadsFilter === 'weighed') === (Number(load.weight_total) > 0));
+  const empty = { all: 'No loads out recorded yet. Tap Log load out to add one.', awaiting: 'No loads are waiting for a weight.', weighed: 'No weighed loads yet.' }[loadsFilter];
+  els.loadsList.innerHTML = shown.length ? deliveryCards(shown) : `<div class="empty-state">${empty}</div>`;
+  bindDeliveryEditButtons(els.loadsList);
+  document.querySelectorAll('[data-loads-filter]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.loadsFilter === loadsFilter)));
 }
 
 function addCustomerLocally(customer) {
@@ -435,7 +475,14 @@ function openDeliveryDialog(deliveryId = null) {
   els.saveDeliveryButton.textContent = delivery ? 'Save Changes' : 'Save Load Out';
   els.deliveryStatus.textContent = delivery && !delivery.weight_total ? 'Add the weight when it is sent to you.' : 'Weight can be left blank and added later.';
   els.deliveryStatus.dataset.error = 'false';
+  updateDeliveryBaleWeight();
   els.deliveryDialog.showModal();
+}
+
+function updateDeliveryBaleWeight() {
+  const perBale = kgPerBale(els.deliveryWeight.value, els.deliveryBales.value);
+  els.deliveryBaleWeight.textContent = perBale ? `${formatKg(perBale)} per bale` : 'Enter the bales and the weight in kg to see the weight per bale.';
+  els.deliveryBaleWeight.classList.toggle('has-value', Boolean(perBale));
 }
 
 async function saveDeliveryFromForm(event) {

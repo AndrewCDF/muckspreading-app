@@ -181,3 +181,18 @@ dialog::backdrop { background: rgba(10, 24, 16, 0.45); }
 .dash-map-panel .panel-heading { margin-bottom: 10px; }
 .dashboard-map { height: 260px; width: 100%; border-radius: 16px; overflow: hidden; background: #dfe7dc; z-index: 0; }
 @media (min-width: 760px) { .dashboard-map { height: 340px; } }
+
+/* Weight per bale on load cards and in the Log Load Out form */
+.bale-weight { justify-self: start; width: fit-content; padding: 3px 10px; border-radius: 999px; background: rgba(199, 158, 79, 0.16); color: #6b4c10; font-weight: 800; font-size: 0.9rem; }
+.bale-weight-preview { margin: 0; padding: 10px 12px; border-radius: 12px; background: #f3f7f3; color: var(--muted); font-size: 0.92rem; }
+.bale-weight-preview.has-value { background: rgba(199, 158, 79, 0.16); color: #6b4c10; font-weight: 800; font-size: 1.05rem; }
+
+/* Loads out page */
+.loads-title { margin-top: 4px; }
+.loads-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.loads-summary strong { font-size: 1.6rem; }
+@media (min-width: 760px) { .loads-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.loads-log-button { width: 100%; min-height: 52px; margin: 4px 0 12px; font-size: 1.05rem; }
+.loads-filter { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px; scrollbar-width: none; }
+.loads-filter button { flex: 0 0 auto; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--brand); font-weight: 700; cursor: pointer; box-shadow: 0 2px 0 rgba(27, 61, 42, 0.1); }
+.loads-filter button[aria-pressed="true"] { background: linear-gradient(180deg, #2f5d41, #1b3d2a); color: #fff; border-color: transparent; box-shadow: 0 3px 0 #0f2619; }

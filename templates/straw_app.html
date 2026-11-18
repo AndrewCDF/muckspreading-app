@@ -61,6 +61,7 @@
           <section class="panel">
             <div class="panel-heading">
               <h2>Recent Loads Out</h2>
+              <button class="text-button" data-nav="loads" type="button">View all</button>
             </div>
             <div class="field-list" id="recentDeliveries"></div>
           </section>
@@ -83,6 +84,35 @@
             <button class="primary-action small" id="addFieldButtonFields" type="button">Add</button>
           </div>
           <div class="field-list" id="fieldList"></div>
+        </section>
+
+        <section class="view" id="loadsView" aria-label="Loads out">
+          <div class="stock-summary loads-summary">
+            <article>
+              <span>Loads</span>
+              <strong id="loadsCount">0</strong>
+            </article>
+            <article>
+              <span>Bales out</span>
+              <strong id="loadsBales">0</strong>
+            </article>
+            <article>
+              <span>Weighed total</span>
+              <strong id="loadsWeight">0 kg</strong>
+            </article>
+            <article>
+              <span>Average per bale</span>
+              <strong id="loadsAverage">–</strong>
+            </article>
+          </div>
+          <button class="primary-action loads-log-button" type="button" onclick="document.getElementById('addDeliveryButton').click()">＋ Log load out</button>
+          <h2 class="dashboard-section-title loads-title">All loads out</h2>
+          <div class="loads-filter" role="group" aria-label="Show loads">
+            <button type="button" data-loads-filter="all" aria-pressed="true">All</button>
+            <button type="button" data-loads-filter="awaiting" aria-pressed="false">Awaiting weight</button>
+            <button type="button" data-loads-filter="weighed" aria-pressed="false">Weighed</button>
+          </div>
+          <div class="field-list" id="loadsList"></div>
         </section>
 
         <section class="view" id="stockView" aria-label="Stock">
@@ -138,6 +168,7 @@
           <button class="af-menu-item" data-nav="dashboard" type="button" aria-current="page"><span aria-hidden="true">◎</span>Dashboard</button>
           <button class="af-menu-item" data-nav="map" type="button"><span aria-hidden="true">⌖</span>Map</button>
           <button class="af-menu-item" data-nav="fields" type="button"><span aria-hidden="true">▤</span>Fields</button>
+          <button class="af-menu-item" data-nav="loads" type="button"><span aria-hidden="true">⛟</span>Loads out</button>
           <button class="af-menu-item" data-nav="stock" type="button"><span aria-hidden="true">▥</span>Stock</button>
           <button class="af-menu-item is-gold" type="button" onclick="document.getElementById('addDeliveryButton').click()"><span aria-hidden="true">＋</span>Log load out</button>
         </div>
@@ -230,10 +261,11 @@
             <input id="deliveryBales" type="number" min="0" step="1" inputmode="numeric" required>
           </label>
           <label>
-            Weight total
+            Weight total (kg)
             <input id="deliveryWeight" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Can be added later">
           </label>
         </div>
+        <p class="bale-weight-preview" id="deliveryBaleWeight" aria-live="polite"></p>
         <p class="form-status" id="deliveryStatus" role="status" aria-live="polite">Weight can be left blank and added later.</p>
         <div class="dialog-actions">
           <button class="primary-button" id="saveDeliveryButton" type="submit">Save Load Out</button>
