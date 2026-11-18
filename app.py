@@ -9746,6 +9746,11 @@ def straw_export_xlsx():
         for field in group:
             rows.append([field.get("customer", ""), field.get("farm", ""), field.get("name", ""), field.get("crop", ""), field.get("bales", 0), field.get("hectares", 0), field.get("moisture", ""), "Yes" if field.get("photo") else "No", field.get("finishedAt", "")])
     rows += [[""] * len(headers), [""] * len(headers), ["Grand Total", "", "", "", sum(float(f.get("bales", 0) or 0) for f in fields), sum(float(f.get("bales", 0) or 0) for f in fields), sum(float(f.get("hectares", 0) or 0) for f in fields), "", ""]]
+    connection = straw_delivery_connection()  # loads out live in their own database, not the saved app state
+    try:
+        state["loads"] = [dict(row) for row in connection.execute("SELECT * FROM straw_deliveries ORDER BY delivery_date DESC, delivery_time DESC, id DESC").fetchall()]
+    finally:
+        connection.close()
     payload = build_straw_multisheet_xlsx(state, rows)
     response = Response(payload, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     response.headers["Content-Disposition"] = 'attachment; filename="straw_export.xlsx"'
@@ -9756,7 +9761,7 @@ def build_straw_multisheet_xlsx(state, field_rows):
     """Mirror the older Straw app export: fields, loads, stocktakes and movements."""
     sheets = [
         ("Fields", field_rows),
-        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Number of Bales", "Load Weight", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("bale_total", ""), x.get("weight_total", ""), ""] for x in state["loads"]]),
+        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Farm / Location", "Number of Bales", "Load Weight", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("farm", ""), x.get("bale_total", ""), x.get("weight_total", ""), ""] for x in state["loads"]]),
         ("Stocktakes", [["Date and Time", "Bales in Stock", "Notes"]] + [[x.get("date", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stocktakes"]]),
         ("Stock Movements", [["Type", "Date and Time", "Customer / Source", "Number of Bales", "Stock Effect", "Notes"]] + [[x.get("type", ""), x.get("date", ""), x.get("customer", ""), x.get("bales", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stockMovements"]]),
     ]
@@ -9923,6 +9928,8 @@ def straw_delivery_connection():
         migration_key TEXT PRIMARY KEY,
         migrated_at TEXT NOT NULL
     )""")
+    if "farm" not in {row[1] for row in connection.execute("PRAGMA table_info(straw_deliveries)").fetchall()}:
+        connection.execute("ALTER TABLE straw_deliveries ADD COLUMN farm TEXT NOT NULL DEFAULT ''")  # optional farm name or location for a load out
     with connection:
         migrate_legacy_straw_loads(connection)
     connection.execute(
@@ -9978,6 +9985,7 @@ def straw_deliveries(delivery_id=None):
     if not isinstance(payload, dict):
         return jsonify(error="Please submit a valid delivered load."), 400
     customer = clean_name(payload.get("customer"))
+    farm = clean_name(payload.get("farm"))
     registration = clean_name(payload.get("registration")).upper()
     delivery_date = str(payload.get("delivery_date", "") or "").strip()
     delivery_time = str(payload.get("delivery_time", "") or "").strip()
@@ -9988,6 +9996,8 @@ def straw_deliveries(delivery_id=None):
         return jsonify(error="Enter the bale total as a whole number."), 400
     if not customer or len(customer) > 160:
         return jsonify(error="Enter a customer name."), 400
+    if len(farm) > 160:
+        return jsonify(error="Keep the farm name or location under 160 characters."), 400
     if not registration or len(registration) > 30:
         return jsonify(error="Enter the lorry or trailer registration."), 400
     try:
@@ -10010,7 +10020,7 @@ def straw_deliveries(delivery_id=None):
     if delivery_id is not None and type(payload.get("version")) is not int:
         return jsonify(error="Reopen this delivered load before saving it again."), 400
 
-    values = (customer, registration, delivery_date, delivery_time, bale_total, weight_total)
+    values = (customer, farm, registration, delivery_date, delivery_time, bale_total, weight_total)
     connection = straw_delivery_connection()
     try:
         with connection:
@@ -10018,13 +10028,13 @@ def straw_deliveries(delivery_id=None):
             save_straw_customer(connection, customer)
             if delivery_id is None:
                 cursor = connection.execute(
-                    "INSERT INTO straw_deliveries (customer, registration, delivery_date, delivery_time, bale_total, weight_total, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                    "INSERT INTO straw_deliveries (customer, farm, registration, delivery_date, delivery_time, bale_total, weight_total, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     values + (updated_at,),
                 )
                 delivery_id = cursor.lastrowid
             else:
                 cursor = connection.execute(
-                    "UPDATE straw_deliveries SET customer=?, registration=?, delivery_date=?, delivery_time=?, bale_total=?, weight_total=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    "UPDATE straw_deliveries SET customer=?, farm=?, registration=?, delivery_date=?, delivery_time=?, bale_total=?, weight_total=?, version=version+1, updated_at=? WHERE id=? AND version=?",
                     values + (updated_at, delivery_id, payload["version"]),
                 )
                 if cursor.rowcount != 1:

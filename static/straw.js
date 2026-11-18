@@ -29,7 +29,7 @@ function collectElements() {
     'fieldName', 'fieldHectares', 'fieldBales', 'fieldMoisture', 'fieldCrop', 'fieldPhoto', 'photoPreview',
     'deleteFieldButton', 'partCompleteButton', 'completeFieldButton', 'addDeliveryButton', 'recentDeliveries',
     'deliveryDialog', 'deliveryForm', 'deliveryDialogTitle', 'closeDeliveryDialogButton', 'deliveryId',
-    'deliveryCustomer', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight', 'deliveryBaleWeight',
+    'deliveryCustomer', 'deliveryFarm', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight', 'deliveryBaleWeight',
     'loadsList', 'loadsCount', 'loadsBales', 'loadsWeight', 'loadsAverage',
     'deliveryStatus', 'saveDeliveryButton', 'stocktakeDialog', 'stocktakeForm', 'closeStocktakeButton',
     'stocktakeDate', 'stocktakeBales', 'stocktakeNotes', 'stockMovementDialog', 'stockMovementForm',
@@ -55,6 +55,7 @@ function bindEvents() {
   els.addDeliveryButton.addEventListener('click', () => openDeliveryDialog());
   els.deliveryForm.addEventListener('submit', saveDeliveryFromForm);
   els.deliveryBales.addEventListener('input', updateDeliveryBaleWeight);
+  els.deliveryCustomer.addEventListener('change', fillLoadFarmSuggestions);
   document.querySelectorAll('[data-loads-filter]').forEach((button) => {
     button.addEventListener('click', () => { loadsFilter = button.dataset.loadsFilter; renderLoadsPage(); });
   });
@@ -203,6 +204,7 @@ function deliveryCards(deliveries) {
   return deliveries.map((delivery) => `
     <div class="field-card delivery-card">
       <div><strong>${escapeHtml(delivery.customer)}</strong><span class="delivery-reg">${escapeHtml(delivery.registration)}</span></div>
+      ${delivery.farm ? `<div class="delivery-farm">${escapeHtml(delivery.farm)}</div>` : ''}
       <div>${escapeHtml(formatDeliveryDate(delivery.delivery_date))} at ${escapeHtml(delivery.delivery_time)}</div>
       <div>${Number(delivery.bale_total || 0)} bales · ${delivery.weight_total ? `Weight: ${escapeHtml(formatKg(delivery.weight_total))}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
       ${kgPerBale(delivery.weight_total, delivery.bale_total) ? `<div class="bale-weight">${escapeHtml(formatKg(kgPerBale(delivery.weight_total, delivery.bale_total)))} per bale</div>` : ''}
@@ -467,6 +469,8 @@ function openDeliveryDialog(deliveryId = null) {
   els.deliveryForm.reset();
   els.deliveryId.value = delivery ? delivery.id : '';
   els.deliveryCustomer.value = delivery ? delivery.customer || '' : '';
+  els.deliveryFarm.value = delivery ? delivery.farm || '' : '';
+  fillLoadFarmSuggestions();
   els.deliveryRegistration.value = delivery ? delivery.registration || '' : '';
   els.deliveryDateTime.value = delivery ? `${delivery.delivery_date || ''}T${delivery.delivery_time || ''}` : localDateTimeValue();
   els.deliveryBales.value = delivery ? delivery.bale_total : '';
@@ -477,6 +481,21 @@ function openDeliveryDialog(deliveryId = null) {
   els.deliveryStatus.dataset.error = 'false';
   updateDeliveryBaleWeight();
   els.deliveryDialog.showModal();
+}
+
+// Farm / location suggestions: the ones used before on loads out, this customer's first.
+function fillLoadFarmSuggestions() {
+  const list = document.getElementById('straw-load-farms');
+  if (!list) return;
+  const customer = els.deliveryCustomer.value.trim().toLowerCase();
+  const seen = new Set();
+  const ordered = [...state.loads].sort((a, b) => Number((b.customer || '').toLowerCase() === customer) - Number((a.customer || '').toLowerCase() === customer));
+  const farms = [];
+  ordered.forEach((load) => {
+    const farm = String(load.farm || '').trim();
+    if (farm && !seen.has(farm.toLowerCase())) { seen.add(farm.toLowerCase()); farms.push(farm); }
+  });
+  list.replaceChildren(...farms.map((farm) => new Option(farm, farm)));
 }
 
 function updateDeliveryBaleWeight() {
@@ -492,6 +511,7 @@ async function saveDeliveryFromForm(event) {
   const [deliveryDate, deliveryTime] = els.deliveryDateTime.value.split('T');
   const payload = {
     customer: els.deliveryCustomer.value.trim(),
+    farm: els.deliveryFarm.value.trim(),
     registration: els.deliveryRegistration.value.trim(),
     delivery_date: deliveryDate || '',
     delivery_time: deliveryTime || '',

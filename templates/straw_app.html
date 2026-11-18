@@ -248,6 +248,10 @@
           <input id="deliveryCustomer" autocomplete="off" list="straw-customers" maxlength="160" required>
         </label>
         <label>
+          <span>Farm name / location <span class="optional-label">(optional)</span></span>
+          <input id="deliveryFarm" autocomplete="off" list="straw-load-farms" maxlength="160" placeholder="e.g. Home Farm, Bergh Apton">
+        </label>
+        <label>
           Lorry or trailer registration
           <input id="deliveryRegistration" autocomplete="off" maxlength="30" required autocapitalize="characters">
         </label>
@@ -306,6 +310,7 @@
     </dialog>
 
     <datalist id="straw-customers"></datalist>
+    <datalist id="straw-load-farms"></datalist>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="{{ url_for('static', filename='straw.js') }}"></script>

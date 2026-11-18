@@ -48,6 +48,34 @@ class StrawDeliveryTests(unittest.TestCase):
 
         self.assertEqual(self.client.put("/api/straw/deliveries/%s" % saved["id"], json=saved).status_code, 409)
 
+    def test_a_load_can_have_an_optional_farm_or_location(self):
+        without = self.client.post("/api/straw/deliveries", json=self.delivery).get_json()["delivery"]
+        self.assertEqual(without["farm"], "")
+        with_farm = self.client.post("/api/straw/deliveries", json=dict(self.delivery, farm="  Home Farm, Bergh Apton ")).get_json()["delivery"]
+        self.assertEqual(with_farm["farm"], "Home Farm, Bergh Apton")
+        with_farm["farm"] = "Top Yard"
+        self.assertEqual(self.client.put("/api/straw/deliveries/%s" % with_farm["id"], json=with_farm).get_json()["delivery"]["farm"], "Top Yard")
+        self.assertEqual(self.client.post("/api/straw/deliveries", json=dict(self.delivery, farm="x" * 161)).status_code, 400)
+
+    def test_an_older_loads_database_gets_the_farm_column(self):
+        import sqlite3
+        db = sqlite3.connect(os.path.join(self.temp.name, "straw_deliveries.sqlite3"))
+        db.execute("CREATE TABLE straw_deliveries (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, registration TEXT NOT NULL, delivery_date TEXT NOT NULL, delivery_time TEXT NOT NULL, bale_total INTEGER NOT NULL, weight_total TEXT NOT NULL, version INTEGER NOT NULL, updated_at TEXT NOT NULL)")
+        db.execute("INSERT INTO straw_deliveries VALUES (1, 'Old Customer', 'AA11 AAA', '2026-08-01', '09:00', 10, '2500', 1, '2026-08-01T09:00:00')")
+        db.commit()
+        db.close()
+        loads = self.client.get("/api/straw/deliveries").get_json()["deliveries"]
+        self.assertEqual((loads[0]["customer"], loads[0]["farm"]), ("Old Customer", ""))
+
+    def test_the_excel_export_lists_every_load_out_with_its_farm(self):
+        import io
+        import zipfile
+        self.client.post("/api/straw/deliveries", json=dict(self.delivery, farm="Home Farm", weight_total="10500"))
+        book = zipfile.ZipFile(io.BytesIO(self.client.get("/straw/export.xlsx").data))
+        text = "".join(book.read(name).decode("utf-8", "ignore") for name in book.namelist() if name.startswith("xl/"))
+        for expected in ("Farm / Location", "Home Farm", "AB12 CDE", "Example Farm"):
+            self.assertIn(expected, text)
+
     def test_invalid_delivery_is_rejected(self):
         invalid_changes = [
             {"customer": ""}, {"registration": ""}, {"delivery_date": "2026-02-30"},
