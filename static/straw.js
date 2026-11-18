@@ -29,7 +29,7 @@ function collectElements() {
     'fieldName', 'fieldHectares', 'fieldBales', 'fieldMoisture', 'fieldCrop', 'fieldPhoto', 'photoPreview',
     'deleteFieldButton', 'partCompleteButton', 'completeFieldButton', 'addDeliveryButton', 'recentDeliveries',
     'deliveryDialog', 'deliveryForm', 'deliveryDialogTitle', 'closeDeliveryDialogButton', 'deliveryId',
-    'deliveryCustomer', 'deliveryFarm', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight', 'deliveryBaleWeight',
+    'deliveryCustomer', 'deliveryFarm', 'deliveryCrop', 'deliveryRegistration', 'deliveryDateTime', 'deliveryBales', 'deliveryWeight', 'deliveryBaleWeight',
     'loadsList', 'loadsCount', 'loadsBales', 'loadsWeight', 'loadsAverage',
     'deliveryStatus', 'saveDeliveryButton', 'stocktakeDialog', 'stocktakeForm', 'closeStocktakeButton',
     'stocktakeDate', 'stocktakeBales', 'stocktakeNotes', 'stockMovementDialog', 'stockMovementForm',
@@ -203,8 +203,9 @@ function formatKg(value) {
 function deliveryCards(deliveries) {
   return deliveries.map((delivery) => `
     <div class="field-card delivery-card">
-      <div><strong>${escapeHtml(delivery.customer)}</strong><span class="delivery-reg">${escapeHtml(delivery.registration)}</span></div>
+      <div><strong>${escapeHtml(delivery.customer)}</strong>${delivery.registration ? `<span class="delivery-reg">${escapeHtml(delivery.registration)}</span>` : ''}</div>
       ${delivery.farm ? `<div class="delivery-farm">${escapeHtml(delivery.farm)}</div>` : ''}
+      ${delivery.crop ? `<div><span class="delivery-crop">${escapeHtml(delivery.crop)}</span></div>` : ''}
       <div>${escapeHtml(formatDeliveryDate(delivery.delivery_date))} at ${escapeHtml(delivery.delivery_time)}</div>
       <div>${Number(delivery.bale_total || 0)} bales · ${delivery.weight_total ? `Weight: ${escapeHtml(formatKg(delivery.weight_total))}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
       ${kgPerBale(delivery.weight_total, delivery.bale_total) ? `<div class="bale-weight">${escapeHtml(formatKg(kgPerBale(delivery.weight_total, delivery.bale_total)))} per bale</div>` : ''}
@@ -471,6 +472,9 @@ function openDeliveryDialog(deliveryId = null) {
   els.deliveryCustomer.value = delivery ? delivery.customer || '' : '';
   els.deliveryFarm.value = delivery ? delivery.farm || '' : '';
   fillLoadFarmSuggestions();
+  const crop = delivery ? delivery.crop || '' : '';
+  if (crop && !Array.from(els.deliveryCrop.options).some((option) => option.value === crop)) els.deliveryCrop.add(new Option(crop, crop));
+  els.deliveryCrop.value = crop;
   els.deliveryRegistration.value = delivery ? delivery.registration || '' : '';
   els.deliveryDateTime.value = delivery ? `${delivery.delivery_date || ''}T${delivery.delivery_time || ''}` : localDateTimeValue();
   els.deliveryBales.value = delivery ? delivery.bale_total : '';
@@ -512,6 +516,7 @@ async function saveDeliveryFromForm(event) {
   const payload = {
     customer: els.deliveryCustomer.value.trim(),
     farm: els.deliveryFarm.value.trim(),
+    crop: els.deliveryCrop.value,
     registration: els.deliveryRegistration.value.trim(),
     delivery_date: deliveryDate || '',
     delivery_time: deliveryTime || '',

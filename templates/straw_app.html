@@ -252,8 +252,15 @@
           <input id="deliveryFarm" autocomplete="off" list="straw-load-farms" maxlength="160" placeholder="e.g. Home Farm, Bergh Apton">
         </label>
         <label>
-          Lorry or trailer registration
-          <input id="deliveryRegistration" autocomplete="off" maxlength="30" required autocapitalize="characters">
+          Crop / variety
+          <select id="deliveryCrop">
+            <option value="">Choose crop / variety</option>
+            {% for crop in crops %}<option value="{{ crop }}">{{ crop }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Lorry or trailer registration <span class="optional-label">(optional)</span></span>
+          <input id="deliveryRegistration" autocomplete="off" maxlength="30" autocapitalize="characters">
         </label>
         <label>
           Date and time

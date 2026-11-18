@@ -57,6 +57,17 @@ class StrawDeliveryTests(unittest.TestCase):
         self.assertEqual(self.client.put("/api/straw/deliveries/%s" % with_farm["id"], json=with_farm).get_json()["delivery"]["farm"], "Top Yard")
         self.assertEqual(self.client.post("/api/straw/deliveries", json=dict(self.delivery, farm="x" * 161)).status_code, 400)
 
+    def test_a_load_can_have_a_crop_and_no_registration(self):
+        load = self.client.post("/api/straw/deliveries", json=dict(self.delivery, crop="Barley", registration="")).get_json()["delivery"]
+        self.assertEqual((load["crop"], load["registration"]), ("Barley", ""))
+        load["crop"] = "Hay"
+        self.assertEqual(self.client.put("/api/straw/deliveries/%s" % load["id"], json=load).get_json()["delivery"]["crop"], "Hay")
+        page = self.client.get("/straw").get_data(as_text=True)
+        self.assertIn('id="deliveryCrop"', page)
+        self.assertNotIn("Spring Barley", page)
+        book = __import__("zipfile").ZipFile(__import__("io").BytesIO(self.client.get("/straw/export.xlsx").data))
+        self.assertIn("Crop / Variety", "".join(book.read(n).decode("utf-8", "ignore") for n in book.namelist() if n.startswith("xl/")))
+
     def test_an_older_loads_database_gets_the_farm_column(self):
         import sqlite3
         db = sqlite3.connect(os.path.join(self.temp.name, "straw_deliveries.sqlite3"))
@@ -78,7 +89,7 @@ class StrawDeliveryTests(unittest.TestCase):
 
     def test_invalid_delivery_is_rejected(self):
         invalid_changes = [
-            {"customer": ""}, {"registration": ""}, {"delivery_date": "2026-02-30"},
+            {"customer": ""}, {"registration": "X" * 31}, {"delivery_date": "2026-02-30"}, {"crop": "x" * 61},
             {"delivery_time": "25:00"}, {"bale_total": "2.5"}, {"bale_total": "-1"}, {"weight_total": "unknown"},
         ]
         for changes in invalid_changes:

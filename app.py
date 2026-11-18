@@ -3974,7 +3974,7 @@ def ensure_settings_workbook():
         "Farms": [["name", "active"]] + [[name, "1"] for name in load_farms()],
         "Fields": [["customer_name", "farm_name", "field_name", "active"]] + [[customer, farm, field, "1"] for customer, farms in field_map.items() for farm, fields in farms.items() for field in fields],
         "Muck Types": [["name", "active"]] + [[name, "1"] for name in load_muck_types()],
-        "Straw Crops": [["name", "active"]] + [[name, "1"] for name in ["Wheat", "Barley", "Spring Barley", "Oats", "Hay"]],
+        "Straw Crops": [["name", "active"]] + [[name, "1"] for name in ["Wheat", "Barley", "Oats", "Hay"]],
         "Machinery": [["name", "active"]],
         "Read Me": [["topic", "instructions"],
                     ["Editing", "Edit values under the existing headings. Save and close Excel, then refresh the app. Keep tab names and column headings unchanged."],
@@ -9729,7 +9729,8 @@ def muck_home():
 @app.route("/straw")
 def straw_home():
     ensure_data_dir()
-    return render_template("straw_app.html", farms=load_farms(), crops=settings_names("Straw Crops", ["Wheat", "Barley", "Spring Barley", "Oats", "Hay"]))
+    crops = [crop for crop in settings_names("Straw Crops", ["Wheat", "Barley", "Oats", "Hay"]) if crop.strip().lower() != "spring barley"]  # one Barley, not two
+    return render_template("straw_app.html", farms=load_farms(), crops=crops)
 
 
 @app.route("/straw/export.xlsx")
@@ -9761,7 +9762,7 @@ def build_straw_multisheet_xlsx(state, field_rows):
     """Mirror the older Straw app export: fields, loads, stocktakes and movements."""
     sheets = [
         ("Fields", field_rows),
-        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Farm / Location", "Number of Bales", "Load Weight", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("farm", ""), x.get("bale_total", ""), x.get("weight_total", ""), ""] for x in state["loads"]]),
+        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Farm / Location", "Crop / Variety", "Number of Bales", "Load Weight", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("farm", ""), x.get("crop", ""), x.get("bale_total", ""), x.get("weight_total", ""), ""] for x in state["loads"]]),
         ("Stocktakes", [["Date and Time", "Bales in Stock", "Notes"]] + [[x.get("date", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stocktakes"]]),
         ("Stock Movements", [["Type", "Date and Time", "Customer / Source", "Number of Bales", "Stock Effect", "Notes"]] + [[x.get("type", ""), x.get("date", ""), x.get("customer", ""), x.get("bales", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stockMovements"]]),
     ]
@@ -9930,6 +9931,8 @@ def straw_delivery_connection():
     )""")
     if "farm" not in {row[1] for row in connection.execute("PRAGMA table_info(straw_deliveries)").fetchall()}:
         connection.execute("ALTER TABLE straw_deliveries ADD COLUMN farm TEXT NOT NULL DEFAULT ''")  # optional farm name or location for a load out
+    if "crop" not in {row[1] for row in connection.execute("PRAGMA table_info(straw_deliveries)").fetchall()}:
+        connection.execute("ALTER TABLE straw_deliveries ADD COLUMN crop TEXT NOT NULL DEFAULT ''")  # crop / variety on the load, e.g. Wheat or Hay
     with connection:
         migrate_legacy_straw_loads(connection)
     connection.execute(
@@ -9986,6 +9989,7 @@ def straw_deliveries(delivery_id=None):
         return jsonify(error="Please submit a valid delivered load."), 400
     customer = clean_name(payload.get("customer"))
     farm = clean_name(payload.get("farm"))
+    crop = clean_name(payload.get("crop"))
     registration = clean_name(payload.get("registration")).upper()
     delivery_date = str(payload.get("delivery_date", "") or "").strip()
     delivery_time = str(payload.get("delivery_time", "") or "").strip()
@@ -9998,8 +10002,10 @@ def straw_deliveries(delivery_id=None):
         return jsonify(error="Enter a customer name."), 400
     if len(farm) > 160:
         return jsonify(error="Keep the farm name or location under 160 characters."), 400
-    if not registration or len(registration) > 30:
-        return jsonify(error="Enter the lorry or trailer registration."), 400
+    if len(crop) > 60:
+        return jsonify(error="Choose a crop or variety from the list."), 400
+    if len(registration) > 30:
+        return jsonify(error="Keep the lorry or trailer registration under 30 characters."), 400
     try:
         if datetime.strptime(delivery_date, "%Y-%m-%d").strftime("%Y-%m-%d") != delivery_date:
             raise ValueError()
@@ -10020,7 +10026,7 @@ def straw_deliveries(delivery_id=None):
     if delivery_id is not None and type(payload.get("version")) is not int:
         return jsonify(error="Reopen this delivered load before saving it again."), 400
 
-    values = (customer, farm, registration, delivery_date, delivery_time, bale_total, weight_total)
+    values = (customer, farm, crop, registration, delivery_date, delivery_time, bale_total, weight_total)
     connection = straw_delivery_connection()
     try:
         with connection:
@@ -10028,13 +10034,13 @@ def straw_deliveries(delivery_id=None):
             save_straw_customer(connection, customer)
             if delivery_id is None:
                 cursor = connection.execute(
-                    "INSERT INTO straw_deliveries (customer, farm, registration, delivery_date, delivery_time, bale_total, weight_total, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    "INSERT INTO straw_deliveries (customer, farm, crop, registration, delivery_date, delivery_time, bale_total, weight_total, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     values + (updated_at,),
                 )
                 delivery_id = cursor.lastrowid
             else:
                 cursor = connection.execute(
-                    "UPDATE straw_deliveries SET customer=?, farm=?, registration=?, delivery_date=?, delivery_time=?, bale_total=?, weight_total=?, version=version+1, updated_at=? WHERE id=? AND version=?",
+                    "UPDATE straw_deliveries SET customer=?, farm=?, crop=?, registration=?, delivery_date=?, delivery_time=?, bale_total=?, weight_total=?, version=version+1, updated_at=? WHERE id=? AND version=?",
                     values + (updated_at, delivery_id, payload["version"]),
                 )
                 if cursor.rowcount != 1:
