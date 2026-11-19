@@ -205,11 +205,15 @@ function deliveryCards(deliveries) {
     <div class="field-card delivery-card">
       <div><strong>${escapeHtml(delivery.customer)}</strong>${delivery.registration ? `<span class="delivery-reg">${escapeHtml(delivery.registration)}</span>` : ''}</div>
       ${delivery.farm ? `<div class="delivery-farm">${escapeHtml(delivery.farm)}</div>` : ''}
-      ${delivery.crop ? `<div><span class="delivery-crop">${escapeHtml(delivery.crop)}</span></div>` : ''}
       <div>${escapeHtml(formatDeliveryDate(delivery.delivery_date))} at ${escapeHtml(delivery.delivery_time)}</div>
-      <div>${Number(delivery.bale_total || 0)} bales · ${delivery.weight_total ? `Weight: ${escapeHtml(formatKg(delivery.weight_total))}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
+      <div>${Number(delivery.bale_total || 0)} bales · ${delivery.crop ? `${escapeHtml(delivery.crop)} · ` : ''}${delivery.weight_total ? `Weight: ${escapeHtml(formatKg(delivery.weight_total))}` : '<strong class="awaiting-weight">Awaiting weight</strong>'}</div>
       ${kgPerBale(delivery.weight_total, delivery.bale_total) ? `<div class="bale-weight">${escapeHtml(formatKg(kgPerBale(delivery.weight_total, delivery.bale_total)))} per bale</div>` : ''}
-      <div class="dialog-actions"><button class="secondary-action" type="button" data-edit-delivery="${delivery.id}">Edit Load Out</button></div>
+      <div class="dialog-actions delivery-actions">
+        <button class="secondary-action" type="button" data-edit-delivery="${delivery.id}">Edit Load Out</button>
+        ${delivery.invoiced_at
+          ? `<button class="invoiced-button is-invoiced" type="button" data-invoiced-delivery="${delivery.id}" data-invoiced="true" aria-pressed="true">✓ Invoiced</button>`
+          : `<button class="invoiced-button" type="button" data-invoiced-delivery="${delivery.id}" data-invoiced="false" aria-pressed="false">Mark invoiced</button>`}
+      </div>
     </div>
   `).join('');
 }
@@ -218,6 +222,32 @@ function bindDeliveryEditButtons(container) {
   container.querySelectorAll('[data-edit-delivery]').forEach((button) => {
     button.addEventListener('click', () => openDeliveryDialog(Number(button.dataset.editDelivery)));
   });
+  container.querySelectorAll('[data-invoiced-delivery]').forEach((button) => {
+    button.addEventListener('click', () => toggleInvoiced(button));
+  });
+}
+
+// Invoiced: one tap marks the load invoiced; tapping ✓ Invoiced asks before taking the mark off.
+async function toggleInvoiced(button) {
+  const id = Number(button.dataset.invoicedDelivery);
+  const invoiced = button.dataset.invoiced !== 'true';
+  if (!invoiced && !window.confirm('Mark this load out as not invoiced?')) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/straw/deliveries/${id}/invoiced`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiced })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to update this load out.');
+    state.loads = state.loads.map((item) => (Number(item.id) === id ? result.delivery : item));
+    saveState();
+    render();
+  } catch (error) {
+    button.disabled = false;
+    window.alert(error.message);
+  }
 }
 
 let loadsFilter = 'all';
@@ -240,8 +270,12 @@ function renderLoadsPage() {
   els.loadsBales.textContent = loads.reduce((sum, load) => sum + Number(load.bale_total || 0), 0).toLocaleString('en-GB');
   els.loadsWeight.textContent = formatKg(weighedKg);
   els.loadsAverage.textContent = weighedBales > 0 ? formatKg(weighedKg / weighedBales) : '–';
-  const shown = loads.filter((load) => loadsFilter === 'all' || (loadsFilter === 'weighed') === (Number(load.weight_total) > 0));
-  const empty = { all: 'No loads out recorded yet. Tap Log load out to add one.', awaiting: 'No loads are waiting for a weight.', weighed: 'No weighed loads yet.' }[loadsFilter];
+  const shown = loads.filter((load) => {
+    if (loadsFilter === 'all') return true;
+    if (loadsFilter === 'uninvoiced') return !load.invoiced_at;
+    return (loadsFilter === 'weighed') === (Number(load.weight_total) > 0);
+  });
+  const empty = { all: 'No loads out recorded yet. Tap Log load out to add one.', awaiting: 'No loads are waiting for a weight.', weighed: 'No weighed loads yet.', uninvoiced: 'Every load out has been invoiced.' }[loadsFilter];
   els.loadsList.innerHTML = shown.length ? deliveryCards(shown) : `<div class="empty-state">${empty}</div>`;
   bindDeliveryEditButtons(els.loadsList);
   document.querySelectorAll('[data-loads-filter]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.loadsFilter === loadsFilter)));

@@ -9762,7 +9762,7 @@ def build_straw_multisheet_xlsx(state, field_rows):
     """Mirror the older Straw app export: fields, loads, stocktakes and movements."""
     sheets = [
         ("Fields", field_rows),
-        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Farm / Location", "Crop / Variety", "Number of Bales", "Load Weight", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("farm", ""), x.get("crop", ""), x.get("bale_total", ""), x.get("weight_total", ""), ""] for x in state["loads"]]),
+        ("Loads Out", [["Use", "Date and Time", "Vehicle Reg", "Driver Name", "Farm / Location", "Crop / Variety", "Number of Bales", "Load Weight", "Invoiced", "Notes"]] + [["Load Out", "%s %s" % (x.get("delivery_date", ""), x.get("delivery_time", "")), x.get("registration", ""), x.get("customer", ""), x.get("farm", ""), x.get("crop", ""), x.get("bale_total", ""), x.get("weight_total", ""), "Yes" if x.get("invoiced_at") else "No", ""] for x in state["loads"]]),
         ("Stocktakes", [["Date and Time", "Bales in Stock", "Notes"]] + [[x.get("date", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stocktakes"]]),
         ("Stock Movements", [["Type", "Date and Time", "Customer / Source", "Number of Bales", "Stock Effect", "Notes"]] + [[x.get("type", ""), x.get("date", ""), x.get("customer", ""), x.get("bales", ""), x.get("bales", ""), x.get("notes", "")] for x in state["stockMovements"]]),
     ]
@@ -9933,6 +9933,8 @@ def straw_delivery_connection():
         connection.execute("ALTER TABLE straw_deliveries ADD COLUMN farm TEXT NOT NULL DEFAULT ''")  # optional farm name or location for a load out
     if "crop" not in {row[1] for row in connection.execute("PRAGMA table_info(straw_deliveries)").fetchall()}:
         connection.execute("ALTER TABLE straw_deliveries ADD COLUMN crop TEXT NOT NULL DEFAULT ''")  # crop / variety on the load, e.g. Wheat or Hay
+    if "invoiced_at" not in {row[1] for row in connection.execute("PRAGMA table_info(straw_deliveries)").fetchall()}:
+        connection.execute("ALTER TABLE straw_deliveries ADD COLUMN invoiced_at TEXT NOT NULL DEFAULT ''")  # when the load was marked invoiced; blank if not yet
     with connection:
         migrate_legacy_straw_loads(connection)
     connection.execute(
@@ -9967,6 +9969,27 @@ def straw_customers():
         with connection:
             save_straw_customer(connection, customer)
         return jsonify(customer=customer), 201
+    finally:
+        connection.close()
+
+
+@app.route("/api/straw/deliveries/<int:delivery_id>/invoiced", methods=["POST"])
+def straw_delivery_invoiced(delivery_id):
+    """Marks a load out as invoiced, or takes the mark off again with {"invoiced": false}."""
+    payload = request.get_json(silent=True)
+    invoiced = not (isinstance(payload, dict) and payload.get("invoiced") is False)
+    connection = straw_delivery_connection()
+    try:
+        with connection:
+            now = datetime.now().isoformat(timespec="seconds")
+            cursor = connection.execute(
+                "UPDATE straw_deliveries SET invoiced_at=?, version=version+1, updated_at=? WHERE id=?",
+                (now if invoiced else "", now, delivery_id),
+            )
+            if cursor.rowcount != 1:
+                return jsonify(error="This load out could not be found. Refresh and try again."), 404
+            row = connection.execute("SELECT * FROM straw_deliveries WHERE id=?", (delivery_id,)).fetchone()
+        return jsonify(delivery=dict(row))
     finally:
         connection.close()
 

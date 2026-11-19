@@ -68,6 +68,18 @@ class StrawDeliveryTests(unittest.TestCase):
         book = __import__("zipfile").ZipFile(__import__("io").BytesIO(self.client.get("/straw/export.xlsx").data))
         self.assertIn("Crop / Variety", "".join(book.read(n).decode("utf-8", "ignore") for n in book.namelist() if n.startswith("xl/")))
 
+    def test_a_load_can_be_marked_invoiced_and_back(self):
+        load = self.client.post("/api/straw/deliveries", json=self.delivery).get_json()["delivery"]
+        self.assertEqual(load["invoiced_at"], "")
+        marked = self.client.post("/api/straw/deliveries/%s/invoiced" % load["id"], json={"invoiced": True}).get_json()["delivery"]
+        self.assertTrue(marked["invoiced_at"])
+        self.assertEqual(marked["version"], load["version"] + 1)
+        book = __import__("zipfile").ZipFile(__import__("io").BytesIO(self.client.get("/straw/export.xlsx").data))
+        self.assertIn("Invoiced", "".join(book.read(n).decode("utf-8", "ignore") for n in book.namelist() if n.startswith("xl/")))
+        unmarked = self.client.post("/api/straw/deliveries/%s/invoiced" % load["id"], json={"invoiced": False}).get_json()["delivery"]
+        self.assertEqual(unmarked["invoiced_at"], "")
+        self.assertEqual(self.client.post("/api/straw/deliveries/9999/invoiced", json={"invoiced": True}).status_code, 404)
+
     def test_an_older_loads_database_gets_the_farm_column(self):
         import sqlite3
         db = sqlite3.connect(os.path.join(self.temp.name, "straw_deliveries.sqlite3"))

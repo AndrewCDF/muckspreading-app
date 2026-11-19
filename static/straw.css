@@ -199,5 +199,15 @@ dialog::backdrop { background: rgba(10, 24, 16, 0.45); }
 .optional-label { color: var(--muted); font-weight: 500; }
 .delivery-farm { color: var(--muted); font-weight: 600; }
 
-/* Crop / variety on a load out card */
-.delivery-crop { display: inline-block; margin-top: 2px; padding: 2px 10px; border-radius: 999px; background: #f3ead6; color: #6b4f16; font-size: 12px; font-weight: 800; letter-spacing: 0.02em; }
+
+/* Invoiced button on each load out card: gold to mark, green once invoiced */
+.delivery-actions { display: grid; grid-template-columns: 1fr 1fr; }
+.delivery-actions > button { width: 100%; }
+.invoiced-button {
+  min-height: 44px; padding: 0 8px; white-space: nowrap; border-radius: 14px; border: 1px solid #b68b38; font: inherit; font-weight: 800; cursor: pointer;
+  background: linear-gradient(180deg, #dcb460, #b68b38); color: #1b3d2a; box-shadow: 0 3px 0 #8c6a22;
+}
+.invoiced-button.is-invoiced { background: linear-gradient(180deg, #2f5d41, #1b3d2a); border-color: #0f2619; color: #fff; box-shadow: 0 3px 0 #0f2619; }
+.invoiced-button:active { transform: translateY(2px); box-shadow: none; }
+.invoiced-button:disabled { opacity: 0.6; }
+.delivery-actions > button { padding-left: 8px; padding-right: 8px; white-space: nowrap; }
